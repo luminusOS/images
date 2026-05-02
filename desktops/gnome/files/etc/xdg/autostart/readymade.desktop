@@ -1,0 +1,9 @@
+[Desktop Entry]
+Type=Application
+Name=Install Luminus OS
+Comment=Install the operating system to your computer
+Exec=readymade
+Icon=com.fyralabs.Readymade
+X-GNOME-Autostart-enabled=true
+NoDisplay=false
+StartupNotify=true

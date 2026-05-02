@@ -1,0 +1,34 @@
+ARG base
+
+# ── Context stage ─────────────────────────────────────────────────────────
+FROM scratch AS ctx
+
+COPY common /common
+
+# ── Core image (container-only, no desktop) ───────────────────────────────
+FROM ${base}
+
+ARG distro_name="LuminusOS"
+ARG distro_pretty_name="Luminus OS"
+
+# Common base packages
+RUN --mount=type=bind,from=ctx,source=/,target=/ctx \
+    --mount=type=cache,target=/var/cache \
+    env --chdir=/ctx/common ./build && \
+    /ctx/common/cleanup
+
+# Branding: override os-release
+RUN sed -i \
+    "s/^NAME=.*/NAME=\"${distro_name}\"/; s/^PRETTY_NAME=.*/PRETTY_NAME=\"${distro_pretty_name}\"/" \
+    /usr/lib/os-release
+
+# Final cleanup
+RUN --mount=type=bind,from=ctx,source=/,target=/ctx \
+    /ctx/common/cleanup && \
+    /ctx/common/finalize
+
+RUN dnf install --nogpgcheck --repofrompath 'terra,https://repos.fyralabs.com/terra$releasever' terra-release -y && \
+    dnf --refresh -y distro-sync && \
+    dnf clean all
+
+RUN bootc container lint --no-truncate

@@ -1,0 +1,61 @@
+ARG core_image=localhost/luminusos-core:latest
+
+# ── Context stage ─────────────────────────────────────────────────────────
+FROM scratch AS ctx
+
+COPY common   /common
+COPY desktops /desktops
+
+# ── Workstation image (bootable desktop) ──────────────────────────────────
+FROM ${core_image}
+
+ARG desktop=gnome
+
+# Boot + bootloader + live session packages
+RUN --mount=type=cache,target=/var/cache \
+    dnf -y install \
+      kernel dracut dracut-live squashfs-tools \
+      grub2 grub2-tools grub2-common grub2-pc-modules \
+      grub2-efi-x64 grub2-efi-x64-modules grub2-efi-x64-cdboot \
+      shim-x64 xorriso dosfstools isomd5sum \
+      livesys-scripts podman \
+      mesa-dri-drivers \
+      mesa-libGL \
+      mesa-libEGL \
+      mesa-libgbm \
+      fuse-overlayfs \
+      readymade \
+      ptyxis \
+      jq \
+    && dnf clean all
+
+# Configure livesys for GNOME session and enable live services
+RUN sed -i "s/^livesys_session=.*/livesys_session=gnome/" /etc/sysconfig/livesys && \
+    systemctl enable livesys.service livesys-late.service
+
+# Rebuild initramfs for live ISO boot
+RUN KVER=$(kernel-install list --json pretty 2>/dev/null \
+      | jq -r '.[] | select(.has_kernel == true) | .version' \
+      | head -n1) && \
+    [ -z "${KVER}" ] && KVER=$(ls -1 /lib/modules | tail -n1) || true && \
+    DRACUT_NO_XATTR=1 dracut -v -f --zstd --reproducible --no-hostonly \
+      --add "dmsquash-live dmsquash-live-autooverlay" \
+      "/usr/lib/modules/${KVER}/initramfs.img" "${KVER}"
+
+# Copy EFI files for image-builder
+RUN mkdir -p /boot/efi && \
+    cp -av /usr/lib/efi/*/*/EFI /boot/efi/
+
+# Desktop environment and Flatpaks
+RUN --mount=type=bind,from=ctx,source=/,target=/ctx \
+    --mount=type=cache,target=/var/cache \
+    env --chdir=/ctx/desktops/${desktop} ./build && \
+    bash /ctx/common/install-flatpaks && \
+    /ctx/common/cleanup
+
+# Final cleanup
+RUN --mount=type=bind,from=ctx,source=/,target=/ctx \
+    /ctx/common/cleanup && \
+    /ctx/common/finalize
+
+RUN bootc container lint --no-truncate

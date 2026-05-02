@@ -1,0 +1,17 @@
+#!/usr/bin/env bash
+set -uexo pipefail
+
+# Install Flatpaks from common list
+
+# Ensure flatpak is installed
+if ! command -v flatpak &>/dev/null; then
+  dnf -y install flatpak
+fi
+
+# Add Flathub remote
+curl --retry 3 -Lo /etc/flatpak/remotes.d/flathub.flatpakrepo https://dl.flathub.org/repo/flathub.flatpakrepo
+
+# Install from list
+if [ -f "/ctx/common/flatpaks" ]; then
+  xargs flatpak install -y --noninteractive < "/ctx/common/flatpaks"
+fi

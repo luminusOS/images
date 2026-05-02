@@ -1,0 +1,7 @@
+*.iso
+*.7z
+*.log
+.test/
+.iso-output/
+.image-builder-cli/
+.env

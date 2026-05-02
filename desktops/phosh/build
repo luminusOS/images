@@ -1,0 +1,31 @@
+#!/usr/bin/env bash
+set -uexo pipefail
+
+# Phosh Mobile Desktop module
+
+# Copy static files into the image
+if [ -d files ]; then
+  find files -mindepth 1 -maxdepth 1 -exec cp -arfT {} / \;
+fi
+
+# Install Phosh and mobile stack
+dnf -y install \
+  phosh \
+  phoc \
+  feedbackd \
+  squeekboard \
+  gnome-calls \
+  chatty \
+  gnome-contacts \
+  gnome-bluetooth \
+  mobile-broadband-provider-info \
+  ModemManager
+
+# Compile GSettings schemas
+glib-compile-schemas /usr/share/glib-2.0/schemas/
+
+# Set graphical boot target
+ln -sf /usr/lib/systemd/system/graphical.target /etc/systemd/system/default.target
+
+# Use phosh as display manager
+ln -sf /usr/lib/systemd/system/phosh.service /etc/systemd/system/display-manager.service

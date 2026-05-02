@@ -1,0 +1,42 @@
+#!/usr/bin/env bash
+set -uexo pipefail
+
+# GNOME Desktop module
+
+# Copy static files into the image
+if [ -d files ]; then
+  find files -mindepth 1 -maxdepth 1 -exec cp -arf {} / \;
+fi
+
+# Install GNOME desktop packages
+#dnf -y install \
+#  gnome-session \
+#  gnome-control-center \
+#  gnome-settings-daemon \
+#  adwaita-icon-theme \
+#  gsettings-desktop-schemas \
+#  xdg-desktop-portal-gnome \
+#  gdm \
+#  gnome-shell \
+#  gnome-terminal \
+#  nautilus
+
+dnf install gnome-shell gnome-backgrounds --setopt=install_weak_deps=False -y
+
+dnf install gnome-software --setopt=install_weak_deps=False -y
+
+# Compile GNOME schema overrides
+glib-compile-schemas /usr/share/glib-2.0/schemas/
+
+# Ensure graphical boot and GDM as display manager
+ln -sf /usr/lib/systemd/system/graphical.target /etc/systemd/system/default.target
+ln -sf /usr/lib/systemd/system/gdm.service /etc/systemd/system/display-manager.service
+
+# Mask services that fail in live environment
+systemctl mask bootloader-update.service
+
+# Create a live user with autologin in locked mode
+useradd -m -G wheel liveuser || true
+passwd -d liveuser
+mkdir -p /etc/gdm
+printf "[daemon]\nAutomaticLoginEnable=true\nAutomaticLogin=liveuser\n" > /etc/gdm/custom.conf

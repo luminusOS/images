@@ -1,0 +1,20 @@
+# Phosh Mobile Runtime Configuration
+
+[org.gnome.desktop.interface]
+# Disable animations for better mobile performance
+enable-animations=false
+# Use squeekboard as on-screen keyboard
+gtk-im-module='squeekboard'
+
+[org.gnome.desktop.a11y.applications]
+screen-keyboard-enabled=true
+
+[org.gnome.settings-daemon.plugins.power]
+# Reasonable mobile power settings
+sleep-inactive-ac-timeout=300
+sleep-inactive-battery-timeout=60
+power-button-action='suspend'
+
+[org.gnome.desktop.privacy]
+report-technical-problems=false
+send-software-usage-stats=false

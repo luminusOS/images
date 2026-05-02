@@ -1,0 +1,52 @@
+[install]
+allowed_installtypes = ["wholedisk", "custom"]
+
+[distro]
+name = "Luminus OS"
+icon = "fedora-logo-icon"
+bios_support = true
+
+[[bento]]
+title = "page-welcome"
+desc = "page-installation-welcome-desc"
+link = "https://github.com"
+icon = "explore-symbolic"
+
+[[bento]]
+title = "page-installation-help"
+desc = "page-installation-help-desc"
+link = "https://github.com"
+icon = "chat-symbolic"
+
+[[bento]]
+title = "page-installation-contrib"
+desc = "page-installation-contrib-desc"
+link = "https://github.com"
+icon = "applications-development-symbolic"
+
+[[postinstall]]
+module = "CleanupBoot"
+
+[[postinstall]]
+module = "ReinstallKernel"
+
+[[postinstall]]
+module = "Dracut"
+
+[[postinstall]]
+module = "GRUB2"
+
+[[postinstall]]
+module = "PrepareFedora"
+
+[[postinstall]]
+module = "SELinux"
+
+[[postinstall]]
+module = "EfiStub"
+
+[[postinstall]]
+module = "InitialSetup"
+
+[[postinstall]]
+module = "Language"
