@@ -1,5 +1,10 @@
 [install]
-allowed_installtypes = ["wholedisk", "custom"]
+allowed_installtypes = ["wholedisk"]
+copy_mode = "bootc"
+bootc_imgref = "containers-storage:localhost/luminusos-workstation:latest"
+bootc_target_imgref = "localhost/luminusos-workstation:latest"
+bootc_enforce_sigpolicy = false
+bootc_args = ["--skip-fetch-check", "--skip-finalize", "--bootupd-skip-boot-uuid"]
 
 [distro]
 name = "Luminus OS"
@@ -7,46 +12,22 @@ icon = "fedora-logo-icon"
 bios_support = true
 
 [[bento]]
-title = "page-welcome"
-desc = "page-installation-welcome-desc"
-link = "https://github.com"
+title = "luminusos-bento-welcome"
+desc = "luminusos-bento-welcome-desc"
+link = "https://github.com/luminusOS"
 icon = "explore-symbolic"
 
 [[bento]]
-title = "page-installation-help"
-desc = "page-installation-help-desc"
-link = "https://github.com"
+title = "luminusos-bento-help"
+desc = "luminusos-bento-help-desc"
+link = "https://github.com/luminusOS/images/issues"
 icon = "chat-symbolic"
 
 [[bento]]
-title = "page-installation-contrib"
-desc = "page-installation-contrib-desc"
-link = "https://github.com"
+title = "luminusos-bento-contribute"
+desc = "luminusos-bento-contribute-desc"
+link = "https://github.com/luminusOS/images"
 icon = "applications-development-symbolic"
 
 [[postinstall]]
-module = "CleanupBoot"
-
-[[postinstall]]
-module = "ReinstallKernel"
-
-[[postinstall]]
-module = "Dracut"
-
-[[postinstall]]
-module = "GRUB2"
-
-[[postinstall]]
-module = "PrepareFedora"
-
-[[postinstall]]
-module = "SELinux"
-
-[[postinstall]]
-module = "EfiStub"
-
-[[postinstall]]
-module = "InitialSetup"
-
-[[postinstall]]
-module = "Language"
+module = "Script"

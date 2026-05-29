@@ -5,19 +5,19 @@ set -euo pipefail
 #
 # Usage: install-qemu.sh <image-ref> [disk-size]
 #   image-ref   Container image reference (e.g. localhost/luminusos-gnome:latest)
-#   disk-size   Virtual disk size (default: 20G)
+#   disk-size   Virtual disk size (default: 64G)
 #
 # This creates a qcow2 disk at .test/disk.qcow2, installs the bootc image
 # into it, then boots it in QEMU so you can verify the installation.
 
 IMAGE_REF="${1:?Usage: install-qemu.sh <image-ref> [disk-size]}"
-DISK_SIZE="${2:-20G}"
+DISK_SIZE="${2:-64G}"
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 PROJECT_DIR="$(dirname "$SCRIPT_DIR")"
 TEST_DIR="$PROJECT_DIR/.test"
-DISK_PATH="$TEST_DIR/disk.qcow2"
-BIB_CONFIG="$PROJECT_DIR/bootc-image-builder.toml"
+DISK_PATH="$TEST_DIR/install-disk.qcow2"
+BIB_CONFIG="$PROJECT_DIR/common/bootc-image-builder.toml"
 
 # load .env if it exists
 if [ -f "$PROJECT_DIR/.env" ]; then
@@ -42,7 +42,7 @@ echo "==> Installing $IMAGE_REF into disk via bootc-image-builder..."
 
 # Use bootc-image-builder (via podman) to write the image to a qcow2 disk.
 # This handles partitioning, bootloader setup, and writing the ostree commit.
-# --rootfs ext4: required to specify the filesystem type for partitions.
+# --rootfs btrfs: required to specify the filesystem type for partitions.
 # The output disk lands at $TEST_DIR/qcow2/disk.qcow2
 sudo podman run --rm -it --privileged \
     --pull=newer \
@@ -52,7 +52,7 @@ sudo podman run --rm -it --privileged \
     -v /var/lib/containers/storage:/var/lib/containers/storage \
     quay.io/centos-bootc/bootc-image-builder:latest \
     --type qcow2 \
-    --rootfs ext4 \
+    --rootfs btrfs \
     --config /config.toml \
     "$IMAGE_REF"
 
@@ -66,7 +66,7 @@ fi
 echo "==> Installation complete."
 echo ""
 echo "To boot the installed system:"
-echo "  just qemu-run"
+echo "  just qemu run"
 echo ""
 echo "Or manually:"
-echo "  QEMU_DISK_PATH=$DISK_PATH ./tools/qemu.sh qemu-disk"
+echo "  QEMU_DISK_PATH=$DISK_PATH ./tools/qemu.sh disk"

@@ -1,0 +1,10 @@
+[Unit]
+Description=ReadyMade live installer
+BindsTo=gnome-session.target
+After=gnome-session.target
+
+[Service]
+Type=simple
+ExecStart=/usr/libexec/luminusos/readymade-wrapper
+Restart=on-failure
+RestartSec=2

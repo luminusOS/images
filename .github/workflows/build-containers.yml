@@ -2,27 +2,60 @@ name: Build Containers
 
 on:
   push:
-    branches: [main]
+    branches: ["f*"]
   pull_request:
-    branches: [main]
+    branches: ["f*"]
   workflow_dispatch:
+    inputs:
+      fedora_version:
+        description: "Fedora version to build"
+        required: false
+        default: ""
 
 env:
   REGISTRY: ghcr.io
-  FEDORA_VERSION: "44"
+  PRIMARY_FEDORA_BRANCH: f44
+  AURORA_SHELL_VERSION: v50.3
 
 jobs:
-  build-core:
-    name: Build core
+  build-containers:
+    name: Build core and workstation
     runs-on: ubuntu-latest
     permissions:
       contents: read
       packages: write
-    outputs:
-      image: ${{ steps.meta.outputs.tags }}
 
     steps:
       - uses: actions/checkout@v4
+
+      - name: Resolve Fedora version
+        id: version
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [ -n "${{ inputs.fedora_version }}" ]; then
+            FEDORA_VERSION="${{ inputs.fedora_version }}"
+          elif [[ "${GITHUB_REF_NAME}" =~ ^f([0-9]+)$ ]]; then
+            FEDORA_VERSION="${BASH_REMATCH[1]}"
+          else
+            echo "Unable to derive Fedora version from '${GITHUB_REF_NAME}'." >&2
+            exit 1
+          fi
+
+          VERSION_TAG="${FEDORA_VERSION}.${GITHUB_RUN_NUMBER}"
+          BRANCH_TAG="${FEDORA_VERSION}"
+          if [ "${GITHUB_REF_NAME}" = "${PRIMARY_FEDORA_BRANCH}" ]; then
+            PUBLISH_LATEST=true
+          else
+            PUBLISH_LATEST=false
+          fi
+
+          {
+            echo "fedora_version=${FEDORA_VERSION}"
+            echo "version_tag=${VERSION_TAG}"
+            echo "branch_tag=${BRANCH_TAG}"
+            echo "publish_latest=${PUBLISH_LATEST}"
+          } >> "$GITHUB_OUTPUT"
 
       - name: Log in to GHCR
         if: github.event_name != 'pull_request'
@@ -35,114 +68,63 @@ jobs:
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
 
-      - name: Generate image tags
-        id: meta
-        uses: docker/metadata-action@v5
-        with:
-          images: ${{ env.REGISTRY }}/${{ github.repository_owner }}/luminusos-core
-          tags: |
-            type=raw,value=${{ env.FEDORA_VERSION }}.${{ github.run_id }}
-            type=raw,value=latest,enable=${{ github.ref == 'refs/heads/main' }}
-
-      - name: Build and push core
+      - name: Build core locally
         uses: docker/build-push-action@v5
         with:
           context: .
           file: editions/core/Containerfile
+          load: true
           build-args: |
-            base=quay.io/fedora/fedora-bootc:${{ env.FEDORA_VERSION }}
-          push: ${{ github.event_name != 'pull_request' }}
-          tags: ${{ steps.meta.outputs.tags }}
+            base=quay.io/fedora/fedora-bootc:${{ steps.version.outputs.fedora_version }}
+          tags: |
+            localhost/luminusos:${{ steps.version.outputs.version_tag }}
+            ${{ env.REGISTRY }}/${{ github.repository_owner }}/luminusos:${{ steps.version.outputs.version_tag }}
+            ${{ env.REGISTRY }}/${{ github.repository_owner }}/luminusos:${{ steps.version.outputs.branch_tag }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
 
-  build-workstation:
-    name: Build workstation
-    runs-on: ubuntu-latest
-    needs: build-core
-    permissions:
-      contents: read
-      packages: write
-
-    steps:
-      - uses: actions/checkout@v4
-
-      - name: Log in to GHCR
+      - name: Publish core
         if: github.event_name != 'pull_request'
-        uses: docker/login-action@v3
-        with:
-          registry: ${{ env.REGISTRY }}
-          username: ${{ github.actor }}
-          password: ${{ secrets.GITHUB_TOKEN }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          docker push "${REGISTRY}/${{ github.repository_owner }}/luminusos:${{ steps.version.outputs.version_tag }}"
+          docker push "${REGISTRY}/${{ github.repository_owner }}/luminusos:${{ steps.version.outputs.branch_tag }}"
+          if [ "${{ steps.version.outputs.publish_latest }}" = "true" ]; then
+            docker tag \
+              "${REGISTRY}/${{ github.repository_owner }}/luminusos:${{ steps.version.outputs.version_tag }}" \
+              "${REGISTRY}/${{ github.repository_owner }}/luminusos:latest"
+            docker push "${REGISTRY}/${{ github.repository_owner }}/luminusos:latest"
+          fi
 
-      - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v3
-
-      - name: Generate image tags
-        id: meta
-        uses: docker/metadata-action@v5
-        with:
-          images: ${{ env.REGISTRY }}/${{ github.repository_owner }}/luminusos-workstation
-          tags: |
-            type=raw,value=${{ env.FEDORA_VERSION }}.${{ github.run_id }}
-            type=raw,value=latest,enable=${{ github.ref == 'refs/heads/main' }}
-
-      - name: Build and push workstation
+      - name: Build workstation locally
         uses: docker/build-push-action@v5
         with:
           context: .
           file: editions/workstation/Containerfile
+          load: true
           build-args: |
-            core_image=${{ env.REGISTRY }}/${{ github.repository_owner }}/luminusos-core:latest
+            core_image=localhost/luminusos:${{ steps.version.outputs.version_tag }}
+            workstation_image=${{ env.REGISTRY }}/${{ github.repository_owner }}/luminusos-workstation:${{ steps.version.outputs.version_tag }}
             desktop=gnome
-          push: ${{ github.event_name != 'pull_request' }}
-          tags: ${{ steps.meta.outputs.tags }}
-          cache-from: type=gha
-          cache-to: type=gha,mode=max
-
-  build-mobile:
-    name: Build mobile (${{ matrix.mobile_desktop }})
-    runs-on: ubuntu-latest
-    needs: build-core
-    permissions:
-      contents: read
-      packages: write
-    strategy:
-      matrix:
-        mobile_desktop: [phosh, gnome-mobile]
-
-    steps:
-      - uses: actions/checkout@v4
-
-      - name: Log in to GHCR
-        if: github.event_name != 'pull_request'
-        uses: docker/login-action@v3
-        with:
-          registry: ${{ env.REGISTRY }}
-          username: ${{ github.actor }}
-          password: ${{ secrets.GITHUB_TOKEN }}
-
-      - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v3
-
-      - name: Generate image tags
-        id: meta
-        uses: docker/metadata-action@v5
-        with:
-          images: ${{ env.REGISTRY }}/${{ github.repository_owner }}/luminusos-mobile-${{ matrix.mobile_desktop }}
+            aurora_shell_version=${{ env.AURORA_SHELL_VERSION }}
           tags: |
-            type=raw,value=${{ env.FEDORA_VERSION }}.${{ github.run_id }}
-            type=raw,value=latest,enable=${{ github.ref == 'refs/heads/main' }}
-
-      - name: Build and push mobile-${{ matrix.mobile_desktop }}
-        uses: docker/build-push-action@v5
-        with:
-          context: .
-          file: editions/mobile/Containerfile
-          build-args: |
-            core_image=${{ env.REGISTRY }}/${{ github.repository_owner }}/luminusos-core:latest
-            mobile_desktop=${{ matrix.mobile_desktop }}
-          push: ${{ github.event_name != 'pull_request' }}
-          tags: ${{ steps.meta.outputs.tags }}
+            localhost/luminusos-workstation:${{ steps.version.outputs.version_tag }}
+            ${{ env.REGISTRY }}/${{ github.repository_owner }}/luminusos-workstation:${{ steps.version.outputs.version_tag }}
+            ${{ env.REGISTRY }}/${{ github.repository_owner }}/luminusos-workstation:${{ steps.version.outputs.branch_tag }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
+
+      - name: Publish workstation
+        if: github.event_name != 'pull_request'
+        shell: bash
+        run: |
+          set -euo pipefail
+          docker push "${REGISTRY}/${{ github.repository_owner }}/luminusos-workstation:${{ steps.version.outputs.version_tag }}"
+          docker push "${REGISTRY}/${{ github.repository_owner }}/luminusos-workstation:${{ steps.version.outputs.branch_tag }}"
+          if [ "${{ steps.version.outputs.publish_latest }}" = "true" ]; then
+            docker tag \
+              "${REGISTRY}/${{ github.repository_owner }}/luminusos-workstation:${{ steps.version.outputs.version_tag }}" \
+              "${REGISTRY}/${{ github.repository_owner }}/luminusos-workstation:latest"
+            docker push "${REGISTRY}/${{ github.repository_owner }}/luminusos-workstation:latest"
+          fi

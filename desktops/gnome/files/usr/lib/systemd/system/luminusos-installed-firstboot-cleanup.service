@@ -1,0 +1,14 @@
+[Unit]
+Description=Clean Luminus OS live installer artifacts after installation
+ConditionPathExists=!/run/initramfs/live
+ConditionPathExists=!/dev/mapper/live-base
+DefaultDependencies=no
+After=local-fs.target
+Before=display-manager.service
+
+[Service]
+Type=oneshot
+ExecStart=/usr/libexec/luminusos/installed-firstboot-cleanup
+
+[Install]
+WantedBy=graphical.target

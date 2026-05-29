@@ -8,27 +8,40 @@ COPY common /common
 # ── Core image (container-only, no desktop) ───────────────────────────────
 FROM ${base}
 
+ARG fedora_version=44
 ARG distro_name="LuminusOS"
 ARG distro_pretty_name="Luminus OS"
 
+RUN mkdir -p /etc/dnf/vars /etc/yum/vars && \
+    printf '%s\n' "${fedora_version}" > /etc/dnf/vars/releasever && \
+    printf '%s\n' "${fedora_version}" > /etc/yum/vars/releasever
+
 # Common base packages
 RUN --mount=type=bind,from=ctx,source=/,target=/ctx \
-    --mount=type=cache,target=/var/cache \
-    env --chdir=/ctx/common ./build && \
-    /ctx/common/cleanup
+    --mount=type=cache,target=/var/cache/dnf \
+    rm -rf /var/cache/dnf/* /var/cache/libdnf5/* && \
+    /ctx/common/recover-rpmdb.sh && \
+    env --chdir=/ctx/common ./build.sh && \
+    /ctx/common/cleanup.sh
 
 # Branding: override os-release
 RUN sed -i \
     "s/^NAME=.*/NAME=\"${distro_name}\"/; s/^PRETTY_NAME=.*/PRETTY_NAME=\"${distro_pretty_name}\"/" \
     /usr/lib/os-release
 
+RUN --mount=type=bind,from=ctx,source=/,target=/ctx \
+    /ctx/common/recover-rpmdb.sh && \
+    dnf -y install \
+      --releasever="${fedora_version}" \
+      --nogpgcheck \
+      --setopt=install_weak_deps=False \
+      --repofrompath "terra-bootstrap,https://repos.fyralabs.com/terra${fedora_version}" \
+      terra-release && \
+    dnf clean all
+
 # Final cleanup
 RUN --mount=type=bind,from=ctx,source=/,target=/ctx \
-    /ctx/common/cleanup && \
-    /ctx/common/finalize
-
-RUN dnf install --nogpgcheck --repofrompath 'terra,https://repos.fyralabs.com/terra$releasever' terra-release -y && \
-    dnf --refresh -y distro-sync && \
-    dnf clean all
+    /ctx/common/cleanup.sh && \
+    /ctx/common/finalize.sh
 
 RUN bootc container lint --no-truncate

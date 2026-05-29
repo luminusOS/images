@@ -1,0 +1,267 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+real_bootc=/usr/libexec/luminusos/bootc-real
+
+if [ ! -x "${real_bootc}" ]; then
+  echo "Unable to find real bootc binary: ${real_bootc}" >&2
+  exit 127
+fi
+
+if [ "$(basename "$0")" = "ostree" ]; then
+  exec -a ostree "${real_bootc}" "$@"
+fi
+
+cleanup_target_root=""
+cleanup_tmpdir=""
+containers_conf_dir=""
+containers_conf_dropin=""
+var_tmp_mounted=0
+
+remove_target_installer_artifacts() {
+  local target_root="$1"
+  local root=""
+  local roots=()
+  local artifact=""
+
+  [ -n "${target_root}" ] || return 0
+  roots+=("${target_root}")
+
+  for root in "${target_root}"/ostree/deploy/*/deploy/*; do
+    [ -d "${root}" ] || continue
+    roots+=("${root}")
+  done
+
+  for root in "${roots[@]}"; do
+    [ -d "${root}" ] || continue
+    for artifact in \
+      etc/readymade.toml \
+      etc/gdm/custom.conf \
+      etc/xdg/autostart/com.fyralabs.Readymade.desktop \
+      etc/polkit-1/rules.d/49-luminusos-readymade.rules \
+      etc/dconf/db/local \
+      etc/dconf/db/local.d/00-luminusos-live \
+      etc/dconf/profile/user \
+      etc/systemd/user/gnome-session@live-installer.target.wants/luminusos-activate-aurora-shell.service \
+      etc/systemd/user/gnome-session@live-installer.target.wants/luminusos-enable-aurora-shell.service \
+      usr/local/share/applications/com.fyralabs.Readymade.desktop \
+      usr/lib/systemd/user/luminusos-readymade.service \
+      usr/lib/systemd/user/gnome-session@live-installer.target.d/live-installer.session.conf \
+      usr/share/gnome-shell/modes/live-installer.json \
+      usr/share/gnome-session/sessions/live-installer.session \
+      usr/share/wayland-sessions/live-installer.desktop; do
+      rm -f "${root}/${artifact}" 2>/dev/null || true
+    done
+    mkdir -p "${root}/usr/local/share/applications" 2>/dev/null || true
+    cat > "${root}/usr/local/share/applications/com.fyralabs.Readymade.desktop" 2>/dev/null <<'EOF' || true
+[Desktop Entry]
+Type=Application
+Name=ReadyMade
+Hidden=true
+NoDisplay=true
+EOF
+    rm -rf "${root}/home/liveuser" 2>/dev/null || true
+    rm -rf "${root}/var/home/liveuser" 2>/dev/null || true
+    rm -f "${root}/var/lib/AccountsService/users/liveuser" 2>/dev/null || true
+    rm -f "${root}/var/lib/AccountsService/icons/liveuser" 2>/dev/null || true
+    if [ -f "${root}/etc/passwd" ]; then
+      sed -i '/^liveuser:/d' "${root}/etc/passwd"
+    fi
+    if [ -f "${root}/etc/shadow" ]; then
+      sed -i '/^liveuser:/d' "${root}/etc/shadow"
+    fi
+    if [ -f "${root}/etc/group" ]; then
+      sed -i '/^liveuser:/d; s/,\?liveuser,\?/,/g; s/:,/:/g; s/,$//' "${root}/etc/group"
+    fi
+    if [ -f "${root}/etc/gshadow" ]; then
+      sed -i '/^liveuser:/d; s/,\?liveuser,\?/,/g; s/:,/:/g; s/,$//' "${root}/etc/gshadow"
+    fi
+    if [ -f "${root}/etc/subuid" ]; then
+      sed -i '/^liveuser:/d' "${root}/etc/subuid"
+    fi
+    if [ -f "${root}/etc/subgid" ]; then
+      sed -i '/^liveuser:/d' "${root}/etc/subgid"
+    fi
+    if [ -d "${root}/usr/share/glib-2.0/schemas" ] && command -v glib-compile-schemas >/dev/null 2>&1; then
+      glib-compile-schemas "${root}/usr/share/glib-2.0/schemas" 2>/dev/null || true
+    fi
+    mkdir -p "${root}/etc/gdm"
+    printf '[daemon]\nInitialSetupEnable=true\n' > "${root}/etc/gdm/custom.conf" 2>/dev/null || true
+    printf 'luminus\n' > "${root}/etc/hostname" 2>/dev/null || true
+    mkdir -p "${root}/etc/luminusos"
+    printf 'installed\n' > "${root}/etc/luminusos/system-mode" 2>/dev/null || true
+  done
+
+  echo "luminusos bootc-wrapper: prepared target deployment for GNOME Initial Setup" >&2
+}
+
+write_target_grub_configs() {
+  local target_root="$1"
+  local static_dir=/usr/lib/bootupd/grub2-static
+  local boot_dir="${target_root}/boot"
+  local efi_mount="${boot_dir}/efi"
+  local grub_dir="${boot_dir}/grub2"
+  local boot_source=""
+  local boot_parent=""
+  local boot_uuid=""
+  local esp_source=""
+  local mounted_esp=0
+
+  if [ -z "${target_root}" ] || [ ! -d "${boot_dir}" ]; then
+    return 0
+  fi
+
+  mkdir -p "${grub_dir}" "${efi_mount}"
+
+  if [ -f "${static_dir}/grub-static-pre.cfg" ]; then
+    {
+      cat "${static_dir}/grub-static-pre.cfg"
+      for cfg in "${static_dir}"/configs.d/*.cfg; do
+        [ -f "${cfg}" ] || continue
+        printf '\n'
+        cat "${cfg}"
+      done
+    } > "${grub_dir}/grub.cfg"
+  else
+    cat > "${grub_dir}/grub.cfg" <<'EOF'
+set default=0
+set timeout_style=menu
+set timeout=1
+blscfg
+EOF
+  fi
+
+  if command -v grub2-editenv >/dev/null 2>&1; then
+    grub2-editenv "${grub_dir}/grubenv" create >/dev/null 2>&1 || true
+  fi
+
+  boot_source="$(findmnt -n -o SOURCE --target "${boot_dir}" 2>/dev/null | head -n 1 || true)"
+  boot_uuid="$(findmnt -n -o UUID --target "${boot_dir}" 2>/dev/null | head -n 1 || true)"
+  if [ -z "${boot_uuid}" ] && [ -n "${boot_source}" ] && command -v blkid >/dev/null 2>&1; then
+    boot_uuid="$(blkid -s UUID -o value "${boot_source}" 2>/dev/null || true)"
+  fi
+
+  if ! findmnt --mountpoint "${efi_mount}" >/dev/null 2>&1; then
+    if [ -n "${boot_source}" ] && command -v lsblk >/dev/null 2>&1; then
+      boot_parent="$(lsblk -npo PKNAME "${boot_source}" 2>/dev/null | head -n 1 || true)"
+      if [ -n "${boot_parent}" ]; then
+        esp_source="$(lsblk -prno PATH,PKNAME,PARTTYPE 2>/dev/null | awk -v parent="${boot_parent}" 'tolower($2) == tolower(parent) && tolower($3) == "c12a7328-f81f-11d2-ba4b-00a0c93ec93b" { print $1; exit }')"
+      fi
+    fi
+
+    if [ -z "${esp_source}" ] && command -v blkid >/dev/null 2>&1; then
+      esp_source="$(blkid -t PARTTYPE=c12a7328-f81f-11d2-ba4b-00a0c93ec93b -o device 2>/dev/null | head -n 1 || true)"
+    fi
+
+    if [ -n "${esp_source}" ] && mount "${esp_source}" "${efi_mount}"; then
+      mounted_esp=1
+      echo "luminusos bootc-wrapper: mounted ESP ${esp_source} for GRUB config installation" >&2
+    fi
+  fi
+
+  if findmnt --mountpoint "${efi_mount}" >/dev/null 2>&1; then
+    for efi_dir in "${efi_mount}/EFI/fedora" "${efi_mount}/EFI/BOOT"; do
+      mkdir -p "${efi_dir}"
+      if [ -n "${boot_uuid}" ]; then
+        printf 'set BOOT_UUID="%s"\n' "${boot_uuid}" > "${efi_dir}/bootuuid.cfg"
+      fi
+
+      cat > "${efi_dir}/grub.cfg" <<'EOF'
+if [ -f ${config_directory}/bootuuid.cfg ]; then
+  source ${config_directory}/bootuuid.cfg
+fi
+if [ -n "${BOOT_UUID}" ]; then
+  search --fs-uuid "${BOOT_UUID}" --set boot --no-floppy
+else
+  search --label boot --set boot --no-floppy
+fi
+if [ -d ($boot)/grub2 ]; then
+  set prefix=($boot)/grub2
+else
+  set prefix=($boot)/boot/grub2
+fi
+configfile $prefix/grub.cfg
+EOF
+    done
+  else
+    echo "luminusos bootc-wrapper: target ESP was not mounted; GRUB EFI config was not written" >&2
+  fi
+
+  sync "${boot_dir}" "${efi_mount}" || true
+  if [ "${mounted_esp}" = "1" ]; then
+    umount "${efi_mount}" || umount -l "${efi_mount}" || true
+  fi
+
+  echo "luminusos bootc-wrapper: installed target GRUB configs" >&2
+}
+
+if [ "${1:-}" = "install" ] && [ "${2:-}" = "to-filesystem" ] && [ "$#" -gt 2 ]; then
+  target_root=""
+  for arg in "${@:3}"; do
+    if [ -d "${arg}" ]; then
+      target_root="${arg}"
+      break
+    fi
+  done
+
+  if [ -n "${target_root}" ]; then
+    cleanup_target_root="${target_root}"
+    cleanup_tmpdir="${target_root}/.bootc-image-copy-tmp"
+    mkdir -p "${cleanup_tmpdir}"
+    chmod 1777 "${cleanup_tmpdir}" 2>/dev/null || true
+    mount --bind "${cleanup_tmpdir}" "${cleanup_tmpdir}"
+
+    mkdir -p /var/tmp
+    mount --bind "${cleanup_tmpdir}" /var/tmp
+    var_tmp_mounted=1
+
+    containers_conf_dir=$(mktemp -d /run/readymade-bootc-conf.XXXXXX)
+    containers_conf="${containers_conf_dir}/containers.conf"
+    containers_conf_dropin=/etc/containers/containers.conf.d/99-luminusos-bootc-install-tmp.conf
+
+    escaped_tmpdir="/var/tmp"
+    escaped_tmpdir="${escaped_tmpdir//\"/\\\"}"
+    printf '[engine]\nimage_copy_tmp_dir = "%s"\n' "${escaped_tmpdir}" > "${containers_conf}"
+
+    mkdir -p /etc/containers/containers.conf.d
+    cp "${containers_conf}" "${containers_conf_dropin}"
+
+    echo "luminusos bootc-wrapper: using target-backed /var/tmp for bootc image import" >&2
+
+    export TMPDIR=/var/tmp
+    export CONTAINERS_CONF="${containers_conf}"
+    export CONTAINERS_CONF_OVERRIDE="${containers_conf}"
+  fi
+fi
+
+set +e
+"${real_bootc}" "$@"
+status=$?
+set -e
+
+if [ "${status}" = "0" ] && [ -n "${cleanup_target_root}" ]; then
+  remove_target_installer_artifacts "${cleanup_target_root}"
+  write_target_grub_configs "${cleanup_target_root}"
+fi
+
+if [ "${var_tmp_mounted}" = "1" ] && mountpoint -q /var/tmp; then
+  umount /var/tmp || umount -l /var/tmp || true
+fi
+
+if [ -n "${cleanup_tmpdir}" ]; then
+  rm -rf "${cleanup_tmpdir:?}/"* 2>/dev/null || true
+  if mountpoint -q "${cleanup_tmpdir}"; then
+    umount "${cleanup_tmpdir}" || umount -l "${cleanup_tmpdir}" || true
+  fi
+  rmdir "${cleanup_tmpdir}" 2>/dev/null || true
+fi
+
+if [ -n "${containers_conf_dropin}" ]; then
+  rm -f "${containers_conf_dropin}" || true
+fi
+
+if [ -n "${containers_conf_dir}" ]; then
+  rm -rf "${containers_conf_dir}" || true
+fi
+
+exit "${status}"

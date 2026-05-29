@@ -1,0 +1,12 @@
+[Unit]
+Description=Activate Aurora Shell in GNOME Shell
+ConditionPathExists=/usr/share/gnome-shell/extensions/aurora-shell@luminusos.github.io/metadata.json
+PartOf=gnome-session.target
+After=gnome-session-initialized.target
+
+[Service]
+Type=oneshot
+ExecStart=/usr/libexec/luminusos/activate-aurora-shell
+
+[Install]
+WantedBy=gnome-session.target gnome-session@live-installer.target gnome-session@gnome-initial-setup.target

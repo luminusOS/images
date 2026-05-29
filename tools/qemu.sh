@@ -6,8 +6,8 @@ set -x
 # This script shouldn't be used in prod and is meant for development only.
 
 # USAGE
-# ./qemu.sh [qemu-disk|qemu-iso]
-# If no argument is provided, qemu-disk is used by default
+# ./qemu.sh [disk|iso]
+# If no argument is provided, disk is used by default
 
 
 # Variables for test environment
@@ -21,68 +21,157 @@ fi
 : ${QEMU_MEM:="4G"}
 : ${QEMU_CPU:="4"}
 : ${QEMU_BOOT:="uefi"}
-: ${QEMU_DISPLAY:="gtk"}
+: ${QEMU_DISPLAY:="auto"}
 : ${QEMU_DEBUG:="1"}
+: ${QEMU_NO_REBOOT:="0"}
+: ${QEMU_RESET_NVRAM:="0"}
+: ${QEMU_RESET_DISK:="0"}
+: ${QEMU_DISK_BUS:="ahci"}
+: ${QEMU_ISO_PATH:=""}
 
 TEST_HOME=$(pwd)/.test
-
-# Optional install disk for ISO boots (set QEMU_INSTALL_DISK_SIZE like "20G")
-# Defaults are set after TEST_HOME is known
-: ${QEMU_INSTALL_DISK_SIZE:=""}
-QEMU_INSTALL_DISK_PATH=""
-
-# Get testing mode from second argument
-
-if [ -z "$1" ]; then
-    SCRIPT_MODE="qemu-disk"
-else
-    SCRIPT_MODE=$1
-fi
-
-function find_iso {
-    iso_path=$(find $(pwd) -name "*.iso" | head -n 1)
-    if [ -z "$iso_path" ]; then
-        echo "No ISO found in $(pwd)"
-        exit 1
-    fi
-    echo $iso_path
-}
-
-
-# Quickly get the absolute path of a file
-
-function abs_path {
-    echo $(realpath $1)
-}
-
-: ${QEMU_DISK_PATH:="$TEST_HOME/disk.qcow2"}
-
-
-if [ "$SCRIPT_MODE" = "qemu-disk" ]; then
-    # Allow overriding disk path via QEMU_DISK_PATH; assume raw unless it ends with .qcow2
-    if [[ "$QEMU_DISK_PATH" == *.qcow2 ]]; then
-        QEMU_ARGS="-drive file=$QEMU_DISK_PATH,format=qcow2,if=virtio"
-    else
-        QEMU_ARGS="-drive file=$QEMU_DISK_PATH,format=raw,if=virtio"
-    fi
-else
-    QEMU_ARGS="-cdrom $(find_iso)"
-fi
-
-# if QEMU_BOOT = "uefi" then add UEFI firmware
-if [ "$QEMU_BOOT" = "uefi" ]; then
-    QEMU_ARGS+=" -bios /usr/share/OVMF/OVMF_CODE.fd"
-fi
-
-
-# Run QEMU
-
 
 function setup_test_home {
     mkdir -p $TEST_HOME
 }
 
 setup_test_home
+
+if [ "$QEMU_DISPLAY" = "auto" ]; then
+    QEMU_DISPLAY="gtk"
+fi
+
+# Install disk for ISO boots (set QEMU_INSTALL_DISK_SIZE like "64G")
+# Defaults are set after TEST_HOME is known
+: ${QEMU_INSTALL_DISK_SIZE:="64G"}
+: ${QEMU_INSTALL_DISK_PATH:=""}
+: ${QEMU_OVMF_CODE:="/usr/share/OVMF/OVMF_CODE.fd"}
+: ${QEMU_OVMF_VARS_TEMPLATE:="/usr/share/OVMF/OVMF_VARS.fd"}
+: ${QEMU_OVMF_VARS:="$TEST_HOME/OVMF_VARS.fd"}
+
+# Get testing mode from first argument
+
+if [ -z "${1:-}" ]; then
+    SCRIPT_MODE="disk"
+else
+    SCRIPT_MODE=$1
+fi
+
+function find_iso {
+    local iso_path
+    local latest_iso_path
+    local latest_iso_mtime
+    local pointer_mtime
+
+    if [ -n "$QEMU_ISO_PATH" ]; then
+        if [ ! -f "$QEMU_ISO_PATH" ]; then
+            echo "QEMU_ISO_PATH does not exist: $QEMU_ISO_PATH" >&2
+            exit 1
+        fi
+        realpath "$QEMU_ISO_PATH"
+        return
+    fi
+
+    latest_iso_path=$(
+        find "$(pwd)" -maxdepth 1 -type f -name "*.iso" -printf "%T@ %p\n" \
+            | sort -nr \
+            | awk 'NR == 1 { sub(/^[^ ]+ /, ""); print }'
+    )
+
+    if [ -f "$TEST_HOME/last-iso" ]; then
+        iso_path=$(cat "$TEST_HOME/last-iso")
+        if [ -f "$iso_path" ]; then
+            if [ -n "$latest_iso_path" ]; then
+                pointer_mtime=$(stat -c "%Y" "$iso_path")
+                latest_iso_mtime=$(stat -c "%Y" "$latest_iso_path")
+                if [ "$pointer_mtime" -lt "$latest_iso_mtime" ]; then
+                    echo "Ignoring older ISO pointer: $iso_path" >&2
+                else
+                    realpath "$iso_path"
+                    return
+                fi
+            else
+                realpath "$iso_path"
+                return
+            fi
+        fi
+        echo "Ignoring stale ISO pointer: $iso_path" >&2
+    fi
+
+    if [ -z "$latest_iso_path" ]; then
+        echo "No ISO found in $(pwd)" >&2
+        exit 1
+    fi
+    realpath "$latest_iso_path"
+}
+
+
+function disk_format {
+    if [[ "$1" == *.qcow2 ]]; then
+        echo "qcow2"
+    else
+        echo "raw"
+    fi
+}
+
+function add_disk {
+    local path="$1"
+    local id="$2"
+    local bootindex="$3"
+    local format
+
+    format=$(disk_format "$path")
+    QEMU_ARGS+=" -drive file=$path,format=$format,if=none,id=$id"
+
+    case "$QEMU_DISK_BUS" in
+      ahci|sata)
+        if [[ "$QEMU_ARGS" != *"ich9-ahci,id=ahci"* ]]; then
+            QEMU_ARGS+=" -device ich9-ahci,id=ahci"
+        fi
+        QEMU_ARGS+=" -device ide-hd,drive=$id,bus=ahci.$((bootindex - 1)),bootindex=$bootindex"
+        ;;
+      virtio)
+        QEMU_ARGS+=" -device virtio-blk-pci,drive=$id,bootindex=$bootindex"
+        ;;
+      *)
+        echo "Unknown QEMU_DISK_BUS: $QEMU_DISK_BUS"
+        echo "Valid values: ahci, sata, virtio"
+        exit 1
+        ;;
+    esac
+}
+
+: ${QEMU_DISK_PATH:="$TEST_HOME/disk.qcow2"}
+
+
+if [ "$SCRIPT_MODE" = "disk" ]; then
+    QEMU_ARGS=""
+    add_disk "$QEMU_DISK_PATH" "system_disk" "1"
+    QEMU_ARGS+=" -boot order=c,menu=on"
+elif [ "$SCRIPT_MODE" = "iso" ]; then
+    ISO_PATH=$(find_iso)
+    echo "Booting ISO: $ISO_PATH"
+    QEMU_ARGS="-cdrom $ISO_PATH"
+    QEMU_ARGS+=" -boot once=d,order=c,menu=on"
+else
+    echo "Unknown QEMU mode: $SCRIPT_MODE"
+    echo "Valid modes: disk, iso"
+    exit 1
+fi
+
+# if QEMU_BOOT = "uefi" then add UEFI firmware
+if [ "$QEMU_BOOT" = "uefi" ]; then
+    if [ "$QEMU_RESET_NVRAM" != "0" ]; then
+        rm -f "$QEMU_OVMF_VARS"
+    fi
+    if [ ! -f "$QEMU_OVMF_VARS" ]; then
+        cp "$QEMU_OVMF_VARS_TEMPLATE" "$QEMU_OVMF_VARS"
+    fi
+    QEMU_ARGS+=" -drive if=pflash,format=raw,readonly=on,file=$QEMU_OVMF_CODE"
+    QEMU_ARGS+=" -drive if=pflash,format=raw,file=$QEMU_OVMF_VARS"
+fi
+
+# Run QEMU
 
 # Now that TEST_HOME exists, set a default path for the optional install disk
 if [ -z "$QEMU_INSTALL_DISK_PATH" ]; then
@@ -92,23 +181,30 @@ fi
 # If requested and we are booting an ISO, create/attach an empty install disk
 function ensure_install_disk {
     if [ -n "$QEMU_INSTALL_DISK_SIZE" ]; then
+        if [ "$QEMU_RESET_DISK" != "0" ]; then
+            rm -f "$QEMU_INSTALL_DISK_PATH"
+        fi
         if [ ! -f "$QEMU_INSTALL_DISK_PATH" ]; then
             echo "Creating install disk at $QEMU_INSTALL_DISK_PATH ($QEMU_INSTALL_DISK_SIZE)"
             qemu-img create -f qcow2 "$QEMU_INSTALL_DISK_PATH" "$QEMU_INSTALL_DISK_SIZE"
         fi
-        QEMU_ARGS+=" -drive file=$QEMU_INSTALL_DISK_PATH,format=qcow2,if=virtio"
+        add_disk "$QEMU_INSTALL_DISK_PATH" "install_disk" "2"
     fi
 }
 
-if [ "$SCRIPT_MODE" = "qemu-iso" ]; then
+if [ "$SCRIPT_MODE" = "iso" ]; then
     ensure_install_disk
 fi
 
 if [ "$QEMU_DEBUG" != "0" ]; then
     QEMU_LOG_FILE="$TEST_HOME/qemu.log"
-    # Capture guest errors, keep the VM from auto-rebooting, and print a serial console for easy debugging.
-    QEMU_ARGS+=" -d guest_errors -D $QEMU_LOG_FILE -no-reboot -serial mon:stdio -monitor none"
+    # Capture guest errors and print a serial console for easy debugging.
+    QEMU_ARGS+=" -d guest_errors -D $QEMU_LOG_FILE -serial mon:stdio -monitor none"
     echo "Debug logging enabled. Log: $QEMU_LOG_FILE"
+fi
+
+if [ "$QEMU_NO_REBOOT" != "0" ]; then
+    QEMU_ARGS+=" -no-reboot"
 fi
 
 qemu-kvm \

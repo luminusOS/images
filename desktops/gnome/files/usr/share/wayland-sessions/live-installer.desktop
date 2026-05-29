@@ -1,0 +1,9 @@
+[Desktop Entry]
+Name=Luminus OS Installer
+Comment=Install Luminus OS
+Exec=gnome-session --session live-installer
+TryExec=gnome-session
+Type=Application
+DesktopNames=GNOME
+X-GDM-SessionRegisters=true
+X-GDM-CanRunHeadless=true

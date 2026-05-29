@@ -1,0 +1,18 @@
+// Allow the live installer user to run ReadyMade without authentication.
+// This is intentionally limited to the live ISO environment.
+polkit.addRule(function(action, subject) {
+    function exists(path) {
+        try {
+            polkit.spawn(["/usr/bin/test", "-e", path]);
+            return true;
+        } catch (error) {
+            return false;
+        }
+    }
+
+    var isLiveImage = exists("/dev/mapper/live-base") || exists("/run/initramfs/live");
+
+    if (isLiveImage && subject.user === "liveuser" && subject.isInGroup("wheel")) {
+        return polkit.Result.YES;
+    }
+});
