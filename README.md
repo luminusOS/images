@@ -9,6 +9,18 @@ An immutable operating system built on [Fedora bootc](https://containers.github.
 | **core** | Minimal base for containers and downstream Luminus images | `luminusos:<tag>` container image |
 | **workstation** | GNOME desktop for PCs and notebooks | Container image + ISO + qcow2 |
 
+## Planned Editions
+
+These names are reserved for future planning only. They are not active build targets yet.
+
+| Planned edition | Target |
+|-----------------|--------|
+| **mobile** | Phones and touch-first mobile devices |
+| **cast** | TVs and living-room displays |
+| **play** | Gaming handhelds |
+
+Planning notes live in each planned edition directory under `editions/`. These directories should only become active build targets after their package set, target devices, installer flow, and test matrix are defined.
+
 ## Versioning
 
 Releases follow the Fedora base version with a build date suffix:
@@ -28,7 +40,10 @@ Releases follow the Fedora base version with a build date suffix:
 ├── desktops/          # Desktop environment modules
 │   └── gnome/         # GNOME desktop (workstation)
 ├── editions/          # Bootable image definitions
+│   ├── cast/          # Planned TV/living-room edition
 │   ├── core/          # Shared base edition
+│   ├── mobile/        # Planned mobile edition
+│   ├── play/          # Planned gaming handheld edition
 │   └── workstation/   # Desktop edition
 └── tools/             # Local development helpers (QEMU)
 ```
