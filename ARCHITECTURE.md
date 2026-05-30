@@ -211,7 +211,7 @@ flowchart TD
     Dracut["rebuild live initramfs"]
     EFI["prepare EFI fallback<br/>BOOTX64.EFI + grub.cfg"]
     CopyAurora["install Aurora Shell"]
-    PatchAurora["patch metadata<br/>session-modes includes live-installer"]
+    PatchAurora["patch metadata<br/>session-modes includes live-installer + initial-setup"]
     GnomeBuild["desktops/gnome/build.sh"]
     Flatpaks["optional Flatpak installation"]
     ReadyMadeConfig["patch /etc/readymade.toml"]
@@ -243,7 +243,7 @@ The live installer shell mode inherits from `user` so the normal GNOME Shell ext
 | GNOME Initial Setup | Loaded in `initial-setup` shell mode. | Extension defaults apply. |
 | Installed system | Loaded in normal `user` mode. | Extension defaults apply. |
 
-The image also installs global user services for Aurora Shell. `luminusos-enable-aurora-shell.service` writes the Aurora Shell UUID into each GNOME user's `org.gnome.shell enabled-extensions` setting before GNOME Shell starts. `luminusos-activate-aurora-shell.service` then calls GNOME Shell's DBus `EnableExtension` method after the shell is initialized. This covers both the live ISO `liveuser` account and users created later by GNOME Initial Setup.
+Aurora Shell is enabled through GNOME Shell's native extension paths: live and Initial Setup sessions use their shell mode `enabledExtensions`, while normal user sessions use the image's compiled GNOME defaults and dconf defaults. No user service forces the extension on after login, so installed users can later change their extension state normally.
 
 ## ReadyMade Build Stage
 
@@ -316,8 +316,6 @@ The live ISO is not itself a bootc deployment. It is a live environment generate
 | `/usr/share/gnome-session/sessions/live-installer.session` | Defines the GNOME session with `Kiosk=true`. |
 | `/usr/lib/systemd/user/gnome-session@live-installer.target.d/live-installer.session.conf` | Requires GNOME Shell in `live-installer` mode and wants ReadyMade. |
 | `/usr/share/gnome-shell/modes/live-installer.json` | Defines the custom shell mode and forces Aurora Shell enabled. |
-| `/usr/lib/systemd/user/luminusos-enable-aurora-shell.service` | Writes Aurora Shell into the current GNOME user's dconf settings before Shell starts. |
-| `/usr/lib/systemd/user/luminusos-activate-aurora-shell.service` | Calls GNOME Shell over DBus to activate Aurora Shell in the running session. |
 | `/usr/lib/systemd/user/luminusos-readymade.service` | Starts ReadyMade in the live user session. |
 | `/etc/dconf/db/local.d/00-luminusos-live` | Live favorites and Aurora Shell module defaults. |
 | `/usr/local/share/applications/com.fyralabs.Readymade.desktop` | Live-only visible ReadyMade desktop entry. |
@@ -352,7 +350,6 @@ It combines:
 - A GNOME session file with `Kiosk=true`.
 - A GNOME Shell mode file named `live-installer.json`.
 - A user systemd target drop-in that starts Shell as `org.gnome.Shell@live-installer.service`.
-- Global user systemd services that write Aurora Shell into `enabled-extensions` and activate it over DBus after Shell is initialized.
 - A user systemd service that starts ReadyMade.
 
 The shell mode inherits from `user` to keep regular extension loading behavior. It then overrides the interactive surface so the installer session remains constrained:
@@ -484,8 +481,6 @@ The installed deployment removes:
 - `/etc/dconf/db/local`
 - `/etc/dconf/db/local.d/00-luminusos-live`
 - `/etc/dconf/profile/user`
-- `/etc/systemd/user/gnome-session@live-installer.target.wants/luminusos-activate-aurora-shell.service`
-- `/etc/systemd/user/gnome-session@live-installer.target.wants/luminusos-enable-aurora-shell.service`
 - live-visible `/usr/local/share/applications/com.fyralabs.Readymade.desktop` content, replaced with a `Hidden=true` override
 - `/usr/lib/systemd/user/luminusos-readymade.service`
 - `/usr/lib/systemd/user/gnome-session@live-installer.target.d/live-installer.session.conf`
