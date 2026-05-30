@@ -85,7 +85,7 @@ EOF
     fi
     mkdir -p "${root}/etc/gdm"
     printf '[daemon]\nInitialSetupEnable=true\n' > "${root}/etc/gdm/custom.conf" 2>/dev/null || true
-    printf 'luminus\n' > "${root}/etc/hostname" 2>/dev/null || true
+    install -m 0644 /etc/hostname "${root}/etc/hostname" 2>/dev/null || true
     mkdir -p "${root}/etc/luminusos"
     printf 'installed\n' > "${root}/etc/luminusos/system-mode" 2>/dev/null || true
   done

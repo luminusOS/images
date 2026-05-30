@@ -160,20 +160,29 @@ RUN --mount=type=bind,from=ctx,source=/,target=/ctx \
       fuse-overlayfs \
       cryptsetup \
       libhelium \
+      plymouth \
+      plymouth-plugin-script \
+      plymouth-scripts \
+      plymouth-system-theme \
+      plymouth-theme-spinner \
       ptyxis \
       jq \
     && dnf clean all && \
     rm -rf /var/cache/dnf/* /var/cache/libdnf5/*
 
 COPY --from=readymade-main /out/ /
+COPY desktops/gnome/files/etc/plymouth/plymouthd.conf /etc/plymouth/plymouthd.conf
+COPY desktops/gnome/files/etc/dracut.conf.d/10-luminusos-plymouth.conf /etc/dracut.conf.d/10-luminusos-plymouth.conf
+COPY desktops/gnome/files/usr/share/plymouth/themes/lucent/ /usr/share/plymouth/themes/lucent/
 
 # Rebuild initramfs for live ISO boot
 RUN KVER=$(kernel-install list --json pretty 2>/dev/null \
       | jq -r '.[] | select(.has_kernel == true) | .version' \
       | head -n1) && \
     [ -z "${KVER}" ] && KVER=$(ls -1 /lib/modules | tail -n1) || true && \
+    plymouth-set-default-theme lucent && \
     DRACUT_NO_XATTR=1 dracut -v -f --zstd --reproducible --no-hostonly \
-      --add "dmsquash-live dmsquash-live-autooverlay" \
+      --add "plymouth dmsquash-live dmsquash-live-autooverlay" \
       "/usr/lib/modules/${KVER}/initramfs.img" "${KVER}"
 
 # Copy EFI files for image-builder and provide a removable-media fallback path.

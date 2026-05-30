@@ -198,7 +198,7 @@ The Containerfile has four conceptual stages:
 1. `ctx`: local repository context with `common/` and `desktops/`.
 2. `aurora-extension`: downloads and validates the Aurora Shell extension zip.
 3. `readymade-main`: builds ReadyMade from upstream source with local install-path adjustments.
-4. Final workstation stage: starts from core and installs boot packages, GNOME, ReadyMade, Aurora Shell, Flatpaks, image-builder config, and wrappers.
+4. Final workstation stage: starts from core and installs boot packages, Plymouth, GNOME, ReadyMade, Aurora Shell, Flatpaks, image-builder config, and wrappers.
 
 ```mermaid
 flowchart TD
@@ -206,9 +206,10 @@ flowchart TD
     AuroraStage["aurora-extension stage"]
     ReadyMadeStage["readymade-main stage"]
     CoreImage["core image<br/>luminusos:<tag>"]
-    BootPkgs["boot/live packages<br/>kernel, dracut-live, grub, shim, podman"]
+    BootPkgs["boot/live packages<br/>kernel, dracut-live, grub, shim, podman, plymouth"]
     CopyReadyMade["copy ReadyMade output"]
-    Dracut["rebuild live initramfs"]
+    Plymouth["install Lucent Plymouth theme"]
+    Dracut["rebuild live initramfs<br/>with plymouth"]
     EFI["prepare EFI fallback<br/>BOOTX64.EFI + grub.cfg"]
     CopyAurora["install Aurora Shell"]
     PatchAurora["patch metadata<br/>session-modes includes live-installer + initial-setup"]
@@ -223,9 +224,22 @@ flowchart TD
     Ctx --> GnomeBuild
     AuroraStage --> CopyAurora
     ReadyMadeStage --> CopyReadyMade
-    CoreImage --> BootPkgs --> CopyReadyMade --> Dracut --> EFI --> CopyAurora --> PatchAurora --> GnomeBuild
+    CoreImage --> BootPkgs --> CopyReadyMade --> Plymouth --> Dracut --> EFI --> CopyAurora --> PatchAurora --> GnomeBuild
     GnomeBuild --> Flatpaks --> ReadyMadeConfig --> ValidateAurora --> Wrappers --> Lint --> Output
 ```
+
+## Plymouth
+
+The workstation image installs Plymouth and the `lucent` boot splash under `/usr/share/plymouth/themes/lucent`. The theme assets are adapted from the Plymouth theme in `https://github.com/luminusOS/orchiis`, but the local theme identity is `lucent`.
+
+Runtime configuration:
+
+- `/etc/plymouth/plymouthd.conf` sets `Theme=lucent`, `ShowDelay=0`, and `DeviceTimeout=8`.
+- `/etc/dracut.conf.d/10-luminusos-plymouth.conf` forces Plymouth configuration into the initramfs.
+- `/usr/lib/bootc/kargs.d/10-luminusos-splash.toml` provides default installed-system splash kernel arguments through bootc.
+- `/usr/lib/image-builder/bootc/iso.yaml` provides the live ISO splash kernel arguments.
+
+The live initramfs is rebuilt after Plymouth and the Lucent theme are installed so the live ISO can show the splash during early boot.
 
 ## Aurora Shell
 
@@ -277,7 +291,7 @@ Responsibilities:
 - Compile GLib schemas and update dconf.
 - Set graphical boot and GDM display manager links.
 - Enable installed first-boot cleanup fallback.
-- Set hostname to `luminus`.
+- Provide `/etc/hostname` from the static GNOME file tree.
 - Create `liveuser`.
 - Configure GDM autologin into `live-installer.desktop`.
 
@@ -291,7 +305,7 @@ flowchart TD
     Autostart["/etc/xdg/autostart<br/>ReadyMade"]
     Schemas["glib-compile-schemas<br/>dconf update"]
     GDM["graphical.target<br/>display-manager.service"]
-    Hostname["/etc/hostname = luminus"]
+    Hostname["static /etc/hostname"]
     LiveUser["liveuser + AccountsService"]
     Session["DefaultSession=live-installer.desktop"]
 
@@ -399,7 +413,7 @@ flowchart TD
     TargetRoot["target root"]
     Cleanup["remove live-only artifacts"]
     InitialSetup["enable GNOME Initial Setup"]
-    Hostname["write hostname luminus"]
+    Hostname["copy static hostname"]
     Grub["write final GRUB configs"]
     Done["installed system"]
 
@@ -453,7 +467,7 @@ flowchart TD
     WrapperCleanup["bootc-wrapper cleanup"]
     WriteInstalled["system-mode=installed"]
     WriteGDM["InitialSetupEnable=true"]
-    WriteHostname["hostname=luminus"]
+    WriteHostname["static hostname present"]
     FirstBoot["first installed boot"]
     CleanupService{"cleanup service enabled?"}
     LiveCheck{"live ISO detected?"}

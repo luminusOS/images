@@ -64,8 +64,6 @@ if command -v dconf >/dev/null 2>&1; then
   dconf update || true
 fi
 
-printf 'luminus\n' > /etc/hostname
-
 mkdir -p /etc/gdm
 cat > /etc/gdm/custom.conf <<'EOF'
 [daemon]

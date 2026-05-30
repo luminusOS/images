@@ -1,0 +1,8 @@
+[Plymouth Theme]
+Name=Lucent
+Description=Luminus OS boot splash
+ModuleName=script
+
+[script]
+ImageDir=/usr/share/plymouth/themes/lucent
+ScriptFile=/usr/share/plymouth/themes/lucent/lucent.script

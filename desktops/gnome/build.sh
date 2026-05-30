@@ -73,7 +73,6 @@ ln -sf /usr/lib/systemd/system/gdm.service /etc/systemd/system/display-manager.s
 # Mask services that fail in live environment
 systemctl mask bootloader-update.service
 systemctl enable luminusos-installed-firstboot-cleanup.service
-printf 'luminus\n' > /etc/hostname
 
 # Create a live user with autologin in locked mode
 useradd -m -G wheel liveuser || true
