@@ -128,7 +128,7 @@ ARG desktop=gnome
 ARG aurora_shell_uuid=aurora-shell@luminusos.github.io
 ARG skip_flatpaks=0
 ARG workstation_image=localhost/luminusos-workstation:latest
-ARG workstation_target_image=ghcr.io/luminusos/luminusos-workstation:${fedora_version}
+ARG workstation_target_image=ghcr.io/LuminusOS/luminusos-workstation:${fedora_version}
 
 # Boot + bootloader + live session packages
 RUN --mount=type=bind,from=ctx,source=/,target=/ctx \

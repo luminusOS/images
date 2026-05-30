@@ -679,7 +679,7 @@ The installed system is a bootc deployment. Its update reference comes from `boo
 Local ISO builds normally use the local workstation tag. Release ISOs should set `LOS_WORKSTATION_TARGET_IMAGE` to a registry-published reference:
 
 ```bash
-LOS_WORKSTATION_TARGET_IMAGE=ghcr.io/OWNER/luminusos-workstation:44
+LOS_WORKSTATION_TARGET_IMAGE=ghcr.io/LuminusOS/luminusos-workstation:44
 ```
 
 ```mermaid

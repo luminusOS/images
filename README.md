@@ -137,7 +137,7 @@ Variables can be overridden via environment or a `.env` file at the project root
 | `LOS_BASE` | `quay.io/fedora/fedora-bootc:44` | Base bootc image |
 | `LOS_REGISTRY` | `localhost` | Container registry for local builds |
 | `LOS_TAG` | `44.YYYYMMDD` | Image tag (auto-generated) |
-| `LOS_WORKSTATION_TARGET_IMAGE` | local workstation tag | Installed system update reference; set to `ghcr.io/OWNER/luminusos-workstation:44` for release ISOs |
+| `LOS_WORKSTATION_TARGET_IMAGE` | local workstation tag | Installed system update reference; set to `ghcr.io/LuminusOS/luminusos-workstation:44` for release ISOs |
 | `LOS_NAME` | `LuminusOS` | OS name |
 | `LOS_PRETTY_NAME` | `Luminus OS` | OS pretty name |
 | `AURORA_SHELL_VERSION` | `v50.3` | Aurora Shell release tag |
@@ -162,8 +162,8 @@ GitHub Actions builds active editions from Fedora release branches. Branch names
 Container images use the Fedora version number as the floating tag, without the branch `f` prefix:
 
 ```
-ghcr.io/OWNER/luminusos:44
-ghcr.io/OWNER/luminusos-workstation:44
+ghcr.io/LuminusOS/luminusos:44
+ghcr.io/LuminusOS/luminusos-workstation:44
 ```
 
 ## Rebasing to Luminus OS
@@ -171,7 +171,7 @@ ghcr.io/OWNER/luminusos-workstation:44
 Once the workstation image is published, rebase any existing Fedora Atomic system:
 
 ```bash
-bootc switch ghcr.io/OWNER/luminusos-workstation:44
+bootc switch ghcr.io/LuminusOS/luminusos-workstation:44
 ```
 
 ## License
