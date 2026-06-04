@@ -201,3 +201,18 @@ clean:
 clean-all: clean
     -sudo buildah rmi {{ core_image }} || true
     -sudo buildah rmi {{ workstation_image }} || true
+
+# Verify lint/format tools are available
+check:
+	@command -v shellcheck || (echo "shellcheck not found"; exit 1)
+	@command -v shfmt      || (echo "shfmt not found"; exit 1)
+
+# Lint all shell scripts
+lint:
+	find common editions tools -name '*.sh' | xargs shellcheck -S warning
+	shellcheck *.sh 2>/dev/null || true
+
+# Format all shell scripts in-place
+format:
+	find common editions tools -name '*.sh' | xargs shfmt -w -i 2 -ci
+	shfmt -w -i 2 -ci *.sh 2>/dev/null || true
