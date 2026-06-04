@@ -16,7 +16,8 @@ ARG fedora_version=44
 ARG aurora_shell_version
 ARG aurora_shell_uuid=aurora-shell@luminusos.github.io
 
-RUN mkdir -p /etc/dnf/vars /etc/yum/vars && \
+RUN --mount=type=cache,target=/var/cache/dnf \
+    mkdir -p /etc/dnf/vars /etc/yum/vars && \
     printf '%s\n' "${fedora_version}" > /etc/dnf/vars/releasever && \
     printf '%s\n' "${fedora_version}" > /etc/yum/vars/releasever && \
     dnf -y --releasever="${fedora_version}" install curl unzip jq && \
@@ -36,7 +37,9 @@ FROM quay.io/fedora/fedora-bootc:${fedora_version} AS readymade-main
 ARG fedora_version=44
 ARG readymade_ref=main
 
-RUN mkdir -p /etc/dnf/vars /etc/yum/vars && \
+RUN --mount=type=cache,target=/var/cache/dnf \
+    --mount=type=tmpfs,target=/tmp \
+    mkdir -p /etc/dnf/vars /etc/yum/vars && \
     printf '%s\n' "${fedora_version}" > /etc/dnf/vars/releasever && \
     printf '%s\n' "${fedora_version}" > /etc/yum/vars/releasever && \
     dnf -y install \
@@ -118,7 +121,7 @@ RUN mkdir -p /etc/dnf/vars /etc/yum/vars && \
     install -Dm755 target/release/readymade /out/usr/bin/readymade && \
     bash scripts/install.sh /out && \
     dnf clean all && \
-    rm -rf /var/cache/dnf/* /var/cache/libdnf5/* /src/readymade/target /tmp/cargo
+    rm -rf /src/readymade/target
 
 # ── Workstation image (bootable desktop and live ISO root) ────────────────
 FROM ${core_image}
@@ -139,11 +142,11 @@ LABEL containers.bootc="1" \
 
 # Boot + bootloader + live session packages
 RUN --mount=type=bind,from=ctx,source=/,target=/ctx \
+    --mount=type=cache,target=/var/cache/dnf \
     mkdir -p /etc/dnf/vars /etc/yum/vars && \
     printf '%s\n' "${fedora_version}" > /etc/dnf/vars/releasever && \
     printf '%s\n' "${fedora_version}" > /etc/yum/vars/releasever && \
     dnf clean all && \
-    rm -rf /var/cache/dnf/* /var/cache/libdnf5/* && \
     /ctx/common/recover-rpmdb.sh && \
     dnf -y install \
       --releasever="${fedora_version}" \
@@ -178,8 +181,7 @@ RUN --mount=type=bind,from=ctx,source=/,target=/ctx \
       plymouth-theme-spinner \
       ptyxis \
       jq \
-    && dnf clean all && \
-    rm -rf /var/cache/dnf/* /var/cache/libdnf5/*
+    && dnf clean all
 
 COPY --from=readymade-main /out/ /
 COPY editions/workstation/files/etc/plymouth/plymouthd.conf /etc/plymouth/plymouthd.conf
@@ -246,7 +248,6 @@ RUN test -f /usr/share/gnome-shell/extensions/${aurora_shell_uuid}/metadata.json
 # Desktop environment and Flatpaks
 RUN --mount=type=bind,from=ctx,source=/,target=/ctx \
     --mount=type=cache,target=/var/cache/dnf \
-    rm -rf /var/cache/dnf/* /var/cache/libdnf5/* && \
     /ctx/common/recover-rpmdb.sh && \
     env --chdir=/ctx/workstation ./build.sh && \
     if [ "${skip_flatpaks}" = "1" ]; then \

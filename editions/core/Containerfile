@@ -27,7 +27,6 @@ RUN mkdir -p /etc/dnf/vars /etc/yum/vars && \
 # Common base packages
 RUN --mount=type=bind,from=ctx,source=/,target=/ctx \
     --mount=type=cache,target=/var/cache/dnf \
-    rm -rf /var/cache/dnf/* /var/cache/libdnf5/* && \
     /ctx/common/recover-rpmdb.sh && \
     env --chdir=/ctx/common ./build.sh && \
     /ctx/common/cleanup.sh
@@ -38,6 +37,7 @@ RUN sed -i \
     /usr/lib/os-release
 
 RUN --mount=type=bind,from=ctx,source=/,target=/ctx \
+    --mount=type=cache,target=/var/cache/dnf \
     /ctx/common/recover-rpmdb.sh && \
     dnf -y install \
       --releasever="${fedora_version}" \
