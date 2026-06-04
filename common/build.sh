@@ -19,6 +19,5 @@ dnf -y "${dnf_args[@]}" install \
   bootc \
   greenboot \
   greenboot-default-health-checks \
-  greenboot-grub2 \
   NetworkManager \
   systemd-udev

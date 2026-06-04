@@ -48,8 +48,6 @@ RUN --mount=type=bind,from=ctx,source=/,target=/ctx \
     dnf clean all
 
 RUN systemctl enable \
-      greenboot-grub2-set-counter.service \
-      greenboot-grub2-set-success.service \
       greenboot-healthcheck.service \
       greenboot-status.service \
       greenboot-task-runner.service \
