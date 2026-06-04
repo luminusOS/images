@@ -128,6 +128,14 @@ ARG aurora_shell_uuid=aurora-shell@luminusos.github.io
 ARG skip_flatpaks=0
 ARG workstation_image=localhost/luminusos-workstation:latest
 ARG workstation_target_image=ghcr.io/LuminusOS/luminusos-workstation:${fedora_version}
+ARG source_url="https://github.com/LuminusOS/images"
+
+LABEL containers.bootc="1" \
+      org.opencontainers.image.title="LuminusOS Workstation" \
+      org.opencontainers.image.description="Luminus OS bootc image with GNOME desktop" \
+      org.opencontainers.image.vendor="LuminusOS" \
+      org.opencontainers.image.source="${source_url}" \
+      org.opencontainers.image.licenses="Apache-2.0"
 
 # Boot + bootloader + live session packages
 RUN --mount=type=bind,from=ctx,source=/,target=/ctx \

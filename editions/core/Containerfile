@@ -11,6 +11,14 @@ FROM ${base}
 ARG fedora_version=44
 ARG distro_name="LuminusOS"
 ARG distro_pretty_name="Luminus OS"
+ARG source_url="https://github.com/LuminusOS/images"
+
+LABEL containers.bootc="1" \
+      org.opencontainers.image.title="LuminusOS Core" \
+      org.opencontainers.image.description="Luminus OS base bootc image" \
+      org.opencontainers.image.vendor="LuminusOS" \
+      org.opencontainers.image.source="${source_url}" \
+      org.opencontainers.image.licenses="Apache-2.0"
 
 RUN mkdir -p /etc/dnf/vars /etc/yum/vars && \
     printf '%s\n' "${fedora_version}" > /etc/dnf/vars/releasever && \
