@@ -47,12 +47,14 @@ RUN --mount=type=bind,from=ctx,source=/,target=/ctx \
       terra-release && \
     dnf clean all
 
-RUN systemctl enable \
+RUN for svc in \
       greenboot-healthcheck.service \
       greenboot-status.service \
       greenboot-task-runner.service \
       redboot-auto-reboot.service \
-      redboot-task-runner.service
+      redboot-task-runner.service; do \
+    systemctl enable "$svc" 2>/dev/null || echo "skip: $svc not found in this greenboot version"; \
+    done
 
 # Final cleanup
 RUN --mount=type=bind,from=ctx,source=/,target=/ctx \
