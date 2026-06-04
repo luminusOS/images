@@ -39,9 +39,20 @@ RUN --mount=type=bind,from=ctx,source=/,target=/ctx \
       terra-release && \
     dnf clean all
 
+RUN systemctl enable \
+      greenboot-grub2-set-counter.service \
+      greenboot-grub2-set-success.service \
+      greenboot-healthcheck.service \
+      greenboot-status.service \
+      greenboot-task-runner.service \
+      redboot-auto-reboot.service \
+      redboot-task-runner.service
+
 # Final cleanup
 RUN --mount=type=bind,from=ctx,source=/,target=/ctx \
     /ctx/common/cleanup.sh && \
     /ctx/common/finalize.sh
 
-RUN bootc container lint --no-truncate
+RUN ! command -v rpm-ostree && \
+    command -v bootc && \
+    bootc container lint --no-truncate
