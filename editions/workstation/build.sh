@@ -25,7 +25,8 @@ dnf -y "${dnf_args[@]}" install --setopt=install_weak_deps=False \
   gdm \
   gnome-initial-setup \
   gnome-shell \
-  gnome-backgrounds
+  gnome-backgrounds \
+  sushi
 
 dnf -y "${dnf_args[@]}" install --setopt=install_weak_deps=False gnome-software
 

@@ -10,7 +10,7 @@ build_date := `date +%Y%m%d`
 tag        := env("LOS_TAG", fedora_ver + "." + build_date)
 core_image := registry + "/luminusos:" + tag
 workstation_image := registry + "/luminusos-workstation:" + tag
-workstation_target_image := env("LOS_WORKSTATION_TARGET_IMAGE", workstation_image)
+workstation_target_image := env("LOS_WORKSTATION_TARGET_IMAGE", "ghcr.io/LuminusOS/luminusos-workstation:" + fedora_ver)
 aurora_shell_version := env("AURORA_SHELL_VERSION", "v50.3")
 force_core := env("LOS_FORCE_CORE", "0")
 skip_flatpaks := env("LOS_SKIP_FLATPAKS", "0")
@@ -73,7 +73,6 @@ build edition="workstation":
           --build-arg skip_flatpaks={{ skip_flatpaks }} \
           --build-arg workstation_image={{ workstation_image }} \
           --build-arg workstation_target_image={{ workstation_target_image }} \
-          --build-arg desktop=gnome \
           --tag {{ workstation_image }} \
           --file editions/workstation/Containerfile \
           .

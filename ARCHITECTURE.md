@@ -18,7 +18,8 @@ Additional edition scaffolding should not be added unless package scope, target 
 - Use GNOME Initial Setup after installation for creation of the real local user.
 - Remove live-only state before the installed system reaches first user login.
 - Keep Btrfs storage layout aligned across ReadyMade, image-builder, and local wrappers.
-- Preserve bootc update behavior through the installed target image reference.
+- Preserve `bootc upgrade` behavior through the installed target image reference.
+- Keep package installation as an image-build concern; installed systems do not ship the `rpm-ostree` client.
 
 ## High-Level View
 
@@ -60,17 +61,15 @@ flowchart TD
 │   ├── flatpaks
 │   ├── install-flatpaks.sh
 │   └── recover-rpmdb.sh
-├── desktops/
-│   └── gnome/
-│       ├── build.sh
-│       └── files/
 ├── docs/
 │   └── architecture.md
 ├── editions/
 │   ├── core/
 │   │   └── Containerfile
 │   └── workstation/
-│       └── Containerfile
+│       ├── Containerfile
+│       ├── build.sh
+│       └── files/
 └── tools/
     ├── install-qemu.sh
     └── qemu.sh
@@ -85,8 +84,8 @@ flowchart TD
 | Fedora version | Controlled by `LOS_FEDORA_VERSION`, default `44`. |
 | Local tag | `<fedora>.<YYYYMMDD>` unless `LOS_TAG` is set. |
 | Shared scripts | Stored in `common/` and called through `/ctx` in Containerfiles. |
-| Desktop module | Stored in `desktops/gnome/`. |
-| Static desktop files | Stored under `desktops/gnome/files/` and copied into `/`. |
+| Desktop files | Stored under `editions/workstation/files/` and copied into `/`. |
+| Desktop build script | `editions/workstation/build.sh`, called from the workstation Containerfile. |
 | Artifact packaging | Handled by `image-builder` through `just package workstation`. |
 | Local VM testing | Handled by `tools/qemu.sh` and `tools/install-qemu.sh`. |
 
@@ -100,7 +99,7 @@ flowchart TD
 | `LOS_TAG` | `<fedora>.<date>` | Build tag. |
 | `LOS_NAME` | `LuminusOS` | OS name written to os-release. |
 | `LOS_PRETTY_NAME` | `Luminus OS` | Pretty OS name written to os-release. |
-| `LOS_WORKSTATION_TARGET_IMAGE` | local workstation image | Installed bootc update reference. |
+| `LOS_WORKSTATION_TARGET_IMAGE` | `ghcr.io/LuminusOS/luminusos-workstation:44` | Installed bootc update reference. |
 | `AURORA_SHELL_VERSION` | `v50.3` | Aurora Shell release downloaded during build. |
 | `LOS_FORCE_CORE` | `0` | Rebuild core even if the local stamp is unchanged. |
 | `LOS_SKIP_FLATPAKS` | `0` | Skip Flatpak installation during workstation build. |
@@ -154,22 +153,22 @@ Responsibilities:
 
 - Set `/etc/dnf/vars/releasever` and `/etc/yum/vars/releasever`.
 - Run `common/build.sh`.
-- Install shared base packages: currently `NetworkManager` and `systemd-udev`.
+- Install shared base packages: currently `bootc`, `NetworkManager`, and `systemd-udev`.
 - Update `/usr/lib/os-release` branding.
 - Install `terra-release`.
-- Run cleanup/finalization.
-- Run `bootc container lint`.
+- Run cleanup/finalization, including removal of `rpm-ostree`.
+- Verify `rpm-ostree` is absent and run `bootc container lint`.
 
 ```mermaid
 flowchart TD
     Fedora["Fedora bootc base"]
     Vars["write releasever vars"]
     CommonBuild["common/build.sh"]
-    Packages["NetworkManager<br/>systemd-udev"]
+    Packages["bootc<br/>NetworkManager<br/>systemd-udev"]
     Branding["os-release branding"]
     Terra["terra-release"]
-    Cleanup["common/cleanup.sh<br/>common/finalize.sh"]
-    Lint["bootc container lint"]
+    Cleanup["common/cleanup.sh<br/>common/finalize.sh<br/>remove rpm-ostree"]
+    Lint["verify no rpm-ostree<br/>bootc container lint"]
     Output["luminusos:<tag>"]
 
     Fedora --> Vars --> CommonBuild --> Packages --> Branding --> Terra --> Cleanup --> Lint --> Output
@@ -182,7 +181,7 @@ flowchart TD
 | `common/build.sh` | Copies static `files/` content when present, recovers the RPM database, and installs shared base packages. |
 | `common/recover-rpmdb.sh` | Recovers or rebuilds RPM database state for containerized builds. |
 | `common/cleanup.sh` | Cleans DNF/libdnf caches and `/tmp` between layers. |
-| `common/finalize.sh` | Performs final cleanup and prunes runtime `/var` state. |
+| `common/finalize.sh` | Removes `rpm-ostree`, performs final cleanup, and prunes runtime `/var` state. |
 | `common/install-flatpaks.sh` | Installs Flatpak, adds Flathub, and installs refs listed in `common/flatpaks`. |
 
 ## Workstation Image
@@ -195,25 +194,25 @@ The workstation image is built by `editions/workstation/Containerfile`. It is in
 
 The Containerfile has four conceptual stages:
 
-1. `ctx`: local repository context with `common/` and `desktops/`.
+1. `ctx`: local repository context with `common/` and `editions/workstation/`.
 2. `aurora-extension`: downloads and validates the Aurora Shell extension zip.
 3. `readymade-main`: builds ReadyMade from upstream source with local install-path adjustments.
 4. Final workstation stage: starts from core and installs boot packages, Plymouth, GNOME, ReadyMade, Aurora Shell, Flatpaks, image-builder config, and wrappers.
 
 ```mermaid
 flowchart TD
-    Ctx["ctx stage<br/>common + desktops"]
+    Ctx["ctx stage<br/>common + workstation"]
     AuroraStage["aurora-extension stage"]
     ReadyMadeStage["readymade-main stage"]
     CoreImage["core image<br/>luminusos:<tag>"]
-    BootPkgs["boot/live packages<br/>kernel, dracut-live, grub, shim, podman, plymouth"]
+    BootPkgs["boot/live packages<br/>kernel, dracut-live, grub, shim, bootc, podman, toolbox, flatpak, plymouth"]
     CopyReadyMade["copy ReadyMade output"]
     Plymouth["install Lucent Plymouth theme"]
     Dracut["rebuild live initramfs<br/>with plymouth"]
     EFI["prepare EFI fallback<br/>BOOTX64.EFI + grub.cfg"]
     CopyAurora["install Aurora Shell"]
     PatchAurora["patch metadata<br/>session-modes includes live-installer + initial-setup"]
-    GnomeBuild["desktops/gnome/build.sh"]
+    GnomeBuild["editions/workstation/build.sh"]
     Flatpaks["optional Flatpak installation"]
     ReadyMadeConfig["patch /etc/readymade.toml"]
     ValidateAurora["compile schemas<br/>validate shell version + session mode"]
@@ -277,12 +276,12 @@ The final workstation stage copies `/out/` into the image.
 
 ## GNOME Desktop Module
 
-Main file: `desktops/gnome/build.sh`.
+Main file: `editions/workstation/build.sh`.
 
 Responsibilities:
 
-- Copy `desktops/gnome/files/` into `/`.
-- Install `accountsservice`, `gdm`, `gnome-initial-setup`, `gnome-shell`, `gnome-backgrounds`, and `gnome-software`.
+- Copy `editions/workstation/files/` into `/`.
+- Install `accountsservice`, `gdm`, `gnome-initial-setup`, `gnome-shell`, `gnome-backgrounds`, `sushi`, and `gnome-software`.
 - Prepare `/boot/efi` and `/boot/loader/entries`.
 - Replace legacy live installer desktop entry behavior with ReadyMade.
 - Keep ReadyMade visible in live mode only.
@@ -663,7 +662,7 @@ stateDiagram-v2
     InstalledPrepared --> InitialSetup: GDM InitialSetupEnable
     InitialSetup --> InstalledReady: user created
     QCOW2 --> InstalledReady
-    InstalledReady --> Updated: bootc update/switch
+    InstalledReady --> Updated: bootc upgrade
 ```
 
 | State | Indicator | Behavior |
@@ -674,13 +673,17 @@ stateDiagram-v2
 
 ## Updates
 
-The installed system is a bootc deployment. Its update reference comes from `bootc_target_imgref` in `/etc/readymade.toml` during installation.
+The installed system is a closed bootc deployment. Its update reference comes from `bootc_target_imgref` in `/etc/readymade.toml` during installation, and normal updates are performed with `bootc upgrade` against that OCI reference.
 
-Local ISO builds normally use the local workstation tag. Release ISOs should set `LOS_WORKSTATION_TARGET_IMAGE` to a registry-published reference:
+The final image removes the `rpm-ostree` package, so client-side package layering is not available. Package changes must be made in the Containerfiles or build scripts and delivered as a new OCI image.
+
+By default, installed systems track the Fedora-versioned workstation image in GHCR:
 
 ```bash
 LOS_WORKSTATION_TARGET_IMAGE=ghcr.io/LuminusOS/luminusos-workstation:44
 ```
+
+Local installer tests may override `LOS_WORKSTATION_TARGET_IMAGE`, but release builds should leave it on the registry-published reference so installed systems use `bootc upgrade` from the Luminus OS OCI registry.
 
 ```mermaid
 flowchart TD
@@ -688,7 +691,7 @@ flowchart TD
     Ref["bootc target image ref"]
     Registry["OCI registry"]
     NewImage["new workstation image"]
-    Update["bootc update"]
+    Update["bootc upgrade"]
     Deployment["new deployment"]
     Reboot["reboot"]
     Active["new active deployment"]
@@ -702,7 +705,7 @@ When changing this repository, keep these points aligned:
 
 - `Justfile`, `README.md`, `ARCHITECTURE.md`, and `docs/architecture.md` must agree on active commands and supported editions.
 - `--bootc-default-fs btrfs`, ReadyMade repart templates, and `disk.yaml` must describe the same storage layout.
-- Any live-only file added under `desktops/gnome/files/` should be removed by `bootc-wrapper`, removed by `installed-firstboot-cleanup`, and excluded by repart when applicable.
+- Any live-only file added under `editions/workstation/files/` should be removed by `bootc-wrapper`, removed by `installed-firstboot-cleanup`, and excluded by repart when applicable.
 - Changes to `live-installer` must consider the Wayland session file, GNOME session file, GNOME Shell mode JSON, systemd user drop-in, Aurora Shell metadata, and cleanup paths.
 - If the ReadyMade desktop file name changes, update GNOME build logic, autostart, cleanup, and repart exclusions.
 - If the install flow changes, update `readymade.toml`, wrappers, and this document.

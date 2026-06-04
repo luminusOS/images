@@ -6,8 +6,8 @@ ARG readymade_ref=main
 # ── Context stage ─────────────────────────────────────────────────────────
 FROM scratch AS ctx
 
-COPY common   /common
-COPY desktops /desktops
+COPY common              /common
+COPY editions/workstation /workstation
 
 # ── Aurora-shell release artifact ─────────────────────────────────────────
 FROM quay.io/fedora/fedora-bootc:${fedora_version} AS aurora-extension
@@ -124,7 +124,6 @@ RUN mkdir -p /etc/dnf/vars /etc/yum/vars && \
 FROM ${core_image}
 
 ARG fedora_version=44
-ARG desktop=gnome
 ARG aurora_shell_uuid=aurora-shell@luminusos.github.io
 ARG skip_flatpaks=0
 ARG workstation_image=localhost/luminusos-workstation:latest
@@ -152,7 +151,11 @@ RUN --mount=type=bind,from=ctx,source=/,target=/ctx \
       grub2 grub2-tools grub2-common grub2-pc-modules \
       grub2-efi-x64 grub2-efi-x64-modules grub2-efi-x64-cdboot \
       shim-x64 xorriso dosfstools isomd5sum \
-      livesys-scripts podman \
+      livesys-scripts \
+      bootc \
+      podman \
+      toolbox \
+      flatpak \
       mesa-dri-drivers \
       mesa-libGL \
       mesa-libEGL \
@@ -171,9 +174,9 @@ RUN --mount=type=bind,from=ctx,source=/,target=/ctx \
     rm -rf /var/cache/dnf/* /var/cache/libdnf5/*
 
 COPY --from=readymade-main /out/ /
-COPY desktops/gnome/files/etc/plymouth/plymouthd.conf /etc/plymouth/plymouthd.conf
-COPY desktops/gnome/files/etc/dracut.conf.d/10-luminusos-plymouth.conf /etc/dracut.conf.d/10-luminusos-plymouth.conf
-COPY desktops/gnome/files/usr/share/plymouth/themes/lucent/ /usr/share/plymouth/themes/lucent/
+COPY editions/workstation/files/etc/plymouth/plymouthd.conf /etc/plymouth/plymouthd.conf
+COPY editions/workstation/files/etc/dracut.conf.d/10-luminusos-plymouth.conf /etc/dracut.conf.d/10-luminusos-plymouth.conf
+COPY editions/workstation/files/usr/share/plymouth/themes/lucent/ /usr/share/plymouth/themes/lucent/
 
 # Rebuild initramfs for live ISO boot
 RUN KVER=$(kernel-install list --json pretty 2>/dev/null \
@@ -237,7 +240,7 @@ RUN --mount=type=bind,from=ctx,source=/,target=/ctx \
     --mount=type=cache,target=/var/cache/dnf \
     rm -rf /var/cache/dnf/* /var/cache/libdnf5/* && \
     /ctx/common/recover-rpmdb.sh && \
-    env --chdir=/ctx/desktops/${desktop} ./build.sh && \
+    env --chdir=/ctx/workstation ./build.sh && \
     if [ "${skip_flatpaks}" = "1" ]; then \
       echo "Skipping Flatpak installation because skip_flatpaks=1"; \
     else \
@@ -279,4 +282,6 @@ RUN if [ -x /usr/libexec/luminusos/bootc-wrapper ]; then \
       install -m 0755 /usr/libexec/luminusos/bootupctl-wrapper /usr/bin/bootupctl; \
     fi
 
-RUN bootc container lint --no-truncate
+RUN ! command -v rpm-ostree && \
+    command -v bootc && \
+    bootc container lint --no-truncate
