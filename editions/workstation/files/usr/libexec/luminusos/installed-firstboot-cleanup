@@ -70,6 +70,4 @@ cat > /etc/gdm/custom.conf <<'EOF'
 InitialSetupEnable=true
 EOF
 
-systemctl enable greenboot-healthcheck.service >/dev/null 2>&1 || true
-
 systemctl disable livesys.service livesys-late.service luminusos-installed-firstboot-cleanup.service >/dev/null 2>&1 || true
