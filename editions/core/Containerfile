@@ -47,8 +47,6 @@ RUN --mount=type=bind,from=ctx,source=/,target=/ctx \
       terra-release && \
     dnf clean all
 
-RUN systemctl enable greenboot-healthcheck.service
-
 # Final cleanup
 RUN --mount=type=bind,from=ctx,source=/,target=/ctx \
     /ctx/common/cleanup.sh && \
