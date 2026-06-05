@@ -3,11 +3,16 @@ ARG fedora_version=44
 ARG aurora_shell_version=v50.3
 ARG readymade_ref=main
 
-# ── Context stage ─────────────────────────────────────────────────────────
-FROM scratch AS ctx
+# ── Context stage: scripts only (stable — changes rarely) ─────────────────
+FROM scratch AS ctx-scripts
 
-COPY common              /common
-COPY editions/workstation /workstation
+COPY common                        /common
+COPY editions/workstation/build.sh /workstation/build.sh
+
+# ── Context stage: static files (volatile — changes often) ────────────────
+FROM scratch AS ctx-files
+
+COPY editions/workstation/files /workstation/files
 
 # ── Aurora-shell release artifact ─────────────────────────────────────────
 FROM quay.io/fedora/fedora-bootc:${fedora_version} AS aurora-extension
@@ -141,7 +146,7 @@ LABEL containers.bootc="1" \
       org.opencontainers.image.licenses="Apache-2.0"
 
 # Boot + bootloader + live session packages
-RUN --mount=type=bind,from=ctx,source=/,target=/ctx \
+RUN --mount=type=bind,from=ctx-scripts,source=/,target=/ctx \
     --mount=type=cache,target=/var/cache/dnf \
     mkdir -p /etc/dnf/vars /etc/yum/vars && \
     printf '%s\n' "${fedora_version}" > /etc/dnf/vars/releasever && \
@@ -245,17 +250,35 @@ RUN test -f /usr/share/gnome-shell/extensions/${aurora_shell_uuid}/metadata.json
     test -n "$(find /usr/share/gnome-shell/extensions/${aurora_shell_uuid}/metadata.json -perm -004 -print -quit)" && \
     test -n "$(find /usr/share/gnome-shell/extensions/${aurora_shell_uuid} -mindepth 1 -maxdepth 1 -print -quit)"
 
-# Desktop environment and Flatpaks
-RUN --mount=type=bind,from=ctx,source=/,target=/ctx \
+# GNOME desktop environment packages (stable cache — only invalidated by package list changes)
+RUN --mount=type=bind,from=ctx-scripts,source=/,target=/ctx \
     --mount=type=cache,target=/var/cache/dnf \
     /ctx/common/recover-rpmdb.sh && \
-    env --chdir=/ctx/workstation ./build.sh && \
+    dnf -y --releasever="${fedora_version}" install \
+      --setopt=install_weak_deps=False \
+      --disablerepo="terra*" \
+      accountsservice \
+      gdm \
+      gnome-initial-setup \
+      gnome-shell \
+      gnome-backgrounds \
+      sushi \
+      gnome-software && \
+    dnf clean all
+
+# Static files + live session configuration (invalidated only by files/ or build.sh changes)
+RUN --mount=type=bind,from=ctx-scripts,source=/,target=/ctx \
+    --mount=type=bind,from=ctx-files,source=/workstation/files,target=/wfiles \
+    cp -arf /wfiles/. / && \
+    env --chdir=/ctx/workstation ./build.sh
+
+# Flatpaks (separate step — skip without invalidating config layer)
+RUN --mount=type=bind,from=ctx-scripts,source=/,target=/ctx \
     if [ "${skip_flatpaks}" = "1" ]; then \
       echo "Skipping Flatpak installation because skip_flatpaks=1"; \
     else \
       bash /ctx/common/install-flatpaks.sh; \
-    fi && \
-    /ctx/common/cleanup.sh
+    fi
 
 # ReadyMade must install a bootc deployment, not a copied live rootfs.
 RUN sed -i \
@@ -278,7 +301,7 @@ RUN test -f /usr/share/gnome-shell/extensions/${aurora_shell_uuid}/metadata.json
       /usr/share/gnome-shell/extensions/${aurora_shell_uuid}/metadata.json
 
 # Final cleanup
-RUN --mount=type=bind,from=ctx,source=/,target=/ctx \
+RUN --mount=type=bind,from=ctx-scripts,source=/,target=/ctx \
     /ctx/common/cleanup.sh && \
     /ctx/common/finalize.sh
 

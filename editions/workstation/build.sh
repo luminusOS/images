@@ -1,35 +1,6 @@
 #!/usr/bin/env bash
 set -uexo pipefail
 
-# GNOME Desktop module
-releasever="$(cat /etc/dnf/vars/releasever 2>/dev/null || true)"
-dnf_args=()
-if [ -n "${releasever}" ]; then
-  dnf_args+=(--releasever="${releasever}")
-fi
-dnf_args+=(--disablerepo="terra*")
-
-# Copy static files into the image
-if [ -d files ]; then
-  find files -mindepth 1 -maxdepth 1 -exec cp -arf {} / \;
-fi
-
-if [ -x /ctx/common/recover-rpmdb.sh ]; then
-  /ctx/common/recover-rpmdb.sh
-else
-  rpm --rebuilddb
-fi
-
-dnf -y "${dnf_args[@]}" install --setopt=install_weak_deps=False \
-  accountsservice \
-  gdm \
-  gnome-initial-setup \
-  gnome-shell \
-  gnome-backgrounds \
-  sushi
-
-dnf -y "${dnf_args[@]}" install --setopt=install_weak_deps=False gnome-software
-
 # ReadyMade's CleanupBoot postinstall module expects a BLS entry directory.
 # The live root can boot without it, but the installed target needs the path.
 mkdir -p /boot/efi /boot/loader/entries
