@@ -39,7 +39,6 @@ build edition="workstation":
       core)
         sudo buildah bud \
           --layers \
-          --squash-all \
           --build-arg base={{ base }} \
           --build-arg fedora_version={{ fedora_ver }} \
           --build-arg distro_name="{{ name }}" \
@@ -47,6 +46,9 @@ build edition="workstation":
           --tag {{ core_image }} \
           --file editions/core/Containerfile \
           .
+        _ctr=$(sudo buildah from --pull=never {{ core_image }})
+        sudo buildah commit --squash "${_ctr}" {{ core_image }}
+        sudo buildah rm "${_ctr}"
         mkdir -p .test
         printf '%s\n' "{{ tag }}" > .test/last-core-tag
         core_stamp > .test/last-core-stamp
@@ -66,7 +68,6 @@ build edition="workstation":
         fi
         sudo buildah bud \
           --layers \
-          --squash-all \
           --cap-add sys_admin \
           --security-opt label=disable \
           --build-arg core_image={{ core_image }} \
@@ -78,6 +79,9 @@ build edition="workstation":
           --tag {{ workstation_image }} \
           --file editions/workstation/Containerfile \
           .
+        _ctr=$(sudo buildah from --pull=never {{ workstation_image }})
+        sudo buildah commit --squash "${_ctr}" {{ workstation_image }}
+        sudo buildah rm "${_ctr}"
         mkdir -p .test
         printf '%s\n' "{{ tag }}" > .test/last-workstation-tag
         ;;
@@ -109,8 +113,8 @@ package edition="workstation" format="all":
     fi
     image_ref="{{ registry }}/luminusos-workstation:${package_tag}"
 
-    if [[ "$image_ref" == localhost/* ]] && ! sudo buildah inspect "$image_ref" >/dev/null 2>&1; then
-      echo "Workstation image not found in local buildah storage: $image_ref"
+    if [[ "$image_ref" == localhost/* ]] && ! sudo podman image exists "$image_ref"; then
+      echo "Workstation image not found in local container storage: $image_ref"
       echo "Run 'just build workstation' or set LOS_TAG to the tag you already built."
       exit 1
     fi
@@ -201,8 +205,8 @@ clean:
 
 # Clean everything including container images
 clean-all: clean
-    -sudo buildah rmi {{ core_image }} || true
-    -sudo buildah rmi {{ workstation_image }} || true
+    -sudo buildah rmi {{ core_image }} 2>/dev/null || true
+    -sudo buildah rmi {{ workstation_image }} 2>/dev/null || true
 
 # Verify lint/format tools are available
 check:
