@@ -39,6 +39,7 @@ build edition="workstation":
       core)
         sudo buildah bud \
           --layers \
+          --squash-all \
           --build-arg base={{ base }} \
           --build-arg fedora_version={{ fedora_ver }} \
           --build-arg distro_name="{{ name }}" \
@@ -65,6 +66,7 @@ build edition="workstation":
         fi
         sudo buildah bud \
           --layers \
+          --squash-all \
           --cap-add sys_admin \
           --security-opt label=disable \
           --build-arg core_image={{ core_image }} \
