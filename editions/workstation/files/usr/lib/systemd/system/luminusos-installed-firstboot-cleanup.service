@@ -1,7 +1,6 @@
 [Unit]
 Description=Clean Luminus OS live installer artifacts after installation
-ConditionPathExists=!/run/initramfs/live
-ConditionPathExists=!/dev/mapper/live-base
+ConditionPathExists=/run/ostree-booted
 DefaultDependencies=no
 After=local-fs.target
 Before=display-manager.service

@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -ueo pipefail
 
-if [ -e /run/initramfs/live ] || [ -e /dev/mapper/live-base ]; then
+if [ ! -e /run/ostree-booted ]; then
   exit 0
 fi
 
