@@ -213,4 +213,6 @@ qemu-kvm \
     -m $QEMU_MEM \
     -smp $QEMU_CPU \
     -display $QEMU_DISPLAY \
+    -netdev user,id=net0,hostfwd=tcp::2222-:22 \
+    -device virtio-net-pci,netdev=net0 \
     $QEMU_ARGS

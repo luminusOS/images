@@ -1,5 +1,4 @@
 [org/gnome/shell]
-favorite-apps=['com.fyralabs.Readymade.desktop', 'org.gnome.Nautilus.desktop']
 enabled-extensions=['aurora-shell@luminusos.github.io']
 disabled-extensions=@as []
 disable-user-extensions=false

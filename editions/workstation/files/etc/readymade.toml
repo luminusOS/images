@@ -4,7 +4,7 @@ copy_mode = "bootc"
 bootc_imgref = "containers-storage:localhost/luminusos-workstation:latest"
 bootc_target_imgref = "localhost/luminusos-workstation:latest"
 bootc_enforce_sigpolicy = false
-bootc_args = ["--skip-fetch-check", "--skip-finalize", "--bootupd-skip-boot-uuid"]
+bootc_args = ["--skip-fetch-check", "--skip-finalize", "--bootupd-skip-boot-uuid", "--bootloader", "none"]
 
 [distro]
 name = "Luminus OS"

@@ -42,8 +42,9 @@ jobs:
             exit 1
           fi
 
-          VERSION_TAG="${FEDORA_VERSION}.${GITHUB_RUN_NUMBER}"
+          VERSION_TAG="${FEDORA_VERSION}.$(date -u +%Y%m%d)"
           BRANCH_TAG="${FEDORA_VERSION}"
+          IMAGE_NAMESPACE="$(printf '%s' "${GITHUB_REPOSITORY_OWNER}" | tr '[:upper:]' '[:lower:]')"
           if [ "${GITHUB_REF_NAME}" = "${PRIMARY_FEDORA_BRANCH}" ]; then
             PUBLISH_LATEST=true
           else
@@ -54,6 +55,7 @@ jobs:
             echo "fedora_version=${FEDORA_VERSION}"
             echo "version_tag=${VERSION_TAG}"
             echo "branch_tag=${BRANCH_TAG}"
+            echo "image_namespace=${IMAGE_NAMESPACE}"
             echo "publish_latest=${PUBLISH_LATEST}"
           } >> "$GITHUB_OUTPUT"
 
@@ -76,10 +78,14 @@ jobs:
           load: true
           build-args: |
             base=quay.io/fedora/fedora-bootc:${{ steps.version.outputs.fedora_version }}
+            fedora_version=${{ steps.version.outputs.fedora_version }}
+            distro_version=${{ steps.version.outputs.version_tag }}
+            distro_name=LuminusOS
+            distro_pretty_name=Luminus OS
           tags: |
             localhost/luminusos:${{ steps.version.outputs.version_tag }}
-            ${{ env.REGISTRY }}/${{ github.repository_owner }}/luminusos:${{ steps.version.outputs.version_tag }}
-            ${{ env.REGISTRY }}/${{ github.repository_owner }}/luminusos:${{ steps.version.outputs.branch_tag }}
+            ${{ env.REGISTRY }}/${{ steps.version.outputs.image_namespace }}/luminusos:${{ steps.version.outputs.version_tag }}
+            ${{ env.REGISTRY }}/${{ steps.version.outputs.image_namespace }}/luminusos:${{ steps.version.outputs.branch_tag }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
 
@@ -88,13 +94,13 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          docker push "${REGISTRY}/${{ github.repository_owner }}/luminusos:${{ steps.version.outputs.version_tag }}"
-          docker push "${REGISTRY}/${{ github.repository_owner }}/luminusos:${{ steps.version.outputs.branch_tag }}"
+          docker push "${REGISTRY}/${{ steps.version.outputs.image_namespace }}/luminusos:${{ steps.version.outputs.version_tag }}"
+          docker push "${REGISTRY}/${{ steps.version.outputs.image_namespace }}/luminusos:${{ steps.version.outputs.branch_tag }}"
           if [ "${{ steps.version.outputs.publish_latest }}" = "true" ]; then
             docker tag \
-              "${REGISTRY}/${{ github.repository_owner }}/luminusos:${{ steps.version.outputs.version_tag }}" \
-              "${REGISTRY}/${{ github.repository_owner }}/luminusos:latest"
-            docker push "${REGISTRY}/${{ github.repository_owner }}/luminusos:latest"
+              "${REGISTRY}/${{ steps.version.outputs.image_namespace }}/luminusos:${{ steps.version.outputs.version_tag }}" \
+              "${REGISTRY}/${{ steps.version.outputs.image_namespace }}/luminusos:latest"
+            docker push "${REGISTRY}/${{ steps.version.outputs.image_namespace }}/luminusos:latest"
           fi
 
       - name: Build workstation locally
@@ -105,13 +111,17 @@ jobs:
           load: true
           build-args: |
             core_image=localhost/luminusos:${{ steps.version.outputs.version_tag }}
-            workstation_image=${{ env.REGISTRY }}/${{ github.repository_owner }}/luminusos-workstation:${{ steps.version.outputs.version_tag }}
-            desktop=gnome
+            fedora_version=${{ steps.version.outputs.fedora_version }}
+            image_version=${{ steps.version.outputs.version_tag }}
+            edition_name=Workstation
+            edition_id=workstation
+            workstation_image=${{ env.REGISTRY }}/${{ steps.version.outputs.image_namespace }}/luminusos-workstation:${{ steps.version.outputs.version_tag }}
+            workstation_target_image=${{ env.REGISTRY }}/${{ steps.version.outputs.image_namespace }}/luminusos-workstation:${{ steps.version.outputs.branch_tag }}
             aurora_shell_version=${{ env.AURORA_SHELL_VERSION }}
           tags: |
             localhost/luminusos-workstation:${{ steps.version.outputs.version_tag }}
-            ${{ env.REGISTRY }}/${{ github.repository_owner }}/luminusos-workstation:${{ steps.version.outputs.version_tag }}
-            ${{ env.REGISTRY }}/${{ github.repository_owner }}/luminusos-workstation:${{ steps.version.outputs.branch_tag }}
+            ${{ env.REGISTRY }}/${{ steps.version.outputs.image_namespace }}/luminusos-workstation:${{ steps.version.outputs.version_tag }}
+            ${{ env.REGISTRY }}/${{ steps.version.outputs.image_namespace }}/luminusos-workstation:${{ steps.version.outputs.branch_tag }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
 
@@ -120,11 +130,11 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          docker push "${REGISTRY}/${{ github.repository_owner }}/luminusos-workstation:${{ steps.version.outputs.version_tag }}"
-          docker push "${REGISTRY}/${{ github.repository_owner }}/luminusos-workstation:${{ steps.version.outputs.branch_tag }}"
+          docker push "${REGISTRY}/${{ steps.version.outputs.image_namespace }}/luminusos-workstation:${{ steps.version.outputs.version_tag }}"
+          docker push "${REGISTRY}/${{ steps.version.outputs.image_namespace }}/luminusos-workstation:${{ steps.version.outputs.branch_tag }}"
           if [ "${{ steps.version.outputs.publish_latest }}" = "true" ]; then
             docker tag \
-              "${REGISTRY}/${{ github.repository_owner }}/luminusos-workstation:${{ steps.version.outputs.version_tag }}" \
-              "${REGISTRY}/${{ github.repository_owner }}/luminusos-workstation:latest"
-            docker push "${REGISTRY}/${{ github.repository_owner }}/luminusos-workstation:latest"
+              "${REGISTRY}/${{ steps.version.outputs.image_namespace }}/luminusos-workstation:${{ steps.version.outputs.version_tag }}" \
+              "${REGISTRY}/${{ steps.version.outputs.image_namespace }}/luminusos-workstation:latest"
+            docker push "${REGISTRY}/${{ steps.version.outputs.image_namespace }}/luminusos-workstation:latest"
           fi

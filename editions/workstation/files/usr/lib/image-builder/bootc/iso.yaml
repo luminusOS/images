@@ -1,4 +1,6 @@
 label: "LUMINUSOS"
+rootfs:
+  size: 8192
 grub2:
   timeout: 10
   entries:

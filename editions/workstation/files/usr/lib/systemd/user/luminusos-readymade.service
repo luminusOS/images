@@ -1,10 +1,13 @@
 [Unit]
 Description=ReadyMade live installer
-BindsTo=gnome-session.target
-After=gnome-session.target
+PartOf=gnome-session@live-installer.target
+After=gnome-session-services.target org.gnome.Shell@live-installer.service
 
 [Service]
 Type=simple
 ExecStart=/usr/libexec/luminusos/readymade-wrapper
 Restart=on-failure
 RestartSec=2
+
+[Install]
+WantedBy=gnome-session@live-installer.target

@@ -12,86 +12,11 @@ if [ "$(basename "$0")" = "ostree" ]; then
   exec -a ostree "${real_bootc}" "$@"
 fi
 
-cleanup_target_root=""
+install_target_root=""
 cleanup_tmpdir=""
 containers_conf_dir=""
 containers_conf_dropin=""
 var_tmp_mounted=0
-
-remove_target_installer_artifacts() {
-  local target_root="$1"
-  local root=""
-  local roots=()
-  local artifact=""
-
-  [ -n "${target_root}" ] || return 0
-  roots+=("${target_root}")
-
-  for root in "${target_root}"/ostree/deploy/*/deploy/*; do
-    [ -d "${root}" ] || continue
-    roots+=("${root}")
-  done
-
-  for root in "${roots[@]}"; do
-    [ -d "${root}" ] || continue
-    for artifact in \
-      etc/readymade.toml \
-      etc/gdm/custom.conf \
-      etc/xdg/autostart/com.fyralabs.Readymade.desktop \
-      etc/polkit-1/rules.d/49-luminusos-readymade.rules \
-      etc/dconf/db/local \
-      etc/dconf/db/local.d/00-luminusos-live \
-      etc/dconf/profile/user \
-      usr/local/share/applications/com.fyralabs.Readymade.desktop \
-      usr/lib/systemd/user/luminusos-readymade.service \
-      usr/lib/systemd/user/gnome-session@live-installer.target.d/live-installer.session.conf \
-      usr/share/gnome-shell/modes/live-installer.json \
-      usr/share/gnome-session/sessions/live-installer.session \
-      usr/share/wayland-sessions/live-installer.desktop; do
-      rm -f "${root}/${artifact}" 2>/dev/null || true
-    done
-    mkdir -p "${root}/usr/local/share/applications" 2>/dev/null || true
-    cat > "${root}/usr/local/share/applications/com.fyralabs.Readymade.desktop" 2>/dev/null <<'EOF' || true
-[Desktop Entry]
-Type=Application
-Name=ReadyMade
-Hidden=true
-NoDisplay=true
-EOF
-    rm -rf "${root}/home/liveuser" 2>/dev/null || true
-    rm -rf "${root}/var/home/liveuser" 2>/dev/null || true
-    rm -f "${root}/var/lib/AccountsService/users/liveuser" 2>/dev/null || true
-    rm -f "${root}/var/lib/AccountsService/icons/liveuser" 2>/dev/null || true
-    if [ -f "${root}/etc/passwd" ]; then
-      sed -i '/^liveuser:/d' "${root}/etc/passwd"
-    fi
-    if [ -f "${root}/etc/shadow" ]; then
-      sed -i '/^liveuser:/d' "${root}/etc/shadow"
-    fi
-    if [ -f "${root}/etc/group" ]; then
-      sed -i '/^liveuser:/d; s/,\?liveuser,\?/,/g; s/:,/:/g; s/,$//' "${root}/etc/group"
-    fi
-    if [ -f "${root}/etc/gshadow" ]; then
-      sed -i '/^liveuser:/d; s/,\?liveuser,\?/,/g; s/:,/:/g; s/,$//' "${root}/etc/gshadow"
-    fi
-    if [ -f "${root}/etc/subuid" ]; then
-      sed -i '/^liveuser:/d' "${root}/etc/subuid"
-    fi
-    if [ -f "${root}/etc/subgid" ]; then
-      sed -i '/^liveuser:/d' "${root}/etc/subgid"
-    fi
-    if [ -d "${root}/usr/share/glib-2.0/schemas" ] && command -v glib-compile-schemas >/dev/null 2>&1; then
-      glib-compile-schemas "${root}/usr/share/glib-2.0/schemas" 2>/dev/null || true
-    fi
-    mkdir -p "${root}/etc/gdm"
-    printf '[daemon]\nInitialSetupEnable=true\n' > "${root}/etc/gdm/custom.conf" 2>/dev/null || true
-    install -m 0644 /etc/hostname "${root}/etc/hostname" 2>/dev/null || true
-    mkdir -p "${root}/etc/luminusos"
-    printf 'installed\n' > "${root}/etc/luminusos/system-mode" 2>/dev/null || true
-  done
-
-  echo "luminusos bootc-wrapper: prepared target deployment for GNOME Initial Setup" >&2
-}
 
 write_target_grub_configs() {
   local target_root="$1"
@@ -103,6 +28,8 @@ write_target_grub_configs() {
   local boot_parent=""
   local boot_uuid=""
   local esp_source=""
+  local shim=""
+  local grub=""
   local mounted_esp=0
 
   if [ -z "${target_root}" ] || [ ! -d "${boot_dir}" ]; then
@@ -181,6 +108,32 @@ fi
 configfile $prefix/grub.cfg
 EOF
     done
+
+    shim="$(find \
+      "${target_root}/usr/share/shim" \
+      "${target_root}/usr/lib/efi" \
+      /usr/share/shim \
+      /usr/lib/efi \
+      -type f -iname 'shimx64.efi' 2>/dev/null | head -n 1 || true)"
+    grub="$(find \
+      "${target_root}/usr/lib/efi" \
+      "${target_root}/usr/lib/grub" \
+      /usr/lib/efi \
+      /usr/lib/grub \
+      -type f -iname 'grubx64.efi' 2>/dev/null | head -n 1 || true)"
+
+    if [ -n "${shim}" ]; then
+      install -m 0644 "${shim}" "${efi_mount}/EFI/BOOT/BOOTX64.EFI"
+    elif [ -n "${grub}" ]; then
+      install -m 0644 "${grub}" "${efi_mount}/EFI/BOOT/BOOTX64.EFI"
+    else
+      echo "luminusos bootc-wrapper: unable to find shimx64.efi or grubx64.efi for UEFI fallback boot" >&2
+    fi
+
+    if [ -n "${grub}" ]; then
+      install -m 0644 "${grub}" "${efi_mount}/EFI/BOOT/grubx64.efi"
+      install -m 0644 "${grub}" "${efi_mount}/EFI/fedora/grubx64.efi"
+    fi
   else
     echo "luminusos bootc-wrapper: target ESP was not mounted; GRUB EFI config was not written" >&2
   fi
@@ -193,6 +146,31 @@ EOF
   echo "luminusos bootc-wrapper: installed target GRUB configs" >&2
 }
 
+install_target_bootloader() {
+  local target_root="$1"
+  local bootupctl=/usr/bin/bootupctl
+  local args=()
+
+  [ -n "${target_root}" ] || return 0
+  [ -d "${target_root}" ] || return 0
+
+  if [ ! -x "${bootupctl}" ]; then
+    echo "luminusos bootc-wrapper: bootupctl not found; relying on fallback EFI files" >&2
+    return 0
+  fi
+
+  args=(backend install --auto --filesystem "${target_root}")
+  if [ "${target_root}" != "/" ]; then
+    args+=(--src-root "${target_root}")
+  fi
+  args+=("${target_root}")
+
+  echo "luminusos bootc-wrapper: installing target bootloader without bootupd static configs" >&2
+  if ! "${BASH}" -c 'exec -a bootupctl "$@"' -- "${bootupctl}" "${args[@]}"; then
+    echo "luminusos bootc-wrapper: bootupctl install failed; relying on fallback EFI files and GRUB configs" >&2
+  fi
+}
+
 if [ "${1:-}" = "install" ] && [ "${2:-}" = "to-filesystem" ] && [ "$#" -gt 2 ]; then
   target_root=""
   for arg in "${@:3}"; do
@@ -203,7 +181,7 @@ if [ "${1:-}" = "install" ] && [ "${2:-}" = "to-filesystem" ] && [ "$#" -gt 2 ];
   done
 
   if [ -n "${target_root}" ]; then
-    cleanup_target_root="${target_root}"
+    install_target_root="${target_root}"
     cleanup_tmpdir="${target_root}/.bootc-image-copy-tmp"
     mkdir -p "${cleanup_tmpdir}"
     chmod 1777 "${cleanup_tmpdir}" 2>/dev/null || true
@@ -237,9 +215,9 @@ set +e
 status=$?
 set -e
 
-if [ "${status}" = "0" ] && [ -n "${cleanup_target_root}" ]; then
-  remove_target_installer_artifacts "${cleanup_target_root}"
-  write_target_grub_configs "${cleanup_target_root}"
+if [ "${status}" = "0" ] && [ -n "${install_target_root}" ]; then
+  install_target_bootloader "${install_target_root}"
+  write_target_grub_configs "${install_target_root}"
 fi
 
 if [ "${var_tmp_mounted}" = "1" ] && mountpoint -q /var/tmp; then

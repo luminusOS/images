@@ -1,13 +1,16 @@
 ARG core_image=localhost/luminusos:latest
 ARG fedora_version=44
 ARG aurora_shell_version=v50.3
-ARG readymade_ref=main
 
-# ── Context stage: scripts only (stable — changes rarely) ─────────────────
-FROM scratch AS ctx-scripts
+# ── Context stage: workstation script (stable — changes rarely) ───────────
+FROM scratch AS ctx-workstation-script
 
-COPY common                        /common
 COPY editions/workstation/build.sh /workstation/build.sh
+
+# ── Context stage: shared Flatpak refs ────────────────────────────────────
+FROM scratch AS ctx-flatpaks
+
+COPY shared/flatpaks /flatpaks
 
 # ── Context stage: static files (volatile — changes often) ────────────────
 FROM scratch AS ctx-files
@@ -36,106 +39,15 @@ RUN --mount=type=cache,target=/var/cache/dnf \
     jq -e --arg uuid "${aurora_shell_uuid}" '.uuid == $uuid' \
       "/out/${aurora_shell_uuid}/metadata.json"
 
-# ── ReadyMade from upstream main ──────────────────────────────────────────
-FROM quay.io/fedora/fedora-bootc:${fedora_version} AS readymade-main
-
-ARG fedora_version=44
-ARG readymade_ref=main
-
-RUN --mount=type=cache,target=/var/cache/dnf \
-    --mount=type=tmpfs,target=/tmp \
-    mkdir -p /etc/dnf/vars /etc/yum/vars && \
-    printf '%s\n' "${fedora_version}" > /etc/dnf/vars/releasever && \
-    printf '%s\n' "${fedora_version}" > /etc/yum/vars/releasever && \
-    dnf -y install \
-      --releasever="${fedora_version}" \
-      --nogpgcheck \
-      --setopt=install_weak_deps=False \
-      --repofrompath "terra-bootstrap,https://repos.fyralabs.com/terra${fedora_version}" \
-      terra-release && \
-    dnf clean all && \
-    dnf -y --releasever="${fedora_version}" install \
-      cargo \
-      clang-devel \
-      cmake \
-      gcc \
-      git \
-      glibc-all-langpacks \
-      gtk4-devel \
-      mold \
-      openssl-devel \
-      pkgconf-pkg-config \
-      'pkgconfig(libacl)' \
-      'pkgconfig(libhelium-1)' \
-      rust && \
-    git clone --depth 1 --branch "${readymade_ref}" --recurse-submodules \
-      https://github.com/FyraLabs/readymade.git /src/readymade && \
-    cd /src/readymade && \
-    for export_file in \
-      src/backend/export.rs \
-      crates/libreadymade/backend/provisioners/disk/repart.rs; do \
-      if [ -f "${export_file}" ]; then \
-        sed -i 's@if !path.is_file() {@if !path.is_file() || path.extension().and_then(|ext| ext.to_str()) != Some("conf") {@' \
-          "${export_file}"; \
-      fi; \
-    done && \
-    for install_file in \
-      src/backend/install.rs \
-      crates/libreadymade/backend/install.rs; do \
-      if [ -f "${install_file}" ]; then \
-        sed -i 's@std::fs::create_dir_all("/run/readymade-install")?;@_ = std::fs::remove_dir_all("/run/readymade-install");\n        std::fs::create_dir_all("/run/readymade-install")?;@' \
-          "${install_file}"; \
-      fi; \
-    done && \
-    if [ -f crates/libreadymade/backend/provisioners/filesystem/bootc.rs ]; then \
-      sed -i 's@let args = &self.args;@let kargs = \&self.kargs;\n        let args = \&self.args;@' \
-        crates/libreadymade/backend/provisioners/filesystem/bootc.rs && \
-      sed -i 's@args.iter().flat_map(|e| \["--karg", e\])@kargs.iter().flat_map(|e| ["--karg", e])@' \
-        crates/libreadymade/backend/provisioners/filesystem/bootc.rs && \
-      grep -q 'kargs.iter().flat_map' crates/libreadymade/backend/provisioners/filesystem/bootc.rs; \
-    fi && \
-    if [ -f crates/libreadymade/backend/mounts.rs ]; then \
-      sed -i 's@self\.0\.iter()\.try_for_each(|m| m\.mount(root, passphrase))@{\n            let mut mounts = self.clone();\n            mounts.sort_mounts();\n            mounts.0.iter().try_for_each(|m| m.mount(root, passphrase))\n        }@' \
-        crates/libreadymade/backend/mounts.rs && \
-      sed -i 's@self\.0\.iter()\.rev()\.try_for_each(|m| m\.umount(root))@{\n            let mut mounts = self.clone();\n            mounts.sort_mounts();\n            mounts.0.iter().rev().try_for_each(|m| m.umount(root))\n        }@' \
-        crates/libreadymade/backend/mounts.rs && \
-      grep -q 'mounts.sort_mounts();' crates/libreadymade/backend/mounts.rs; \
-    fi && \
-    if [ -f crates/libreadymade/playbook.rs ]; then \
-      sed -i 's@let mut container = Container::new(tempdir.path().to_owned());@let mut container = Container::new(tempdir.path().to_owned());\n    let mut mounts = mounts.clone();\n    mounts.sort_mounts();@' \
-        crates/libreadymade/playbook.rs && \
-      grep -q 'mounts.sort_mounts();' crates/libreadymade/playbook.rs; \
-    fi && \
-    for repart_file in \
-      crates/libreadymade/backend/install.rs \
-      crates/libreadymade/backend/provisioners/disk/repart.rs; do \
-      if [ -f "${repart_file}" ]; then \
-        sed -i 's@tracing::debug!("systemd-repart finished");@tracing::debug!("systemd-repart finished");\n        let blockdev_str = blockdev.to_str().unwrap();\n        let _ = Command::new("blockdev").args(["--rereadpt", blockdev_str]).status();\n        let _ = Command::new("partx").args(["--update", blockdev_str]).status();\n        let _ = Command::new("udevadm").args(["settle", "--timeout=10"]).status();\n        std::thread::sleep(std::time::Duration::from_millis(500));@' \
-          "${repart_file}"; \
-      fi; \
-    done && \
-    if [ -f src/state.rs ]; then \
-      sed -i 's@let (receiver, _) = server.accept().expect("cannot accept ipc server");@let Ok((receiver, _)) = server.accept() else {\n            tracing::warn!("IPC server disconnected before subprocess connected");\n            return;\n        };@' \
-        src/state.rs && \
-      sed -i 's@ipc_thread.join().expect("cannot join ipc thread");@if let Err(err) = ipc_thread.join() {\n        tracing::warn!(?err, "IPC progress thread panicked");\n    }@' \
-        src/state.rs && \
-      grep -q 'IPC server disconnected before subprocess connected' src/state.rs; \
-    fi && \
-    mkdir -p /tmp/cargo && \
-    HOME=/tmp CARGO_HOME=/tmp/cargo cargo build --release --locked && \
-    install -Dm755 target/release/readymade /out/usr/bin/readymade && \
-    bash scripts/install.sh /out && \
-    dnf clean all && \
-    rm -rf /src/readymade/target
-
-# ── Workstation image (bootable desktop and live ISO root) ────────────────
+# ── Workstation image (installed desktop payload) ────────────────────────
 FROM ${core_image}
 
 ARG fedora_version=44
+ARG image_version=44
+ARG edition_name="Workstation"
+ARG edition_id="workstation"
 ARG aurora_shell_uuid=aurora-shell@luminusos.github.io
 ARG skip_flatpaks=0
-ARG workstation_image=localhost/luminusos-workstation:latest
-ARG workstation_target_image=ghcr.io/LuminusOS/luminusos-workstation:${fedora_version}
 ARG source_url="https://github.com/LuminusOS/images"
 
 LABEL containers.bootc="1" \
@@ -145,31 +57,28 @@ LABEL containers.bootc="1" \
       org.opencontainers.image.source="${source_url}" \
       org.opencontainers.image.licenses="Apache-2.0"
 
-# Boot + bootloader + live session packages
-RUN --mount=type=bind,from=ctx-scripts,source=/,target=/ctx \
-    --mount=type=cache,target=/var/cache/dnf \
+# Boot + bootloader + installed desktop packages
+RUN --mount=type=cache,target=/var/cache/dnf \
     mkdir -p /etc/dnf/vars /etc/yum/vars && \
     printf '%s\n' "${fedora_version}" > /etc/dnf/vars/releasever && \
     printf '%s\n' "${fedora_version}" > /etc/yum/vars/releasever && \
     dnf clean all && \
-    /ctx/common/recover-rpmdb.sh && \
-    dnf -y install \
-      --releasever="${fedora_version}" \
-      --nogpgcheck \
-      --setopt=install_weak_deps=False \
-      --repofrompath "terra-bootstrap,https://repos.fyralabs.com/terra${fedora_version}" \
-      terra-release && \
-    dnf clean all && \
+    rm -f /var/lib/rpm/.rpm.lock /usr/lib/sysimage/rpm/.rpm.lock || true && \
+    if ! rpm --rebuilddb; then \
+      rebuilt_db="$(find /usr/share -maxdepth 1 -type d -name 'rpmrebuilddb.*' | sort -V | tail -n 1)" && \
+      [ -n "${rebuilt_db}" ] && \
+      rm -rf /usr/share/rpm && \
+      mv "${rebuilt_db}" /usr/share/rpm; \
+    fi && \
+    rpm -qa >/dev/null && \
     dnf -y --releasever="${fedora_version}" install \
-      kernel dracut dracut-live squashfs-tools \
+      kernel dracut \
       bootupd \
       btrfs-progs \
       grub2 grub2-tools grub2-common grub2-pc-modules \
       grub2-efi-x64 grub2-efi-x64-modules grub2-efi-x64-cdboot \
-      shim-x64 xorriso dosfstools isomd5sum \
-      livesys-scripts \
+      shim-x64 dosfstools \
       bootc \
-      podman \
       toolbox \
       flatpak \
       mesa-dri-drivers \
@@ -178,71 +87,33 @@ RUN --mount=type=bind,from=ctx-scripts,source=/,target=/ctx \
       mesa-libgbm \
       fuse-overlayfs \
       cryptsetup \
-      libhelium \
       plymouth \
       plymouth-plugin-script \
       plymouth-scripts \
       plymouth-system-theme \
       plymouth-theme-spinner \
       ptyxis \
+      curl \
       jq \
     && dnf clean all
 
-COPY --from=readymade-main /out/ /
 COPY editions/workstation/files/etc/plymouth/plymouthd.conf /etc/plymouth/plymouthd.conf
 COPY editions/workstation/files/etc/dracut.conf.d/10-luminusos-plymouth.conf /etc/dracut.conf.d/10-luminusos-plymouth.conf
 COPY editions/workstation/files/usr/share/plymouth/themes/lucent/ /usr/share/plymouth/themes/lucent/
 
-# Rebuild initramfs for live ISO boot
+# Rebuild initramfs for the installed image without live ISO modules.
 RUN KVER=$(kernel-install list --json pretty 2>/dev/null \
       | jq -r '.[] | select(.has_kernel == true) | .version' \
       | head -n1) && \
     [ -z "${KVER}" ] && KVER=$(ls -1 /lib/modules | tail -n1) || true && \
     plymouth-set-default-theme lucent && \
     DRACUT_NO_XATTR=1 dracut -v -f --zstd --reproducible --no-hostonly \
-      --add "plymouth dmsquash-live dmsquash-live-autooverlay" \
       "/usr/lib/modules/${KVER}/initramfs.img" "${KVER}"
-
-# Copy EFI files for image-builder and provide a removable-media fallback path.
-RUN mkdir -p /boot/efi && \
-    cp -av /usr/lib/efi/*/*/EFI /boot/efi/ && \
-    mkdir -p /boot/efi/EFI/BOOT /boot/efi/EFI/fedora && \
-    shim="$(find /usr/share/shim /usr/lib/efi -type f -iname 'shimx64.efi' 2>/dev/null | head -n 1 || true)" && \
-    grub="$(find /usr/lib/efi /usr/lib/grub -type f -iname 'grubx64.efi' 2>/dev/null | head -n 1 || true)" && \
-    if [ -n "${shim}" ]; then \
-      install -m 0644 "${shim}" /boot/efi/EFI/BOOT/BOOTX64.EFI; \
-    elif [ -n "${grub}" ]; then \
-      install -m 0644 "${grub}" /boot/efi/EFI/BOOT/BOOTX64.EFI; \
-    else \
-      echo "Unable to find shimx64.efi or grubx64.efi for UEFI fallback boot"; \
-      exit 1; \
-    fi && \
-    if [ -n "${grub}" ]; then \
-      install -m 0644 "${grub}" /boot/efi/EFI/BOOT/grubx64.efi; \
-      install -m 0644 "${grub}" /boot/efi/EFI/fedora/grubx64.efi; \
-    fi && \
-    printf '%s\n' \
-      'if [ -f ${config_directory}/bootuuid.cfg ]; then' \
-      '  source ${config_directory}/bootuuid.cfg' \
-      'fi' \
-      'if [ -n "${BOOT_UUID}" ]; then' \
-      '  search --fs-uuid "${BOOT_UUID}" --set boot --no-floppy' \
-      'else' \
-      '  search --label boot --set boot --no-floppy' \
-      'fi' \
-      'if [ -d ($boot)/grub2 ]; then' \
-      '  set prefix=($boot)/grub2' \
-      'else' \
-      '  set prefix=($boot)/boot/grub2' \
-      'fi' \
-      'configfile $prefix/grub.cfg' \
-      > /boot/efi/EFI/fedora/grub.cfg && \
-    install -m 0644 /boot/efi/EFI/fedora/grub.cfg /boot/efi/EFI/BOOT/grub.cfg
 
 # Install the pre-built aurora-shell extension before GNOME Shell is installed.
 COPY --from=aurora-extension /out/aurora-shell@luminusos.github.io/ /usr/share/gnome-shell/extensions/aurora-shell@luminusos.github.io/
 RUN tmp="$(mktemp)" && \
-    jq '.["session-modes"] = (((.["session-modes"] // ["user"]) + ["live-installer", "initial-setup"]) | unique)' \
+    jq '.["session-modes"] = (((.["session-modes"] // ["user"]) + ["initial-setup"]) | unique)' \
       /usr/share/gnome-shell/extensions/${aurora_shell_uuid}/metadata.json > "${tmp}" && \
     install -m 0644 "${tmp}" /usr/share/gnome-shell/extensions/${aurora_shell_uuid}/metadata.json && \
     rm -f "${tmp}"
@@ -251,43 +122,74 @@ RUN test -f /usr/share/gnome-shell/extensions/${aurora_shell_uuid}/metadata.json
     test -n "$(find /usr/share/gnome-shell/extensions/${aurora_shell_uuid} -mindepth 1 -maxdepth 1 -print -quit)"
 
 # GNOME desktop environment packages (stable cache — only invalidated by package list changes)
-RUN --mount=type=bind,from=ctx-scripts,source=/,target=/ctx \
-    --mount=type=cache,target=/var/cache/dnf \
-    /ctx/common/recover-rpmdb.sh && \
+RUN --mount=type=cache,target=/var/cache/dnf \
+    rm -f /var/lib/rpm/.rpm.lock /usr/lib/sysimage/rpm/.rpm.lock || true && \
+    if ! rpm --rebuilddb; then \
+      rebuilt_db="$(find /usr/share -maxdepth 1 -type d -name 'rpmrebuilddb.*' | sort -V | tail -n 1)" && \
+      [ -n "${rebuilt_db}" ] && \
+      rm -rf /usr/share/rpm && \
+      mv "${rebuilt_db}" /usr/share/rpm; \
+    fi && \
+    rpm -qa >/dev/null && \
     dnf -y --releasever="${fedora_version}" install \
       --setopt=install_weak_deps=False \
-      --disablerepo="terra*" \
       accountsservice \
       gdm \
       gnome-initial-setup \
       gnome-shell \
       gnome-backgrounds \
+      nautilus \
       sushi \
       gnome-software && \
     dnf clean all
 
-# Static files + live session configuration (invalidated only by files/ or build.sh changes)
-RUN --mount=type=bind,from=ctx-scripts,source=/,target=/ctx \
-    --mount=type=bind,from=ctx-files,source=/workstation/files,target=/wfiles \
-    cp -arf /wfiles/. / && \
-    env --chdir=/ctx/workstation ./build.sh
-
-# Flatpaks (separate step — skip without invalidating config layer)
-RUN --mount=type=bind,from=ctx-scripts,source=/,target=/ctx \
+# Flatpaks (invalidated only by shared/flatpaks or skip flag)
+RUN --mount=type=bind,from=ctx-flatpaks,source=/flatpaks,target=/flatpaks,ro \
+    --mount=type=cache,target=/var/cache/dnf \
     if [ "${skip_flatpaks}" = "1" ]; then \
       echo "Skipping Flatpak installation because skip_flatpaks=1"; \
     else \
-      bash /ctx/common/install-flatpaks.sh; \
+      rm -f /var/lib/rpm/.rpm.lock /usr/lib/sysimage/rpm/.rpm.lock || true && \
+      if ! rpm --rebuilddb; then \
+        rebuilt_db="$(find /usr/share -maxdepth 1 -type d -name 'rpmrebuilddb.*' | sort -V | tail -n 1)" && \
+        [ -n "${rebuilt_db}" ] && \
+        rm -rf /usr/share/rpm && \
+        mv "${rebuilt_db}" /usr/share/rpm; \
+      fi && \
+      rpm -qa >/dev/null && \
+      if ! command -v flatpak >/dev/null 2>&1; then \
+        dnf -y --releasever="${fedora_version}" install flatpak; \
+      fi && \
+      curl --retry 3 -Lo /etc/flatpak/remotes.d/flathub.flatpakrepo https://dl.flathub.org/repo/flathub.flatpakrepo && \
+      xargs flatpak install -y --noninteractive --no-related < /flatpaks; \
     fi
 
-# ReadyMade must install a bootc deployment, not a copied live rootfs.
-RUN sed -i \
-      "s|^bootc_imgref = .*|bootc_imgref = \"containers-storage:${workstation_image}\"|" \
-      /etc/readymade.toml && \
-    sed -i \
-      "s|^bootc_target_imgref = .*|bootc_target_imgref = \"${workstation_target_image}\"|" \
-      /etc/readymade.toml && \
-    grep -q '^copy_mode = "bootc"$' /etc/readymade.toml
+# Static files + installed workstation configuration (invalidated only by files/ or build.sh changes)
+RUN --mount=type=bind,from=ctx-workstation-script,source=/,target=/ctx \
+    --mount=type=bind,from=ctx-files,source=/workstation/files,target=/wfiles \
+    install -Dm0644 /wfiles/etc/environment.d/electron-wayland.conf /etc/environment.d/electron-wayland.conf && \
+    install -Dm0644 /wfiles/usr/lib/bootc/kargs.d/10-luminusos-splash.toml /usr/lib/bootc/kargs.d/10-luminusos-splash.toml && \
+    install -Dm0644 /wfiles/usr/lib/image-builder/bootc/disk.yaml /usr/lib/image-builder/bootc/disk.yaml && \
+    install -Dm0644 /wfiles/usr/lib/systemd/system/luminusos-installed-firstboot-cleanup.service /usr/lib/systemd/system/luminusos-installed-firstboot-cleanup.service && \
+    install -Dm0755 /wfiles/usr/libexec/luminusos/installed-firstboot-cleanup /usr/libexec/luminusos/installed-firstboot-cleanup && \
+    install -Dm0644 /wfiles/usr/share/glib-2.0/schemas/99-install-mode.gschema.override /usr/share/glib-2.0/schemas/99-install-mode.gschema.override && \
+    env --chdir=/ctx/workstation ./build.sh
+
+# Dynamic branding stays late so version-only changes reuse package layers.
+RUN set_os_release_key() { \
+      key="$1"; \
+      value="$2"; \
+      if grep -q "^${key}=" /usr/lib/os-release; then \
+        sed -i "s|^${key}=.*|${key}=\"${value}\"|" /usr/lib/os-release; \
+      else \
+        printf '%s="%s"\n' "${key}" "${value}" >> /usr/lib/os-release; \
+      fi; \
+    } && \
+    set_os_release_key PRETTY_NAME "Luminus OS ${edition_name} ${image_version}" && \
+    set_os_release_key VARIANT "${edition_name}" && \
+    set_os_release_key VARIANT_ID "${edition_id}"
+
+LABEL org.opencontainers.image.version="${image_version}"
 
 # Compile and validate aurora-shell after GNOME Shell is installed.
 RUN test -f /usr/share/gnome-shell/extensions/${aurora_shell_uuid}/metadata.json && \
@@ -297,22 +199,15 @@ RUN test -f /usr/share/gnome-shell/extensions/${aurora_shell_uuid}/metadata.json
     fi && \
     GNOME_SHELL_MAJOR="$(gnome-shell --version | awk '{print $3}' | cut -d. -f1)" && \
     jq -e --arg uuid "${aurora_shell_uuid}" --arg major "${GNOME_SHELL_MAJOR}" \
-      '.uuid == $uuid and (."shell-version" | index($major)) and (."session-modes" | index("live-installer")) and (."session-modes" | index("initial-setup"))' \
+      '.uuid == $uuid and (."shell-version" | index($major)) and (."session-modes" | index("initial-setup"))' \
       /usr/share/gnome-shell/extensions/${aurora_shell_uuid}/metadata.json
 
 # Final cleanup
-RUN --mount=type=bind,from=ctx-scripts,source=/,target=/ctx \
-    /ctx/common/cleanup.sh && \
-    /ctx/common/finalize.sh
-
-RUN if [ -x /usr/libexec/luminusos/bootc-wrapper ]; then \
-      install -D -m 0755 /usr/bin/bootc /usr/libexec/luminusos/bootc-real && \
-      install -m 0755 /usr/libexec/luminusos/bootc-wrapper /usr/bin/bootc; \
+RUN if rpm -q rpm-ostree >/dev/null 2>&1; then \
+      dnf -y remove --no-autoremove rpm-ostree; \
     fi && \
-    if [ -x /usr/libexec/luminusos/bootupctl-wrapper ] && [ -x /usr/bin/bootupctl ]; then \
-      install -D -m 0755 /usr/bin/bootupctl /usr/libexec/luminusos/bootupctl-real && \
-      install -m 0755 /usr/libexec/luminusos/bootupctl-wrapper /usr/bin/bootupctl; \
-    fi
+    dnf clean all && \
+    rm -rf /var/cache/dnf /var/cache/libdnf5 /tmp/* /var/log/* /var/tmp/*
 
 RUN ! command -v rpm-ostree && \
     command -v bootc && \

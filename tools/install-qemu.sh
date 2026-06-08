@@ -17,7 +17,7 @@ SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 PROJECT_DIR="$(dirname "$SCRIPT_DIR")"
 TEST_DIR="$PROJECT_DIR/.test"
 DISK_PATH="$TEST_DIR/install-disk.qcow2"
-BIB_CONFIG="$PROJECT_DIR/common/bootc-image-builder.toml"
+BIB_CONFIG="$PROJECT_DIR/shared/bootc-image-builder.toml"
 
 # load .env if it exists
 if [ -f "$PROJECT_DIR/.env" ]; then

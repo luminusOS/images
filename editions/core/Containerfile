@@ -1,14 +1,10 @@
 ARG base
 
-# ── Context stage ─────────────────────────────────────────────────────────
-FROM scratch AS ctx
-
-COPY common /common
-
 # ── Core image (container-only, no desktop) ───────────────────────────────
 FROM ${base}
 
 ARG fedora_version=44
+ARG distro_version=44
 ARG distro_name="LuminusOS"
 ARG distro_pretty_name="Luminus OS"
 ARG source_url="https://github.com/LuminusOS/images"
@@ -24,33 +20,39 @@ RUN mkdir -p /etc/dnf/vars /etc/yum/vars && \
     printf '%s\n' "${fedora_version}" > /etc/dnf/vars/releasever && \
     printf '%s\n' "${fedora_version}" > /etc/yum/vars/releasever
 
-# Common base packages
-RUN --mount=type=bind,from=ctx,source=/,target=/ctx \
-    --mount=type=cache,target=/var/cache/dnf \
-    /ctx/common/recover-rpmdb.sh && \
-    env --chdir=/ctx/common ./build.sh && \
-    /ctx/common/cleanup.sh
+RUN rm -f /var/lib/rpm/.rpm.lock /usr/lib/sysimage/rpm/.rpm.lock || true && \
+    if ! rpm --rebuilddb; then \
+      rebuilt_db="$(find /usr/share -maxdepth 1 -type d -name 'rpmrebuilddb.*' | sort -V | tail -n 1)" && \
+      [ -n "${rebuilt_db}" ] && \
+      rm -rf /usr/share/rpm && \
+      mv "${rebuilt_db}" /usr/share/rpm; \
+    fi && \
+    rpm -qa >/dev/null && \
+    if rpm -q rpm-ostree >/dev/null 2>&1; then \
+      dnf -y remove --no-autoremove rpm-ostree; \
+    fi && \
+    dnf clean all && \
+    rm -rf /var/cache/dnf /var/cache/libdnf5 /tmp/* /var/log/* /var/tmp/*
 
-# Branding: override os-release
-RUN sed -i \
-    "s/^NAME=.*/NAME=\"${distro_name}\"/; s/^PRETTY_NAME=.*/PRETTY_NAME=\"${distro_pretty_name}\"/" \
-    /usr/lib/os-release
+# Dynamic branding stays late so version-only changes reuse package layers.
+RUN set_os_release_key() { \
+      key="$1"; \
+      value="$2"; \
+      if grep -q "^${key}=" /usr/lib/os-release; then \
+        sed -i "s|^${key}=.*|${key}=\"${value}\"|" /usr/lib/os-release; \
+      else \
+        printf '%s="%s"\n' "${key}" "${value}" >> /usr/lib/os-release; \
+      fi; \
+    } && \
+    set_os_release_key NAME "${distro_name}" && \
+    set_os_release_key PRETTY_NAME "${distro_pretty_name} ${distro_version}" && \
+    set_os_release_key VERSION "${distro_version}" && \
+    set_os_release_key VERSION_ID "${fedora_version}" && \
+    set_os_release_key BUILD_ID "${distro_version}" && \
+    set_os_release_key IMAGE_ID "luminusos" && \
+    set_os_release_key IMAGE_VERSION "${distro_version}"
 
-RUN --mount=type=bind,from=ctx,source=/,target=/ctx \
-    --mount=type=cache,target=/var/cache/dnf \
-    /ctx/common/recover-rpmdb.sh && \
-    dnf -y install \
-      --releasever="${fedora_version}" \
-      --nogpgcheck \
-      --setopt=install_weak_deps=False \
-      --repofrompath "terra-bootstrap,https://repos.fyralabs.com/terra${fedora_version}" \
-      terra-release && \
-    dnf clean all
-
-# Final cleanup
-RUN --mount=type=bind,from=ctx,source=/,target=/ctx \
-    /ctx/common/cleanup.sh && \
-    /ctx/common/finalize.sh
+LABEL org.opencontainers.image.version="${distro_version}"
 
 RUN ! command -v rpm-ostree && \
     command -v bootc && \

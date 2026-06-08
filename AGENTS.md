@@ -20,30 +20,33 @@ Do not add other edition scaffolding unless the package set, target devices, ins
 - Boot the latest ISO in QEMU: `just qemu iso`
 - Install to a QEMU disk: `just qemu install`
 - Boot the installed QEMU disk: `just qemu run`
+- Build only the workstation ISO root image for debugging: `just build workstation-iso`
 
 Use `QEMU_RESET_DISK=1 just qemu iso` when the installer test needs a fresh disk.
 
 ## Script Conventions
 
 - Build helper scripts use `.sh` extensions.
-- Shared scripts live in `common/`.
-- Desktop scripts live under their desktop module, for example `desktops/gnome/build.sh`.
-- Containerfiles should call scripts through the `/ctx` bind mount, for example `/ctx/common/recover-rpmdb.sh`.
+- Shared data/config inputs live in `shared/`.
+- Do not add shared shell scripts unless there is a concrete cross-edition need that cannot live in `core`.
+- Edition scripts live under their edition, for example `editions/workstation/build.sh`.
+- Containerfiles may call edition scripts through a `/ctx` bind mount.
 
 ## Installer Notes
 
-The workstation ISO uses ReadyMade with `copy_mode = "bootc"` and installs the embedded workstation image from container storage. The live ISO itself is not booted as a bootc deployment.
+The workstation ISO uses ReadyMade with `copy_mode = "bootc"` and installs the embedded workstation image from container storage. ISO packaging uses `luminusos-workstation:<tag>-iso` as the live root and `luminusos-workstation:<tag>` as the installed payload. The live ISO itself is not booted as a bootc deployment.
 
-Installed Linux filesystems should be Btrfs. Keep `--bootc-default-fs btrfs`, ReadyMade repart templates, and `/usr/lib/image-builder/bootc/disk.yaml` aligned when changing storage layout. The ISO boot menu is configured through `/usr/lib/image-builder/bootc/iso.yaml`.
+Installed Linux filesystems should be Btrfs in the ReadyMade ISO install path. Keep `--bootc-default-fs btrfs` and ReadyMade repart templates aligned when changing that storage layout. The direct qcow2 `image-builder` path uses `/usr/lib/image-builder/bootc/disk.yaml`; keep root/home/var Btrfs there, but `/boot` must remain ext4 because image-builder qcow2 generation does not support Btrfs for `/boot`. The ISO boot menu is configured through `/usr/lib/image-builder/bootc/iso.yaml`.
 
-The local wrappers under `desktops/gnome/files/usr/libexec/luminusos/` are intentional:
+The local wrappers under `editions/workstation/files/usr/libexec/luminusos/` are intentional:
 
-- `bootc-wrapper` moves bootc image import temp data onto the target disk, removes installer artifacts from the target deployment, and writes final target GRUB configs after `bootc install to-filesystem`.
-- `bootupctl-wrapper` filters bootupd flags that fail during the live ISO install path.
+- `bootc-wrapper` moves bootc image import temp data onto the target disk and writes final target GRUB configs after `bootc install to-filesystem`.
 - `readymade-wrapper` keeps ReadyMade temp files out of the live ISO root and forces UTF-8 locale.
 
-Keep those wrappers in sync with `editions/workstation/Containerfile`, which installs them over the corresponding system binaries during image build.
+Keep those wrappers in sync with `editions/workstation/Containerfile.installer`, which installs them only into the ISO live root. The installed workstation payload should not replace `bootc`, `bootupctl`, or ship ReadyMade.
 
 ## Cleanup Rules
 
 Avoid reintroducing unused placeholders, compatibility aliases, or CI workflows. If a command is replaced, update README, architecture docs, and this file in the same change.
+
+Do not commit changes or create pull requests from this agent workflow. Reviewing the diff, choosing what belongs in git history, committing, and opening PRs are entirely the developer's responsibility.

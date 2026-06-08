@@ -13,11 +13,11 @@ Additional edition scaffolding should not be added unless package scope, target 
 
 - Build on Fedora bootc.
 - Deliver systems as versioned OCI images.
-- Keep a single workstation image for both the live ISO root and the installed bootc payload.
+- Keep the installed workstation payload separate from the ISO live root image.
 - Use ReadyMade only for the live ISO installation experience.
 - Use GNOME Initial Setup after installation for creation of the real local user.
 - Remove live-only state before the installed system reaches first user login.
-- Keep Btrfs storage layout aligned across ReadyMade, image-builder, and local wrappers.
+- Keep Btrfs storage layout aligned across the ReadyMade ISO install path and local wrappers.
 - Preserve `bootc upgrade` behavior through the installed target image reference.
 - Keep package installation as an image-build concern; installed systems do not ship the `rpm-ostree` client.
 
@@ -26,23 +26,26 @@ Additional edition scaffolding should not be added unless package scope, target 
 ```mermaid
 flowchart TD
     Fedora["Fedora bootc base<br/>quay.io/fedora/fedora-bootc"]
-    Common["common module<br/>base packages + cleanup"]
     Core["core image<br/>luminusos:<tag>"]
+    Shared["shared inputs<br/>Flatpak refs + image-builder config"]
     Aurora["Aurora Shell release<br/>GNOME extension zip"]
     ReadyMade["ReadyMade upstream<br/>locally built binary"]
-    Gnome["GNOME module<br/>desktop + live installer session"]
+    Gnome["GNOME workstation module"]
     Workstation["workstation image<br/>luminusos-workstation:<tag>"]
+    Installer["installer image<br/>luminusos-workstation:<tag>-iso"]
     ISO["ISO artifact<br/>bootc-generic-iso"]
     QCOW2["qcow2 artifact"]
     Live["Live ISO runtime<br/>system-mode=live"]
     Installed["Installed runtime<br/>system-mode=installed"]
 
-    Fedora --> Common --> Core
+    Fedora --> Core
     Core --> Workstation
+    Shared --> Workstation
     Aurora --> Workstation
-    ReadyMade --> Workstation
     Gnome --> Workstation
-    Workstation --> ISO --> Live --> Installed
+    Workstation --> Installer
+    ReadyMade --> Installer
+    Installer --> ISO --> Live --> Installed
     Workstation --> QCOW2 --> Installed
 ```
 
@@ -54,22 +57,20 @@ flowchart TD
 ├── ARCHITECTURE.md
 ├── Justfile
 ├── README.md
-├── common/
-│   ├── build.sh
-│   ├── cleanup.sh
-│   ├── finalize.sh
-│   ├── flatpaks
-│   ├── install-flatpaks.sh
-│   └── recover-rpmdb.sh
-├── docs/
-│   └── architecture.md
 ├── editions/
+│   ├── cast/
 │   ├── core/
 │   │   └── Containerfile
+│   ├── education/
+│   ├── mobile/
+│   ├── play/
 │   └── workstation/
 │       ├── Containerfile
 │       ├── build.sh
 │       └── files/
+├── shared/
+│   ├── bootc-image-builder.toml
+│   └── flatpaks
 └── tools/
     ├── install-qemu.sh
     └── qemu.sh
@@ -83,7 +84,7 @@ flowchart TD
 | Workstation image | `luminusos-workstation:<tag>` |
 | Fedora version | Controlled by `LOS_FEDORA_VERSION`, default `44`. |
 | Local tag | `<fedora>.<YYYYMMDD>` unless `LOS_TAG` is set. |
-| Shared scripts | Stored in `common/` and called through `/ctx` in Containerfiles. |
+| Shared data/config | Stored in `shared/`; current shared inputs are Flatpak refs and bootc-image-builder config. |
 | Desktop files | Stored under `editions/workstation/files/` and copied into `/`. |
 | Desktop build script | `editions/workstation/build.sh`, called from the workstation Containerfile. |
 | Artifact packaging | Handled by `image-builder` through `just package workstation`. |
@@ -96,13 +97,14 @@ flowchart TD
 | `LOS_BASE` | `quay.io/fedora/fedora-bootc:44` | Base image for the core edition. |
 | `LOS_FEDORA_VERSION` | `44` | Fedora release version used for DNF repos and tags. |
 | `LOS_REGISTRY` | `localhost` | Registry prefix for local builds. |
-| `LOS_TAG` | `<fedora>.<date>` | Build tag. |
+| `LOS_TAG` | `<fedora>.<date>` | Build tag written to `VERSION`, `BUILD_ID`, `IMAGE_VERSION`, and bootloader entries. |
 | `LOS_NAME` | `LuminusOS` | OS name written to os-release. |
-| `LOS_PRETTY_NAME` | `Luminus OS` | Pretty OS name written to os-release. |
-| `LOS_WORKSTATION_TARGET_IMAGE` | `ghcr.io/LuminusOS/luminusos-workstation:44` | Installed bootc update reference. |
+| `LOS_PRETTY_NAME` | `Luminus OS` | Base pretty OS name; active editions append their edition name and `LOS_TAG` for bootloader entries. |
+| `LOS_WORKSTATION_TARGET_IMAGE` | `ghcr.io/luminusos/luminusos-workstation:44` | Installed bootc update reference. |
 | `AURORA_SHELL_VERSION` | `v50.3` | Aurora Shell release downloaded during build. |
 | `LOS_FORCE_CORE` | `0` | Rebuild core even if the local stamp is unchanged. |
 | `LOS_SKIP_FLATPAKS` | `0` | Skip Flatpak installation during workstation build. |
+| `LOS_SQUASH` | `1` | Post-build squash the final local image to process OCI whiteouts before packaging; set `0` for faster dev-only builds. |
 
 ## Justfile Flow
 
@@ -122,16 +124,19 @@ flowchart TD
     Start --> Clean
 
     Build --> Edition{"edition"}
-    Edition -->|core| BuildCore["buildah bud<br/>editions/core/Containerfile"]
+    Edition -->|core| BuildCore["buildah bud --layers<br/>editions/core/Containerfile"]
     Edition -->|workstation| CoreStamp{"core stamp changed<br/>or local image missing?"}
     CoreStamp -->|yes| BuildCore
     CoreStamp -->|no| ReuseCore["reuse local core image"]
-    BuildCore --> BuildWorkstation["buildah bud<br/>editions/workstation/Containerfile"]
+    BuildCore --> SquashCore["optional post-build squash<br/>buildah commit --squash"]
+    SquashCore --> BuildWorkstation["buildah bud --layers<br/>editions/workstation/Containerfile"]
     ReuseCore --> BuildWorkstation
+    BuildWorkstation --> SquashWorkstation["optional post-build squash<br/>buildah commit --squash"]
 
     Package --> ImageExists{"workstation image exists?"}
     ImageExists -->|no| PackageError["error: build workstation first"]
-    ImageExists -->|yes| Format{"format"}
+    ImageExists -->|yes| PackageSquash["squash local image<br/>before image-builder"]
+    PackageSquash --> Format{"format"}
     Format -->|iso| ISO["image-builder<br/>bootc-generic-iso"]
     Format -->|qcow2| QCOW2["image-builder<br/>qcow2"]
     Format -->|all| ISO
@@ -145,86 +150,80 @@ flowchart TD
 
 ## Core Image
 
-The core image is the shared bootc base. It starts from Fedora bootc and applies the common module.
+The core image is the shared bootc base. It starts from Fedora bootc and leaves downstream editions with a ready bootc foundation.
 
 Main file: `editions/core/Containerfile`.
 
 Responsibilities:
 
 - Set `/etc/dnf/vars/releasever` and `/etc/yum/vars/releasever`.
-- Run `common/build.sh`.
-- Install shared base packages: currently `bootc`, `NetworkManager`, and `systemd-udev`.
-- Update `/usr/lib/os-release` branding.
-- Install `terra-release`.
-- Run cleanup/finalization, including removal of `rpm-ostree`.
-- Verify `rpm-ostree` is absent and run `bootc container lint`.
+- Inherit bootc base packages from Fedora bootc.
+- Update `/usr/lib/os-release` branding and image version.
+- Recover RPM database state when the container build path leaves a temporary rebuild database.
+- Run final cleanup, including removal of `rpm-ostree`.
+- Verify `bootc` is present, `rpm-ostree` is absent, and run `bootc container lint`.
 
 ```mermaid
 flowchart TD
     Fedora["Fedora bootc base"]
     Vars["write releasever vars"]
-    CommonBuild["common/build.sh"]
-    Packages["bootc<br/>NetworkManager<br/>systemd-udev"]
     Branding["os-release branding"]
-    Terra["terra-release"]
-    Cleanup["common/cleanup.sh<br/>common/finalize.sh<br/>remove rpm-ostree"]
-    Lint["verify no rpm-ostree<br/>bootc container lint"]
+    Rpmdb["inline rpmdb recovery"]
+    Cleanup["final cleanup<br/>remove rpm-ostree"]
+    Lint["verify bootc<br/>verify no rpm-ostree<br/>bootc container lint"]
     Output["luminusos:<tag>"]
 
-    Fedora --> Vars --> CommonBuild --> Packages --> Branding --> Terra --> Cleanup --> Lint --> Output
+    Fedora --> Vars --> Branding --> Rpmdb --> Cleanup --> Lint --> Output
 ```
 
-## Shared Scripts
+## Shared Data
 
-| Script | Role |
+| File | Role |
 | --- | --- |
-| `common/build.sh` | Copies static `files/` content when present, recovers the RPM database, and installs shared base packages. |
-| `common/recover-rpmdb.sh` | Recovers or rebuilds RPM database state for containerized builds. |
-| `common/cleanup.sh` | Cleans DNF/libdnf caches and `/tmp` between layers. |
-| `common/finalize.sh` | Removes `rpm-ostree`, performs final cleanup, and prunes runtime `/var` state. |
-| `common/install-flatpaks.sh` | Installs Flatpak, adds Flathub, and installs refs listed in `common/flatpaks`. |
+| `shared/flatpaks` | Flatpak refs installed into workstation unless `LOS_SKIP_FLATPAKS=1`; related refs are not preinstalled so GPU-specific runtimes are resolved on the installed system. |
+| `shared/bootc-image-builder.toml` | Shared bootc-image-builder config used by the direct QEMU install path and available for future package flows. |
 
 ## Workstation Image
 
-The workstation image is built by `editions/workstation/Containerfile`. It is intentionally a single image used as:
+The workstation image is built by `editions/workstation/Containerfile`. It is used as:
 
-- The live ISO root.
 - The bootc payload installed by ReadyMade.
 - The source image for qcow2 artifacts.
 
-The Containerfile has four conceptual stages:
+The ISO live root is built by `editions/workstation/Containerfile.installer` as `luminusos-workstation:<tag>-iso`. It starts from the workstation image, then adds the live-only installer packages, ReadyMade, GNOME live session files, image-builder ISO config, and boot/install wrappers. The normal workstation image is also embedded as the install payload.
 
-1. `ctx`: local repository context with `common/` and `editions/workstation/`.
-2. `aurora-extension`: downloads and validates the Aurora Shell extension zip.
-3. `readymade-main`: builds ReadyMade from upstream source with local install-path adjustments.
-4. Final workstation stage: starts from core and installs boot packages, Plymouth, GNOME, ReadyMade, Aurora Shell, Flatpaks, image-builder config, and wrappers.
+The workstation Containerfile has five conceptual stages:
+
+1. `ctx-workstation-script`: edition build script context.
+2. `ctx-flatpaks`: shared Flatpak refs from `shared/flatpaks`.
+3. `ctx-files`: workstation static file context.
+4. `aurora-extension`: downloads and validates the Aurora Shell extension zip.
+5. Final workstation stage: starts from core and installs installed-system boot packages, Plymouth, GNOME, Aurora Shell, Flatpaks, qcow2 image-builder config, and first-boot cleanup.
 
 ```mermaid
 flowchart TD
-    Ctx["ctx stage<br/>common + workstation"]
+    ScriptCtx["ctx-workstation-script<br/>editions/workstation/build.sh"]
+    FlatpakCtx["ctx-flatpaks<br/>shared/flatpaks"]
+    FilesCtx["ctx-files<br/>editions/workstation/files"]
     AuroraStage["aurora-extension stage"]
-    ReadyMadeStage["readymade-main stage"]
     CoreImage["core image<br/>luminusos:<tag>"]
-    BootPkgs["boot/live packages<br/>kernel, dracut-live, grub, shim, bootc, podman, toolbox, flatpak, plymouth"]
-    CopyReadyMade["copy ReadyMade output"]
+    BootPkgs["installed boot packages<br/>kernel, dracut, grub, shim, bootc, toolbox, flatpak, plymouth"]
     Plymouth["install Lucent Plymouth theme"]
-    Dracut["rebuild live initramfs<br/>with plymouth"]
-    EFI["prepare EFI fallback<br/>BOOTX64.EFI + grub.cfg"]
+    Dracut["rebuild installed initramfs<br/>with plymouth"]
     CopyAurora["install Aurora Shell"]
-    PatchAurora["patch metadata<br/>session-modes includes live-installer + initial-setup"]
+    PatchAurora["patch metadata<br/>session-modes includes initial-setup"]
     GnomeBuild["editions/workstation/build.sh"]
     Flatpaks["optional Flatpak installation"]
-    ReadyMadeConfig["patch /etc/readymade.toml"]
     ValidateAurora["compile schemas<br/>validate shell version + session mode"]
-    Wrappers["install bootc/bootupctl wrappers"]
     Lint["bootc container lint"]
     Output["luminusos-workstation:<tag>"]
 
-    Ctx --> GnomeBuild
+    ScriptCtx --> GnomeBuild
+    FilesCtx --> GnomeBuild
+    FlatpakCtx --> Flatpaks
     AuroraStage --> CopyAurora
-    ReadyMadeStage --> CopyReadyMade
-    CoreImage --> BootPkgs --> CopyReadyMade --> Plymouth --> Dracut --> EFI --> CopyAurora --> PatchAurora --> GnomeBuild
-    GnomeBuild --> Flatpaks --> ReadyMadeConfig --> ValidateAurora --> Wrappers --> Lint --> Output
+    CoreImage --> BootPkgs --> Plymouth --> Dracut --> CopyAurora --> PatchAurora --> GnomeBuild
+    GnomeBuild --> Flatpaks --> ValidateAurora --> Lint --> Output
 ```
 
 ## Plymouth
@@ -236,13 +235,13 @@ Runtime configuration:
 - `/etc/plymouth/plymouthd.conf` sets `Theme=lucent`, `ShowDelay=0`, and `DeviceTimeout=8`.
 - `/etc/dracut.conf.d/10-luminusos-plymouth.conf` forces Plymouth configuration into the initramfs.
 - `/usr/lib/bootc/kargs.d/10-luminusos-splash.toml` provides default installed-system splash kernel arguments through bootc.
-- `/usr/lib/image-builder/bootc/iso.yaml` provides the live ISO splash kernel arguments.
+- `/usr/lib/image-builder/bootc/iso.yaml` in the installer image provides the live ISO splash kernel arguments.
 
-The live initramfs is rebuilt after Plymouth and the Lucent theme are installed so the live ISO can show the splash during early boot.
+The workstation initramfs is rebuilt without live modules. The installer image rebuilds its own initramfs with `dmsquash-live` modules so the ISO can boot as a live environment.
 
 ## Aurora Shell
 
-Aurora Shell is installed from the release artifact selected by `AURORA_SHELL_VERSION`. The final image patches `metadata.json` so GNOME Shell accepts the extension in the normal user session, the custom live installer session, and GNOME Initial Setup:
+Aurora Shell is installed from the release artifact selected by `AURORA_SHELL_VERSION`. The workstation image patches `metadata.json` for the normal user session and GNOME Initial Setup; the installer image adds the custom live installer session:
 
 ```json
 "session-modes": ["initial-setup", "live-installer", "user"]
@@ -258,11 +257,11 @@ The live installer shell mode inherits from `user` so the normal GNOME Shell ext
 
 Aurora Shell is enabled through GNOME Shell's native extension paths: live and Initial Setup sessions use their shell mode `enabledExtensions`, while normal user sessions use the image's compiled GNOME defaults and dconf defaults. No user service forces the extension on after login, so installed users can later change their extension state normally.
 
-## ReadyMade Build Stage
+## Installer Image
 
-The `readymade-main` stage builds ReadyMade from upstream source and installs it into `/out`.
+`editions/workstation/Containerfile.installer` builds the ISO live root from the workstation image. It adds live-only packages, copies ReadyMade into the image, applies the live GNOME session, and installs the wrappers that are only needed during installation. The image-builder ISO rootfs is sized large enough to also carry the embedded workstation install payload.
 
-Local build-time adjustments:
+Its `readymade-main` stage builds ReadyMade from upstream source and installs it into `/out`. Local build-time adjustments:
 
 - Export only `.conf` repart files.
 - Clean `/run/readymade-install` before ReadyMade recreates it.
@@ -272,51 +271,38 @@ Local build-time adjustments:
 - Avoid panic if ReadyMade progress IPC disconnects before subprocess connection.
 - Install the release binary and application resources into `/out`.
 
-The final workstation stage copies `/out/` into the image.
+The final installer stage copies `/out/` into the `luminusos-workstation:<tag>-iso` image.
 
-## GNOME Desktop Module
+## GNOME Workstation Setup
 
 Main file: `editions/workstation/build.sh`.
 
 Responsibilities:
 
-- Copy `editions/workstation/files/` into `/`.
-- Install `accountsservice`, `gdm`, `gnome-initial-setup`, `gnome-shell`, `gnome-backgrounds`, `sushi`, and `gnome-software`.
+- Install `accountsservice`, `gdm`, `gnome-initial-setup`, `gnome-shell`, `gnome-backgrounds`, `nautilus`, `sushi`, and `gnome-software`.
 - Prepare `/boot/efi` and `/boot/loader/entries`.
-- Replace legacy live installer desktop entry behavior with ReadyMade.
-- Keep ReadyMade visible in live mode only.
-- Hide the packaged ReadyMade desktop file from the installed app grid.
 - Disable GNOME Software autostart and search provider.
+- Disable GNOME app folders so core apps such as Files and Software appear in the app grid directly.
 - Compile GLib schemas and update dconf.
 - Set graphical boot and GDM display manager links.
 - Enable installed first-boot cleanup fallback.
-- Provide `/etc/hostname` from the static GNOME file tree.
-- Create `liveuser`.
-- Configure GDM autologin into `live-installer.desktop`.
+- Write installed defaults for `/etc/hostname`, `/etc/luminusos/system-mode`, and GDM Initial Setup.
 
 ```mermaid
 flowchart TD
     Files["copy static GNOME files"]
     Packages["install GNOME packages"]
-    ReadyMadeDesktop["configure ReadyMade desktop files"]
-    HiddenSystemEntry["/usr/share/applications<br/>NoDisplay=true + Hidden=true"]
-    LiveVisibleEntry["/usr/local/share/applications<br/>visible live override"]
-    Autostart["/etc/xdg/autostart<br/>ReadyMade"]
     Schemas["glib-compile-schemas<br/>dconf update"]
     GDM["graphical.target<br/>display-manager.service"]
-    Hostname["static /etc/hostname"]
-    LiveUser["liveuser + AccountsService"]
-    Session["DefaultSession=live-installer.desktop"]
+    Hostname["installed /etc/hostname<br/>system-mode=installed"]
+    InitialSetup["InitialSetupEnable=true"]
 
-    Files --> Packages --> ReadyMadeDesktop
-    ReadyMadeDesktop --> HiddenSystemEntry
-    ReadyMadeDesktop --> LiveVisibleEntry --> Autostart
-    Autostart --> Schemas --> GDM --> Hostname --> LiveUser --> Session
+    Files --> Packages --> Schemas --> GDM --> Hostname --> InitialSetup
 ```
 
 ## Live ISO Runtime
 
-The live ISO is not itself a bootc deployment. It is a live environment generated from the workstation image, and the same workstation image is embedded into container storage as the installable payload.
+The live ISO is not itself a bootc deployment. It is generated from the workstation installer image, and the normal workstation image is embedded into container storage as the installable payload.
 
 ### Live-Only Files
 
@@ -328,10 +314,11 @@ The live ISO is not itself a bootc deployment. It is a live environment generate
 | `/usr/share/wayland-sessions/live-installer.desktop` | Registers the Wayland session. |
 | `/usr/share/gnome-session/sessions/live-installer.session` | Defines the GNOME session with `Kiosk=true`. |
 | `/usr/lib/systemd/user/gnome-session@live-installer.target.d/live-installer.session.conf` | Requires GNOME Shell in `live-installer` mode and wants ReadyMade. |
+| `/usr/lib/systemd/user/gnome-session@live-installer.target.wants/luminusos-readymade.service` | Vendor-enables ReadyMade for the live installer session target. |
 | `/usr/share/gnome-shell/modes/live-installer.json` | Defines the custom shell mode and forces Aurora Shell enabled. |
 | `/usr/lib/systemd/user/luminusos-readymade.service` | Starts ReadyMade in the live user session. |
-| `/etc/dconf/db/local.d/00-luminusos-live` | Live favorites and Aurora Shell module defaults. |
-| `/usr/local/share/applications/com.fyralabs.Readymade.desktop` | Live-only visible ReadyMade desktop entry. |
+| `/etc/dconf/db/local.d/00-iso-live-mode` | Live ISO GNOME Shell and Aurora Shell module defaults. |
+| `/etc/xdg/autostart/com.fyralabs.Readymade.desktop` | Live-only ReadyMade desktop autostart entry. |
 
 ```mermaid
 flowchart TD
@@ -392,10 +379,10 @@ copy_mode = "bootc"
 bootc_imgref = "containers-storage:<workstation-image>"
 bootc_target_imgref = "<target-update-ref>"
 bootc_enforce_sigpolicy = false
-bootc_args = ["--skip-fetch-check", "--skip-finalize", "--bootupd-skip-boot-uuid"]
+bootc_args = ["--skip-fetch-check", "--skip-finalize", "--bootupd-skip-boot-uuid", "--bootloader", "none"]
 ```
 
-`bootc_imgref` points at the payload image embedded in the live ISO. `bootc_target_imgref` is the image reference the installed system should use for future updates.
+`bootc_imgref` points at the payload image embedded in the live ISO. `bootc_target_imgref` is the image reference the installed system should use for future updates. The live install path disables bootc's internal bootloader call so `bootc-wrapper` can keep image import temp data on the target disk, run bootupctl without the static-config arguments that fail under the ReadyMade filesystem install path, then write the final GRUB configs itself.
 
 ## Installation Flow
 
@@ -410,24 +397,21 @@ flowchart TD
     BootcWrapper["Luminus bootc wrapper"]
     Payload["containers-storage payload image"]
     TargetRoot["target root"]
-    Cleanup["remove live-only artifacts"]
-    InitialSetup["enable GNOME Initial Setup"]
-    Hostname["copy static hostname"]
+    PayloadDefaults["installed defaults from payload"]
     Grub["write final GRUB configs"]
     Done["installed system"]
 
     User --> ReadyMadeUI --> Disk --> Repart --> Mounts --> BootcInstall
     Payload --> BootcWrapper
-    BootcInstall --> BootcWrapper --> TargetRoot --> Cleanup --> InitialSetup --> Hostname --> Grub --> Done
+    BootcInstall --> BootcWrapper --> TargetRoot --> PayloadDefaults --> Grub --> Done
 ```
 
 ## Disk Layout
 
-The storage model must remain aligned across:
+The ReadyMade ISO install storage model must remain aligned across:
 
 - `--bootc-default-fs btrfs` in the `Justfile`.
 - ReadyMade repart templates under `/usr/share/readymade/repart-cfgs/`.
-- `/usr/lib/image-builder/bootc/disk.yaml`.
 
 Expected layout:
 
@@ -453,20 +437,13 @@ flowchart TD
 
 ## Live-To-Installed Transition
 
-Two cleanup paths exist:
-
-1. `bootc-wrapper`, during installation before the first boot.
-2. `installed-firstboot-cleanup`, as a fallback on the installed system's first boot.
-
-Both paths remove live-only behavior and prepare GDM for GNOME Initial Setup.
+The installed system comes from the normal workstation payload, not from the live ISO root. Live-only installer files should therefore stay out of the payload image. `bootc-wrapper` only handles target-backed temp storage and final bootloader setup during installation. `installed-firstboot-cleanup` remains as a first-boot fallback for stale mutable state from older installer images or interrupted tests.
 
 ```mermaid
 flowchart TD
     InstallDone["bootc install completed"]
-    WrapperCleanup["bootc-wrapper cleanup"]
-    WriteInstalled["system-mode=installed"]
-    WriteGDM["InitialSetupEnable=true"]
-    WriteHostname["static hostname present"]
+    Bootloader["bootc-wrapper<br/>bootloader setup"]
+    PayloadReady["payload provides<br/>system-mode, hostname, GDM Initial Setup"]
     FirstBoot["first installed boot"]
     CleanupService{"cleanup service enabled?"}
     LiveCheck{"live ISO detected?"}
@@ -476,25 +453,26 @@ flowchart TD
     User["real local user created"]
     NormalSession["normal GNOME login"]
 
-    InstallDone --> WrapperCleanup --> WriteInstalled --> WriteGDM --> WriteHostname --> FirstBoot
+    InstallDone --> Bootloader --> PayloadReady --> FirstBoot
     FirstBoot --> CleanupService
     CleanupService -->|yes| LiveCheck
+    CleanupService -->|no| GIS
     LiveCheck -->|yes| Exit
-    LiveCheck -->|no| Fallback --> WriteInstalled
-    WriteGDM --> GIS --> User --> NormalSession
+    LiveCheck -->|no| Fallback --> GIS
+    GIS --> User --> NormalSession
 ```
 
-### Removed Live-Only Artifacts
+### Fallback Live-Only Cleanup
 
-The installed deployment removes:
+The workstation payload should not contain live-only installer artifacts. If an older installer image or interrupted test leaves stale live state in mutable target paths, `installed-firstboot-cleanup` removes:
 
 - `/etc/readymade.toml`
 - `/etc/xdg/autostart/com.fyralabs.Readymade.desktop`
 - `/etc/polkit-1/rules.d/49-luminusos-readymade.rules`
 - `/etc/dconf/db/local`
-- `/etc/dconf/db/local.d/00-luminusos-live`
+- `/etc/dconf/db/local.d/00-iso-live-mode`
 - `/etc/dconf/profile/user`
-- live-visible `/usr/local/share/applications/com.fyralabs.Readymade.desktop` content, replaced with a `Hidden=true` override
+- stale `/usr/local/share/applications/com.fyralabs.Readymade.desktop` or `/var/usrlocal/share/applications/com.fyralabs.Readymade.desktop` content, replaced with a `Hidden=true` override when writable
 - `/usr/lib/systemd/user/luminusos-readymade.service`
 - `/usr/lib/systemd/user/gnome-session@live-installer.target.d/live-installer.session.conf`
 - `/usr/share/gnome-shell/modes/live-installer.json`
@@ -504,15 +482,15 @@ The installed deployment removes:
 - `/var/home/liveuser`
 - `liveuser` passwd, shadow, group, gshadow, subuid, subgid, and AccountsService entries
 
-`/usr/bin/readymade` remains installed, but the packaged desktop entry is hidden from launchers with `NoDisplay=true` and `Hidden=true`. Installation cleanup also writes a hidden `/usr/local/share/applications/com.fyralabs.Readymade.desktop` override so the desktop file ID is treated as removed if a live-visible override survives into the target.
+The fallback also hides stale `/usr/local` or `/var/usrlocal` ReadyMade desktop entries if an older live-visible override survives into the target. ReadyMade itself belongs to the installer image, not to the installed workstation payload.
 
 ## GNOME Initial Setup
 
 After installation:
 
 - `/etc/gdm/custom.conf` contains `InitialSetupEnable=true`.
-- The live session is removed.
-- `liveuser` is removed.
+- The installed payload does not ship the live installer session.
+- The installed payload does not ship `liveuser`.
 - GDM starts GNOME Initial Setup so the real local user can be created.
 
 ```mermaid
@@ -529,14 +507,13 @@ flowchart TD
     Initial -->|no| Login
 ```
 
-## Local Wrappers
+## Installer Wrappers
 
-The final workstation image replaces selected system binaries with wrappers and stores the original binaries under `/usr/libexec/luminusos/`.
+The installer image replaces `bootc` with a wrapper and stores the original binary under `/usr/libexec/luminusos/`. It does not replace `bootupctl`; the bootc wrapper invokes the normal `/usr/bin/bootupctl` after `bootc install to-filesystem` succeeds.
 
 | Wrapper | Real binary | Purpose |
 | --- | --- | --- |
-| `/usr/bin/bootc` | `/usr/libexec/luminusos/bootc-real` | Redirects install temp data to target storage, removes live artifacts from the target deployment, enables Initial Setup, and writes final GRUB configs. |
-| `/usr/bin/bootupctl` | `/usr/libexec/luminusos/bootupctl-real` | Filters problematic bootupd flags during the live install path, writes GRUB static configs, and tolerates read-only bootc state write failures when appropriate. |
+| `/usr/bin/bootc` | `/usr/libexec/luminusos/bootc-real` | Redirects install temp data to target storage, runs bootupctl after bootc install, and writes final GRUB configs. |
 | `/usr/libexec/luminusos/readymade-wrapper` | `/usr/bin/readymade` | Sets live-safe temp and locale environment before starting ReadyMade. |
 
 ```mermaid
@@ -545,15 +522,12 @@ flowchart TD
     BootcCommand["bootc install to-filesystem"]
     BootcWrapper["/usr/bin/bootc wrapper"]
     BootcReal["bootc-real"]
-    BootupctlCall["bootupctl during install"]
-    BootupctlWrapper["/usr/bin/bootupctl wrapper"]
-    BootupctlReal["bootupctl-real"]
-    Cleanup["target cleanup + GRUB config"]
+    Bootupctl["/usr/bin/bootupctl"]
+    Bootloader["target bootloader + GRUB config"]
 
     ReadyMade --> BootcCommand --> BootcWrapper --> BootcReal
-    BootcReal --> BootupctlCall --> BootupctlWrapper --> BootupctlReal
-    BootcWrapper --> Cleanup
-    BootupctlWrapper --> Cleanup
+    BootcReal --> BootcWrapper
+    BootcWrapper --> Bootupctl --> Bootloader
 ```
 
 ## Workstation Artifact Packaging
@@ -569,12 +543,12 @@ sudo image-builder build \
   --bootc-default-fs btrfs \
   --output-dir . \
   --output-name luminusos-workstation-<tag>.iso \
-  --bootc-ref <workstation-image> \
+  --bootc-ref <workstation-iso-image> \
   --bootc-installer-payload-ref <workstation-image> \
   bootc-generic-iso
 ```
 
-`--bootc-ref` defines the live root. `--bootc-installer-payload-ref` embeds the same workstation image as the installer payload.
+`--bootc-ref` defines the live root and points at `luminusos-workstation:<tag>-iso`. `--bootc-installer-payload-ref` embeds the normal `luminusos-workstation:<tag>` image as the installer payload.
 
 ### qcow2
 
@@ -589,6 +563,8 @@ sudo image-builder build \
   qcow2
 ```
 
+The direct qcow2 artifact uses `/usr/lib/image-builder/bootc/disk.yaml`. It keeps the root/home/var deployment on Btrfs, but `/boot` is ext4 because image-builder qcow2 generation does not support Btrfs for `/boot`.
+
 ```mermaid
 flowchart TD
     Workstation["workstation image"]
@@ -596,12 +572,13 @@ flowchart TD
     QCOW2Builder["image-builder<br/>qcow2"]
     BootcRef["--bootc-ref"]
     PayloadRef["--bootc-installer-payload-ref"]
+    WorkstationISO["workstation ISO root<br/>luminusos-workstation:&lt;tag&gt;-iso"]
     ISO["luminusos-workstation-<tag>.iso"]
     QCOW2["luminusos-workstation-<tag>.qcow2"]
     LastISO[".test/last-iso"]
     LastQCOW2[".test/last-qcow2"]
 
-    Workstation --> BootcRef --> ISOBuilder
+    Workstation --> WorkstationISO --> BootcRef --> ISOBuilder
     Workstation --> PayloadRef --> ISOBuilder
     ISOBuilder --> ISO --> LastISO
     Workstation --> QCOW2Builder --> QCOW2 --> LastQCOW2
@@ -658,7 +635,7 @@ stateDiagram-v2
     ImageBuild --> LiveISO: bootc-generic-iso
     ImageBuild --> QCOW2: qcow2
     LiveISO --> Installing: ReadyMade
-    Installing --> InstalledPrepared: bootc-wrapper cleanup
+    Installing --> InstalledPrepared: bootc-wrapper bootloader setup
     InstalledPrepared --> InitialSetup: GDM InitialSetupEnable
     InitialSetup --> InstalledReady: user created
     QCOW2 --> InstalledReady
@@ -668,8 +645,8 @@ stateDiagram-v2
 | State | Indicator | Behavior |
 | --- | --- | --- |
 | Live ISO | `/etc/luminusos/system-mode = live` | `liveuser` autologin, `live-installer` session, ReadyMade visible and autostarted. |
-| Installed prepared | `/etc/luminusos/system-mode = installed` | Live artifacts removed, GNOME Initial Setup enabled. |
-| Installed ready | Real user exists | Normal GNOME login, Aurora Shell defaults, ReadyMade hidden from app grid. |
+| Installed prepared | `/etc/luminusos/system-mode = installed` | Workstation payload deployed, bootloader configured, GNOME Initial Setup enabled. |
+| Installed ready | Real user exists | Normal GNOME login, Aurora Shell defaults, no ReadyMade installer app. |
 
 ## Updates
 
@@ -680,7 +657,7 @@ The final image removes the `rpm-ostree` package, so client-side package layerin
 By default, installed systems track the Fedora-versioned workstation image in GHCR:
 
 ```bash
-LOS_WORKSTATION_TARGET_IMAGE=ghcr.io/LuminusOS/luminusos-workstation:44
+LOS_WORKSTATION_TARGET_IMAGE=ghcr.io/luminusos/luminusos-workstation:44
 ```
 
 Local installer tests may override `LOS_WORKSTATION_TARGET_IMAGE`, but release builds should leave it on the registry-published reference so installed systems use `bootc upgrade` from the Luminus OS OCI registry.
@@ -703,9 +680,10 @@ flowchart TD
 
 When changing this repository, keep these points aligned:
 
-- `Justfile`, `README.md`, `ARCHITECTURE.md`, and `docs/architecture.md` must agree on active commands and supported editions.
-- `--bootc-default-fs btrfs`, ReadyMade repart templates, and `disk.yaml` must describe the same storage layout.
-- Any live-only file added under `editions/workstation/files/` should be removed by `bootc-wrapper`, removed by `installed-firstboot-cleanup`, and excluded by repart when applicable.
+- `Justfile`, `README.md`, `ARCHITECTURE.md`, and `AGENTS.md` must agree on active commands and supported editions.
+- `--bootc-default-fs btrfs` and ReadyMade repart templates must describe the same ISO install storage layout.
+- `disk.yaml` must keep root/home/var Btrfs for direct qcow2 artifacts, with `/boot` ext4 for image-builder compatibility.
+- Any live-only file added under `editions/workstation/files/` must stay out of the installed workstation payload and be excluded by repart when applicable. `installed-firstboot-cleanup` should only be a fallback, not the primary separation mechanism.
 - Changes to `live-installer` must consider the Wayland session file, GNOME session file, GNOME Shell mode JSON, systemd user drop-in, Aurora Shell metadata, and cleanup paths.
 - If the ReadyMade desktop file name changes, update GNOME build logic, autostart, cleanup, and repart exclusions.
 - If the install flow changes, update `readymade.toml`, wrappers, and this document.
@@ -742,15 +720,15 @@ Useful installed-system commands:
 cat /etc/luminusos/system-mode
 hostname
 bootc status
-ls /usr/bin/readymade
-grep -R "NoDisplay=true" /usr/share/applications/com.fyralabs.Readymade.desktop
-grep -R "Hidden=true" /usr/local/share/applications/com.fyralabs.Readymade.desktop
+test ! -e /usr/bin/readymade
+test ! -e /usr/share/wayland-sessions/live-installer.desktop
+test ! -e /etc/readymade.toml
 ```
 
 ## Known Constraints
 
 - The live ISO itself is not a bootc deployment; `bootc status` is expected after installation.
-- ReadyMade remains installed as a binary on the installed system, but it should not appear in the app grid.
+- ReadyMade is installed only in the ISO live root, not in the installed workstation payload.
 - The `live-installer` session depends on a custom GNOME Shell mode; extensions used there must declare support for that mode.
 - The install path relies on local wrappers to reconcile live ISO behavior, `bootc install`, and bootupd.
 - The direct qcow2 test path does not exercise the ReadyMade UI.

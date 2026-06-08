@@ -1,23 +1,12 @@
 #!/usr/bin/env bash
 set -uexo pipefail
 
-# ReadyMade's CleanupBoot postinstall module expects a BLS entry directory.
-# The live root can boot without it, but the installed target needs the path.
 mkdir -p /boot/efi /boot/loader/entries
+mkdir -p /etc/luminusos
+printf 'installed\n' > /etc/luminusos/system-mode
+printf 'luminus\n' > /etc/hostname
 
-# ReadyMade replaces the legacy live installer entry in the live session.
 rm -f /usr/share/applications/liveinst.desktop
-if [ -f /usr/share/applications/com.fyralabs.Readymade.desktop ]; then
-  mkdir -p /etc/xdg/autostart /usr/local/share/applications
-  sed -i '/^NoDisplay=/d' /usr/share/applications/com.fyralabs.Readymade.desktop
-  sed -i '/^Hidden=/d' /usr/share/applications/com.fyralabs.Readymade.desktop
-  sed -i 's|^Exec=.*|Exec=/usr/libexec/luminusos/readymade-wrapper|' /usr/share/applications/com.fyralabs.Readymade.desktop
-  cp -f /usr/share/applications/com.fyralabs.Readymade.desktop /usr/local/share/applications/com.fyralabs.Readymade.desktop
-  cp -f /usr/local/share/applications/com.fyralabs.Readymade.desktop /etc/xdg/autostart/com.fyralabs.Readymade.desktop
-  sed -i '/^NoDisplay=/d' /usr/share/applications/com.fyralabs.Readymade.desktop
-  sed -i '/^Hidden=/d' /usr/share/applications/com.fyralabs.Readymade.desktop
-  printf '\nNoDisplay=true\nHidden=true\n' >> /usr/share/applications/com.fyralabs.Readymade.desktop
-fi
 rm -f /etc/xdg/autostart/org.gnome.Software.desktop
 mkdir -p /usr/share/gnome-shell/search-providers
 cat > /usr/share/gnome-shell/search-providers/org.gnome.Software-search-provider.ini <<'EOF'
@@ -42,24 +31,9 @@ fi
 ln -sf /usr/lib/systemd/system/graphical.target /etc/systemd/system/default.target
 ln -sf /usr/lib/systemd/system/gdm.service /etc/systemd/system/display-manager.service
 
-# Mask services that fail in live environment
-systemctl mask bootloader-update.service
 systemctl enable luminusos-installed-firstboot-cleanup.service
-
-# Create a live user with autologin in locked mode
-useradd -m -G wheel liveuser || true
-passwd -d liveuser
 mkdir -p /etc/gdm
 cat > /etc/gdm/custom.conf <<'EOF'
 [daemon]
-AutomaticLoginEnable=true
-AutomaticLogin=liveuser
-DefaultSession=live-installer.desktop
-EOF
-mkdir -p /var/lib/AccountsService/users
-cat > /var/lib/AccountsService/users/liveuser <<'EOF'
-[User]
-Session=live-installer
-XSession=live-installer
-SystemAccount=false
+InitialSetupEnable=true
 EOF

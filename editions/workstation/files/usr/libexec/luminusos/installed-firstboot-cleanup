@@ -7,29 +7,36 @@ fi
 
 mkdir -p /etc/luminusos
 printf 'installed\n' > /etc/luminusos/system-mode
+printf 'luminus\n' > /etc/hostname
 
 rm -f \
   /etc/readymade.toml \
   /etc/xdg/autostart/com.fyralabs.Readymade.desktop \
   /etc/polkit-1/rules.d/49-luminusos-readymade.rules \
   /etc/dconf/db/local \
-  /etc/dconf/db/local.d/00-luminusos-live \
+  /etc/dconf/db/local.d/00-iso-live-mode \
   /etc/dconf/profile/user \
   /usr/local/share/applications/com.fyralabs.Readymade.desktop \
+  /var/usrlocal/share/applications/com.fyralabs.Readymade.desktop \
   /usr/lib/systemd/user/luminusos-readymade.service \
   /usr/lib/systemd/user/gnome-session@live-installer.target.d/live-installer.session.conf \
   /usr/share/gnome-shell/modes/live-installer.json \
   /usr/share/gnome-session/sessions/live-installer.session \
   /usr/share/wayland-sessions/live-installer.desktop || true
 
-mkdir -p /usr/local/share/applications 2>/dev/null || true
-cat > /usr/local/share/applications/com.fyralabs.Readymade.desktop 2>/dev/null <<'EOF' || true
+for desktop_dir in \
+  /usr/local/share/applications \
+  /var/usrlocal/share/applications \
+  /usr/share/applications; do
+  mkdir -p "${desktop_dir}" 2>/dev/null || true
+  cat > "${desktop_dir}/com.fyralabs.Readymade.desktop" 2>/dev/null <<'EOF' || true
 [Desktop Entry]
 Type=Application
 Name=ReadyMade
 Hidden=true
 NoDisplay=true
 EOF
+done
 
 rm -rf \
   /home/liveuser \

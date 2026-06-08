@@ -19,12 +19,12 @@ partition_table:
       type: "bc13c2ff-59e6-4262-a352-b275fd6f7172"
       payload_type: "filesystem"
       payload:
-        type: "btrfs"
+        type: "ext4"
         label: "boot"
         mountpoint: "/boot"
-        fstab_options: "defaults,compress=zstd:1"
+        fstab_options: "defaults"
         fstab_freq: 0
-        fstab_passno: 0
+        fstab_passno: 2
     - type: "44479540-f297-41b2-9af7-d131d5f0458a"
       payload_type: "btrfs"
       payload:

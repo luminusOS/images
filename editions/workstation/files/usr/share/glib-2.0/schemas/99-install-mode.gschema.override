@@ -1,11 +1,13 @@
-# GNOME Locked Mode Configuration
-# Restricted GNOME experience for live/installer boot
+# GNOME workstation defaults
 
 [org.gnome.shell]
-favorite-apps=['org.gnome.Nautilus.desktop']
+favorite-apps=['org.gnome.Nautilus.desktop', 'org.gnome.Epiphany.desktop', 'org.gnome.Software.desktop', 'org.gnome.Ptyxis.desktop']
 enabled-extensions=['aurora-shell@luminusos.github.io']
 disabled-extensions=[]
 disable-user-extensions=false
+
+[org.gnome.desktop.app-folders]
+folder-children=[]
 
 [org.gnome.desktop.wm.preferences]
 num-workspaces=1
