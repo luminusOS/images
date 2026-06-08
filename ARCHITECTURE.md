@@ -259,7 +259,7 @@ Aurora Shell is enabled through GNOME Shell's native extension paths: live and I
 
 ## Installer Image
 
-`editions/workstation/Containerfile.installer` builds the ISO live root from the workstation image. It adds live-only packages, copies ReadyMade into the image, applies the live GNOME session, and installs the wrappers that are only needed during installation. The image-builder ISO rootfs is sized large enough to also carry the embedded workstation install payload.
+`editions/workstation/Containerfile.installer` builds the ISO live root from the workstation image. It adds live-only packages, copies ReadyMade into the image, applies the live GNOME session, and installs the wrappers that are only needed during installation. The image-builder ISO rootfs is sized large enough to copy the live root with Flatpaks and then carry the embedded workstation install payload.
 
 Its `readymade-main` stage builds ReadyMade from upstream source and installs it into `/out`. Local build-time adjustments:
 
