@@ -1,4 +1,4 @@
-ARG base
+ARG base=quay.io/fedora/fedora-bootc:44
 
 # ── Context stage: shared build scripts ──────────────────────────────────
 FROM scratch AS ctx-scripts

@@ -1,51 +1,133 @@
 name: CI
 
-"on":
+on:
   push:
     branches: [main]
   pull_request:
-    branches: [main]
+  merge_group:
+  workflow_call:
+    inputs:
+      checkout_ref:
+        description: Git ref to validate instead of the triggering commit
+        required: false
+        type: string
+
+permissions:
+  contents: read
+  packages: write
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
 
 jobs:
-  lint-and-test:
-    name: Lint and test
+  ci-image:
+    name: CI image
     runs-on: ubuntu-latest
-    container: quay.io/fedora/fedora:44
+    outputs:
+      name: ${{ steps.image.outputs.name }}
     steps:
-      - name: Checkout
-        uses: actions/checkout@v7
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ inputs.checkout_ref || github.sha }}
 
-      - name: Install tools
-        run: dnf -y install ShellCheck shfmt just jq python3 findutils
+      - name: Log in to GHCR
+        uses: docker/login-action@v4
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: shellcheck
-        run: find editions shared tools tests .github/scripts -name '*.sh' -print0 | xargs -0 shellcheck -S warning
+      - name: Resolve CI image
+        id: image
+        run: |
+          IMAGE="$(bash tools/ci-image-name.sh)"
+          echo "name=$IMAGE" >> "$GITHUB_OUTPUT"
 
-      - name: shfmt
+          if docker manifest inspect "$IMAGE" >/dev/null 2>&1; then
+            echo "exists=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "exists=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - uses: docker/setup-buildx-action@v4
+        if: steps.image.outputs.exists != 'true'
+
+      - name: Build and publish CI image
+        if: steps.image.outputs.exists != 'true'
+        uses: docker/build-push-action@v7
+        with:
+          context: .
+          file: ci/Containerfile
+          push: true
+          tags: |
+            ${{ steps.image.outputs.name }}
+            ghcr.io/luminusos/images-ci:sha-${{ github.sha }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+  lint:
+    name: Validate
+    runs-on: ubuntu-latest
+    needs: [ci-image]
+    container:
+      image: ${{ needs.ci-image.outputs.name }}
+      credentials:
+        username: ${{ github.actor }}
+        password: ${{ secrets.GITHUB_TOKEN }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ inputs.checkout_ref || github.sha }}
+
+      - name: Check lint tooling
+        run: just check
+
+      - name: Lint shell scripts
+        run: just lint
+
+      - name: Check shell formatting
         run: find editions shared tools tests .github/scripts -name '*.sh' -print0 | xargs -0 shfmt -d -i 2 -ci
 
-      - name: Test suite
-        run: tests/run.sh
+  tests:
+    name: Unit & config tests
+    runs-on: ubuntu-latest
+    needs: [ci-image]
+    container:
+      image: ${{ needs.ci-image.outputs.name }}
+      credentials:
+        username: ${{ github.actor }}
+        password: ${{ secrets.GITHUB_TOKEN }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ inputs.checkout_ref || github.sha }}
+
+      - name: Run test suite
+        run: just test
 
   actionlint:
     name: Lint workflows
     runs-on: ubuntu-latest
     steps:
-      - name: Checkout
-        uses: actions/checkout@v7
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ inputs.checkout_ref || github.sha }}
 
       - name: actionlint
         uses: docker://rhysd/actionlint:1.7.7
         with:
           args: -color
 
-  build-core:
+  build:
     name: Build core (smoke)
     runs-on: ubuntu-latest
     timeout-minutes: 60
+    needs: [lint, tests]
     steps:
-      - name: Checkout
-        uses: actions/checkout@v7
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ inputs.checkout_ref || github.sha }}
 
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v4

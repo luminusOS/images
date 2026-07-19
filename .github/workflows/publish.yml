@@ -16,6 +16,10 @@ name: Publish
         description: "Skip Flatpak preinstall (faster test builds)"
         default: "0"
 
+concurrency:
+  group: publish
+  cancel-in-progress: false
+
 env:
   REGISTRY: ghcr.io
   AURORA_SHELL_VERSION: v50.3

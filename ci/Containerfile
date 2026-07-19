@@ -1,0 +1,14 @@
+# CI toolbox image for lint/test jobs. Rebuilt only when its content hash
+# changes — see tools/ci-image-name.sh and .github/workflows/ci.yml.
+FROM quay.io/fedora/fedora:44
+
+RUN dnf -y install \
+      ShellCheck \
+      findutils \
+      gawk \
+      git \
+      jq \
+      just \
+      python3 \
+      shfmt \
+    && dnf clean all
