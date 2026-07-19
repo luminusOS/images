@@ -173,7 +173,7 @@ jobs:
             -e WORKSTATION_IMAGE="ghcr.io/${NAMESPACE}/luminusos-workstation:${VERSION_TAG}" \
             -e WORKSTATION_ISO_IMAGE="ghcr.io/${NAMESPACE}/luminusos-workstation:${VERSION_TAG}-iso" \
             -e OUTPUT_NAME="luminusos-workstation-${VERSION_TAG}.iso" \
-            -e GHCR_USER -e GHCR_TOKEN \
+            -e GHCR_USER="${GHCR_USER}" -e GHCR_TOKEN="${GHCR_TOKEN}" \
             "quay.io/fedora/fedora:${{ needs.version.outputs.fedora_version }}" \
             bash .github/scripts/ci-package.sh iso
 
@@ -221,7 +221,7 @@ jobs:
             -v "$PWD:/work" -w /work \
             -e WORKSTATION_IMAGE="ghcr.io/${NAMESPACE}/luminusos-workstation:${VERSION_TAG}" \
             -e OUTPUT_NAME="luminusos-workstation-${VERSION_TAG}.qcow2" \
-            -e GHCR_USER -e GHCR_TOKEN \
+            -e GHCR_USER="${GHCR_USER}" -e GHCR_TOKEN="${GHCR_TOKEN}" \
             "quay.io/fedora/fedora:${{ needs.version.outputs.fedora_version }}" \
             bash .github/scripts/ci-package.sh qcow2
 
