@@ -21,10 +21,17 @@ fi
 
 podman pull "${WORKSTATION_IMAGE}"
 
+# The osbuild cache must NOT live on the container's overlayfs root: the
+# ISO build deploys a containers-storage tree inside it, and the overlay
+# graph driver refuses to run on top of overlayfs. /work is a bind mount
+# of the runner's ext4 disk, which is a supported backing filesystem.
+cache_dir="${PWD}/.osbuild-cache"
+
 case "${format}" in
   iso)
     podman pull "${WORKSTATION_ISO_IMAGE}"
     image-builder build \
+      --cache "${cache_dir}" \
       --bootc-default-fs btrfs \
       --output-dir . \
       --output-name "${OUTPUT_NAME}" \
@@ -34,6 +41,7 @@ case "${format}" in
     ;;
   qcow2)
     image-builder build \
+      --cache "${cache_dir}" \
       --bootc-default-fs btrfs \
       --output-dir . \
       --output-name "${OUTPUT_NAME}" \

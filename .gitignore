@@ -5,6 +5,7 @@
 *.osbuild-manifest.json
 .test/
 .iso-output/
+.osbuild-cache/
 .image-builder-cli/
 .env
 docs/superpowers/
