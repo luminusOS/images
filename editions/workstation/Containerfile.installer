@@ -1,55 +1,17 @@
 ARG fedora_version=44
 ARG workstation_image=localhost/luminusos-workstation:latest
 
-# Context root for this Containerfile is the LuminusOS workspace root, not images/.
-
 # -- Context stage: workstation static files --------------------------------
 FROM scratch AS ctx-files
 
-COPY images/editions/workstation/files /workstation/files
-
-# -- Build Sirius from the sibling workspace --------------------------------
-FROM quay.io/fedora/fedora-bootc:${fedora_version} AS sirius-builder
-
-ARG fedora_version=44
-
-COPY sirius /src/sirius
-
-RUN --mount=type=cache,target=/var/cache/dnf \
-    --mount=type=cache,target=/var/cache/cargo/registry \
-    --mount=type=cache,target=/var/cache/cargo/git \
-    --mount=type=cache,target=/var/cache/cargo-target \
-    --mount=type=tmpfs,target=/tmp \
-    mkdir -p /etc/dnf/vars /etc/yum/vars && \
-    printf '%s\n' "${fedora_version}" > /etc/dnf/vars/releasever && \
-    printf '%s\n' "${fedora_version}" > /etc/yum/vars/releasever && \
-    dnf -y --releasever="${fedora_version}" install \
-      cargo \
-      clang-devel \
-      cmake \
-      gcc \
-      git \
-      glibc-all-langpacks \
-      gtk4-devel \
-      libadwaita-devel \
-      mold \
-      openssl-devel \
-      pkgconf-pkg-config \
-      rust && \
-    cd /src/sirius && \
-    HOME=/tmp CARGO_HOME=/var/cache/cargo CARGO_TARGET_DIR=/var/cache/cargo-target cargo fetch --locked && \
-    HOME=/tmp CARGO_HOME=/var/cache/cargo CARGO_TARGET_DIR=/var/cache/cargo-target cargo build --release --locked -p sirius-installer && \
-    install -Dm0755 /var/cache/cargo-target/release/sirius /out/usr/bin/sirius && \
-    install -Dm0644 data/io.sirius.Installer.policy /out/usr/share/polkit-1/actions/io.sirius.Installer.policy && \
-    install -Dm0644 data/io.sirius.Installer.desktop /out/usr/share/applications/io.sirius.Installer.desktop && \
-    install -Dm0644 data/icons/hicolor/scalable/apps/io.sirius.Installer.svg /out/usr/share/icons/hicolor/scalable/apps/io.sirius.Installer.svg && \
-    dnf clean all
+COPY editions/workstation/files /workstation/files
 
 # -- Workstation live ISO root using Sirius ---------------------------------
 FROM ${workstation_image}
 
 ARG fedora_version=44
 ARG image_version=44
+ARG sirius_version=0.1.0
 ARG workstation_image=localhost/luminusos-workstation:latest
 ARG workstation_target_image=ghcr.io/luminusos/luminusos-workstation:44
 ARG aurora_shell_uuid=aurora-shell@luminusos.github.io
@@ -82,10 +44,14 @@ RUN --mount=type=cache,target=/var/cache/dnf \
       podman \
       polkit \
       squashfs-tools \
-      xorriso && \
-    dnf clean all
-
-COPY --from=sirius-builder /out/ /
+      xorriso \
+      "https://github.com/luminusOS/sirius/releases/download/v${sirius_version}/sirius-installer-${sirius_version}-1.x86_64.rpm" && \
+    dnf clean all && \
+    # The Sirius RPM ships generic repart definitions (10-esp.conf,
+    # 20-root.conf) that would mix with the LuminusOS 10-root/20-boot/30-esp
+    # scheme and hand systemd-repart five partitions. Drop everything the RPM
+    # installed there; the LuminusOS templates are installed below.
+    rm -f /usr/share/sirius/repart.d/*.conf
 
 RUN --mount=type=bind,from=ctx-files,source=/workstation/files,target=/wfiles \
     install -Dm0644 /wfiles/etc/dconf/db/local.d/00-iso-live-mode /etc/dconf/db/local.d/00-iso-live-mode && \
@@ -180,6 +146,7 @@ RUN --mount=type=bind,from=ctx-files,source=/workstation/files,target=/wfiles \
     install -m 0644 /boot/efi/EFI/fedora/grub.cfg /boot/efi/EFI/BOOT/grub.cfg
 
 RUN command -v sirius && \
+    rpm -q sirius-installer && \
     ldd /usr/bin/sirius | tee /tmp/sirius-ldd && \
     ! grep -q 'not found' /tmp/sirius-ldd && \
     command -v bootc && \
@@ -187,7 +154,13 @@ RUN command -v sirius && \
     test -f /etc/sirius/distro.toml && \
     test -f /etc/sirius/sirius.toml && \
     test -f /etc/containers/containers.conf.d/99-luminusos-bootc-install-tmp.conf && \
+    # Exactly the three LuminusOS repart definitions: the RPM's generic
+    # 10-esp/20-root pair must be gone or systemd-repart would see five.
+    test ! -e /usr/share/sirius/repart.d/10-esp.conf && \
+    test ! -e /usr/share/sirius/repart.d/20-root.conf && \
     test -f /usr/share/sirius/repart.d/10-root.conf && \
+    test -f /usr/share/sirius/repart.d/20-boot.conf && \
+    test -f /usr/share/sirius/repart.d/30-esp.conf && \
     test -f /usr/share/polkit-1/actions/io.sirius.Installer.policy && \
     test -f /usr/share/polkit-1/rules.d/50-sirius-live.rules && \
     test -f /usr/share/sirius/logo.png && \

@@ -13,6 +13,7 @@ workstation_image := registry + "/luminusos-workstation:" + tag
 workstation_iso_image := registry + "/luminusos-workstation:" + tag + "-iso"
 workstation_target_image := env("LOS_WORKSTATION_TARGET_IMAGE", "ghcr.io/luminusos/luminusos-workstation:" + fedora_ver)
 aurora_shell_version := env("AURORA_SHELL_VERSION", "v50.3")
+sirius_version := env("SIRIUS_VERSION", "0.1.0")
 force_core := env("LOS_FORCE_CORE", "0")
 skip_flatpaks := env("LOS_SKIP_FLATPAKS", "0")
 sudo_keepalive := '''
@@ -121,12 +122,13 @@ build edition="workstation":
         sudo buildah bud \
           --layers \
           --build-arg fedora_version={{ fedora_ver }} \
+          --build-arg sirius_version={{ sirius_version }} \
           --build-arg workstation_image={{ workstation_image }} \
           --build-arg workstation_target_image={{ workstation_target_image }} \
           --build-arg image_version={{ tag }} \
           --tag {{ workstation_iso_image }} \
           --file editions/workstation/Containerfile.installer \
-          ..
+          .
         echo "Skipping squash for {{ workstation_iso_image }} because the ISO live root is packaged as layered container input"
         ;;
       *)
