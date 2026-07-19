@@ -49,21 +49,6 @@ build edition="workstation":
         find editions/core -type f -print0 | sort -z | xargs -0 sha256sum
       } | sha256sum | awk '{print $1}'
     }
-    squash_image() {
-      local image="$1"
-      local ctr=""
-
-      ctr="$(sudo buildah from --pull=never "${image}")"
-      if ! sudo buildah config \
-        --unsetlabel ostree.final-diffid \
-        --unsetlabel ostree.commit \
-        "${ctr}" || \
-        ! sudo buildah commit --squash "${ctr}" "${image}"; then
-        sudo buildah rm "${ctr}" >/dev/null 2>&1 || true
-        return 1
-      fi
-      sudo buildah rm "${ctr}"
-    }
     keep_sudo_alive
     case "{{ edition }}" in
       core)
@@ -77,7 +62,7 @@ build edition="workstation":
           --tag {{ core_image }} \
           --file editions/core/Containerfile \
           .
-        squash_image {{ core_image }}
+        ./tools/squash-image.sh {{ core_image }}
         mkdir -p .test
         printf '%s\n' "{{ tag }}" > .test/last-core-tag
         core_stamp > .test/last-core-stamp
@@ -109,7 +94,7 @@ build edition="workstation":
           --tag {{ workstation_image }} \
           --file editions/workstation/Containerfile \
           .
-        squash_image {{ workstation_image }}
+        ./tools/squash-image.sh {{ workstation_image }}
         mkdir -p .test
         printf '%s\n' "{{ tag }}" > .test/last-workstation-tag
         ;;
@@ -176,22 +161,6 @@ package edition="workstation" format="all":
 
       echo "Building workstation ISO image from $image_ref"
       LOS_TAG="${package_tag}" just build workstation-iso
-    }
-
-    squash_local_image() {
-      local image="$1"
-      local ctr=""
-
-      ctr="$(sudo buildah from --pull=never "${image}")"
-      if ! sudo buildah config \
-        --unsetlabel ostree.final-diffid \
-        --unsetlabel ostree.commit \
-        "${ctr}" || \
-        ! sudo buildah commit --squash "${ctr}" "${image}"; then
-        sudo buildah rm "${ctr}" >/dev/null 2>&1 || true
-        return 1
-      fi
-      sudo buildah rm "${ctr}"
     }
 
     check_qcow2_disk_layout() {
@@ -266,8 +235,29 @@ package edition="workstation" format="all":
 
     if [[ "$image_ref" == localhost/* ]]; then
       echo "Ensuring local workstation image is squashed before packaging"
-      squash_local_image "$image_ref"
+      ./tools/squash-image.sh "$image_ref"
     fi
+
+    # run_image_builder <image-builder-type> <output-name> <pointer-file> [extra args...]
+    run_image_builder() {
+      local type="$1" output="$2" pointer="$3"
+      shift 3
+
+      sudo image-builder build \
+        --bootc-default-fs btrfs \
+        --output-dir . \
+        --output-name "$output" \
+        "$@" \
+        "$type"
+
+      local path="$(pwd)/$output"
+      if [ ! -f "$path" ]; then
+        echo "Expected artifact was not created: $path"
+        exit 1
+      fi
+      printf '%s\n' "$path" > "$pointer"
+      echo "Wrote artifact pointer: $pointer -> $path"
+    }
 
     package_iso() {
       build_iso_image
@@ -276,39 +266,17 @@ package edition="workstation" format="all":
       fi
 
       echo "Building workstation ISO from $iso_image_ref with payload $image_ref"
-      sudo image-builder build \
-        --bootc-default-fs btrfs \
-        --output-dir . \
-        --output-name "luminusos-workstation-${package_tag}.iso" \
+      run_image_builder bootc-generic-iso \
+        "luminusos-workstation-${package_tag}.iso" .test/last-iso \
         --bootc-ref "$iso_image_ref" \
-        --bootc-installer-payload-ref "$image_ref" \
-        bootc-generic-iso
-
-      iso_path="$(pwd)/luminusos-workstation-${package_tag}.iso"
-      if [ ! -f "$iso_path" ]; then
-        echo "Expected ISO was not created: $iso_path"
-        exit 1
-      fi
-      printf '%s\n' "$iso_path" > .test/last-iso
-      echo "Wrote ISO pointer: .test/last-iso -> $iso_path"
+        --bootc-installer-payload-ref "$image_ref"
     }
 
     package_qcow2() {
       echo "Building workstation qcow2 from $image_ref"
-      sudo image-builder build \
-        --bootc-default-fs btrfs \
-        --output-dir . \
-        --output-name "luminusos-workstation-${package_tag}.qcow2" \
-        --bootc-ref "$image_ref" \
-        qcow2
-
-      qcow2_path="$(pwd)/luminusos-workstation-${package_tag}.qcow2"
-      if [ ! -f "$qcow2_path" ]; then
-        echo "Expected qcow2 was not created: $qcow2_path"
-        exit 1
-      fi
-      printf '%s\n' "$qcow2_path" > .test/last-qcow2
-      echo "Wrote qcow2 pointer: .test/last-qcow2 -> $qcow2_path"
+      run_image_builder qcow2 \
+        "luminusos-workstation-${package_tag}.qcow2" .test/last-qcow2 \
+        --bootc-ref "$image_ref"
     }
 
     case "{{ format }}" in
@@ -373,10 +341,10 @@ check:
 
 # Lint all shell scripts
 lint:
-	find editions tools -name '*.sh' | xargs shellcheck -S warning
+	find editions shared tools -name '*.sh' | xargs shellcheck -S warning
 	shellcheck *.sh 2>/dev/null || true
 
 # Format all shell scripts in-place
 format:
-	find editions tools -name '*.sh' | xargs shfmt -w -i 2 -ci
+	find editions shared tools -name '*.sh' | xargs shfmt -w -i 2 -ci
 	shfmt -w -i 2 -ci *.sh 2>/dev/null || true
