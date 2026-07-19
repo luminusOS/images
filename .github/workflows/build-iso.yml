@@ -1,0 +1,64 @@
+name: Build ISO
+
+"on":
+  workflow_dispatch:
+    inputs:
+      fedora_version:
+        description: "Fedora version"
+        default: "44"
+      sirius_version:
+        description: "Sirius release (RPM version on GitHub releases)"
+        default: "0.1.0"
+      skip_flatpaks:
+        description: "Skip Flatpak preinstall (faster test builds, ~4GB smaller)"
+        default: "0"
+
+jobs:
+  build-iso:
+    name: Build workstation ISO
+    runs-on: ubuntu-latest
+    timeout-minutes: 240
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Free disk space
+        uses: jlumbroso/free-disk-space@v1.3.1
+        with:
+          tool-cache: true
+          android: true
+          dotnet: true
+          haskell: true
+          large-packages: true
+          docker-images: true
+          swap-storage: true
+
+      - name: Build containers and ISO inside Fedora
+        env:
+          FEDORA_VERSION: ${{ inputs.fedora_version }}
+          SIRIUS_VERSION: ${{ inputs.sirius_version }}
+          SKIP_FLATPAKS: ${{ inputs.skip_flatpaks }}
+        run: |
+          set -euxo pipefail
+          mkdir -p "$PWD/.ci-storage"
+          sudo podman run --rm --privileged \
+            --security-opt label=type:unconfined_t \
+            -v "$PWD:/work" \
+            -v "$PWD/.ci-storage:/var/lib/containers" \
+            -w /work \
+            -e LOS_FEDORA_VERSION="$FEDORA_VERSION" \
+            -e LOS_TAG="$FEDORA_VERSION.$(date -u +%Y%m%d)" \
+            -e SIRIUS_VERSION="$SIRIUS_VERSION" \
+            -e LOS_SKIP_FLATPAKS="$SKIP_FLATPAKS" \
+            "quay.io/fedora/fedora:$FEDORA_VERSION" \
+            bash .github/scripts/ci-build-iso.sh
+
+      - name: Upload ISO artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: luminusos-workstation-iso
+          path: luminusos-workstation-*.iso
+          compression-level: 0
+          if-no-files-found: error
