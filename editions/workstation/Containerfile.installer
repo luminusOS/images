@@ -1,6 +1,11 @@
 ARG fedora_version=44
 ARG workstation_image=localhost/luminusos-workstation:latest
 
+# -- Context stage: shared build scripts -------------------------------------
+FROM scratch AS ctx-scripts
+
+COPY shared/scripts /scripts
+
 # -- Context stage: workstation static files --------------------------------
 FROM scratch AS ctx-files
 
@@ -26,14 +31,8 @@ LABEL containers.bootc="1" \
       org.opencontainers.image.version="${image_version}"
 
 RUN --mount=type=cache,target=/var/cache/dnf \
-    rm -f /var/lib/rpm/.rpm.lock /usr/lib/sysimage/rpm/.rpm.lock || true && \
-    if ! rpm --rebuilddb; then \
-      rebuilt_db="$(find /usr/share -maxdepth 1 -type d -name 'rpmrebuilddb.*' | sort -V | tail -n 1)" && \
-      [ -n "${rebuilt_db}" ] && \
-      rm -rf /usr/share/rpm && \
-      mv "${rebuilt_db}" /usr/share/rpm; \
-    fi && \
-    rpm -qa >/dev/null && \
+    --mount=type=bind,from=ctx-scripts,source=/scripts,target=/scripts \
+    bash /scripts/rpmdb-repair.sh && \
     dnf -y --releasever="${fedora_version}" install \
       dracut-live \
       fuse-overlayfs \
@@ -85,6 +84,7 @@ RUN --mount=type=bind,from=ctx-files,source=/workstation/files,target=/wfiles \
     install -Dm0644 /wfiles/usr/share/sirius/repart.d/30-esp.conf /usr/share/sirius/repart.d/30-esp.conf
 
 RUN --mount=type=bind,from=ctx-files,source=/workstation/files,target=/wfiles \
+    --mount=type=bind,from=ctx-scripts,source=/scripts,target=/scripts \
     mkdir -p /boot/efi /boot/loader/entries && \
     cat /wfiles/etc/sirius/hostname > /etc/hostname && \
     chmod 0644 /etc/hostname && \
@@ -94,11 +94,8 @@ RUN --mount=type=bind,from=ctx-files,source=/workstation/files,target=/wfiles \
     install -Dm0644 /wfiles/usr/lib/systemd/user/gnome-session@live-installer.target.d/live-installer.sirius.conf /usr/lib/systemd/user/gnome-session@live-installer.target.d/live-installer.session.conf && \
     install -Dm0644 /wfiles/usr/lib/systemd/user/luminusos-sirius.service /usr/lib/systemd/user/luminusos-sirius.service && \
     ln -sf ../luminusos-sirius.service /usr/lib/systemd/user/gnome-session@live-installer.target.wants/luminusos-sirius.service && \
-    tmp="$(mktemp)" && \
-    jq '.["session-modes"] = (((.["session-modes"] // ["user"]) + ["live-installer", "initial-setup"]) | unique)' \
-      /usr/share/gnome-shell/extensions/${aurora_shell_uuid}/metadata.json > "${tmp}" && \
-    install -m 0644 "${tmp}" /usr/share/gnome-shell/extensions/${aurora_shell_uuid}/metadata.json && \
-    rm -f "${tmp}" && \
+    bash /scripts/aurora-session-modes.sh \
+      /usr/share/gnome-shell/extensions/${aurora_shell_uuid}/metadata.json live-installer initial-setup && \
     if [ -d /usr/share/glib-2.0/schemas ]; then \
       glib-compile-schemas /usr/share/glib-2.0/schemas; \
     fi && \
@@ -114,14 +111,8 @@ RUN --mount=type=bind,from=ctx-files,source=/workstation/files,target=/wfiles \
     install -Dm0644 /wfiles/var/lib/AccountsService/users/liveuser /var/lib/AccountsService/users/liveuser
 
 # Rebuild initramfs for live ISO boot.
-RUN KVER=$(kernel-install list --json pretty 2>/dev/null \
-      | jq -r '.[] | select(.has_kernel == true) | .version' \
-      | head -n1) && \
-    [ -z "${KVER}" ] && KVER=$(ls -1 /lib/modules | tail -n1) || true && \
-    plymouth-set-default-theme lucent && \
-    DRACUT_NO_XATTR=1 dracut -v -f --zstd --reproducible --no-hostonly \
-      --add "plymouth dmsquash-live" \
-      "/usr/lib/modules/${KVER}/initramfs.img" "${KVER}"
+RUN --mount=type=bind,from=ctx-scripts,source=/scripts,target=/scripts \
+    bash /scripts/rebuild-initramfs.sh --add "plymouth dmsquash-live"
 
 # Copy EFI files for image-builder and provide a removable-media fallback path.
 RUN --mount=type=bind,from=ctx-files,source=/workstation/files,target=/wfiles \
