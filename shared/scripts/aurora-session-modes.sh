@@ -9,6 +9,6 @@ modes="$(printf '%s\n' "$@" | jq -R . | jq -s .)"
 tmp="$(mktemp)"
 jq --argjson add "${modes}" \
   '.["session-modes"] = (((.["session-modes"] // ["user"]) + $add) | unique)' \
-  "${metadata}" > "${tmp}"
+  "${metadata}" >"${tmp}"
 install -m 0644 "${tmp}" "${metadata}"
 rm -f "${tmp}"

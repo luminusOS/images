@@ -5,5 +5,5 @@ set -euo pipefail
 
 version="$1"
 mkdir -p /etc/dnf/vars /etc/yum/vars
-printf '%s\n' "${version}" > /etc/dnf/vars/releasever
-printf '%s\n' "${version}" > /etc/yum/vars/releasever
+printf '%s\n' "${version}" >/etc/dnf/vars/releasever
+printf '%s\n' "${version}" >/etc/yum/vars/releasever

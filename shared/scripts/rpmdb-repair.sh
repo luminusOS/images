@@ -11,4 +11,4 @@ if ! rpm --rebuilddb; then
   rm -rf /usr/share/rpm
   mv "${rebuilt_db}" /usr/share/rpm
 fi
-rpm -qa > /dev/null
+rpm -qa >/dev/null

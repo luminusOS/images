@@ -59,49 +59,50 @@ jobs:
     permissions:
       contents: read
       packages: write
+    env:
+      CORE_IMAGE: ghcr.io/${{ needs.version.outputs.image_namespace }}/luminusos:${{ needs.version.outputs.version_tag }}
+      WORKSTATION_IMAGE: ghcr.io/${{ needs.version.outputs.image_namespace }}/luminusos-workstation:${{ needs.version.outputs.version_tag }}
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
 
       - name: Log in to GHCR
-        uses: docker/login-action@v3
+        uses: docker/login-action@v4
         with:
           registry: ${{ env.REGISTRY }}
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v3
+        uses: docker/setup-buildx-action@v4
 
-      - name: Build core
-        uses: docker/build-push-action@v5
+      # Each image is pushed to GHCR and the next build pulls it from there:
+      # the buildx container driver cannot see images loaded into the local
+      # docker daemon, so localhost/ base refs do not resolve.
+      - name: Build and push core
+        uses: docker/build-push-action@v7
         with:
           context: .
           file: editions/core/Containerfile
-          load: true
+          push: true
           build-args: |
             base=quay.io/fedora/fedora-bootc:${{ needs.version.outputs.fedora_version }}
             fedora_version=${{ needs.version.outputs.fedora_version }}
             distro_version=${{ needs.version.outputs.version_tag }}
             distro_name=LuminusOS
             distro_pretty_name=Luminus OS
-          tags: |
-            localhost/luminusos:${{ needs.version.outputs.version_tag }}
-            ${{ env.REGISTRY }}/${{ needs.version.outputs.image_namespace }}/luminusos:${{ needs.version.outputs.version_tag }}
+          tags: ${{ env.CORE_IMAGE }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
 
-      - name: Push core
-        run: docker push "${REGISTRY}/${{ needs.version.outputs.image_namespace }}/luminusos:${{ needs.version.outputs.version_tag }}"
-
-      - name: Build workstation
-        uses: docker/build-push-action@v5
+      - name: Build and push workstation
+        uses: docker/build-push-action@v7
         with:
           context: .
           file: editions/workstation/Containerfile
-          load: true
+          push: true
           build-args: |
-            core_image=localhost/luminusos:${{ needs.version.outputs.version_tag }}
+            core_image=${{ env.CORE_IMAGE }}
             fedora_version=${{ needs.version.outputs.fedora_version }}
             image_version=${{ needs.version.outputs.version_tag }}
             edition_name=Workstation
@@ -109,19 +110,14 @@ jobs:
             skip_flatpaks=${{ inputs.skip_flatpaks }}
             aurora_shell_version=${{ env.AURORA_SHELL_VERSION }}
             aurora_shell_sha256=${{ env.AURORA_SHELL_SHA256 }}
-          tags: |
-            ${{ env.REGISTRY }}/${{ needs.version.outputs.image_namespace }}/luminusos-workstation:${{ needs.version.outputs.version_tag }}
+          tags: ${{ env.WORKSTATION_IMAGE }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
 
-      - name: Push workstation
-        run: docker push "${REGISTRY}/${{ needs.version.outputs.image_namespace }}/luminusos-workstation:${{ needs.version.outputs.version_tag }}"
-
-      # The live-root image pulls the workstation image just pushed to GHCR;
-      # its distro.toml must reference the same GHCR ref that the ISO job
-      # embeds as the installer payload.
+      # The live root's distro.toml must reference the same GHCR ref that
+      # the ISO job embeds as the installer payload.
       - name: Build and push workstation ISO live root
-        uses: docker/build-push-action@v5
+        uses: docker/build-push-action@v7
         with:
           context: .
           file: editions/workstation/Containerfile.installer
@@ -130,10 +126,9 @@ jobs:
             fedora_version=${{ needs.version.outputs.fedora_version }}
             sirius_version=${{ inputs.sirius_version }}
             image_version=${{ needs.version.outputs.version_tag }}
-            workstation_image=${{ env.REGISTRY }}/${{ needs.version.outputs.image_namespace }}/luminusos-workstation:${{ needs.version.outputs.version_tag }}
-            workstation_target_image=${{ env.REGISTRY }}/${{ needs.version.outputs.image_namespace }}/luminusos-workstation:${{ needs.version.outputs.branch_tag }}
-          tags: |
-            ${{ env.REGISTRY }}/${{ needs.version.outputs.image_namespace }}/luminusos-workstation:${{ needs.version.outputs.version_tag }}-iso
+            workstation_image=${{ env.WORKSTATION_IMAGE }}
+            workstation_target_image=ghcr.io/${{ needs.version.outputs.image_namespace }}/luminusos-workstation:${{ needs.version.outputs.branch_tag }}
+          tags: ${{ env.WORKSTATION_IMAGE }}-iso
           cache-from: type=gha
           cache-to: type=gha,mode=max
 
@@ -147,7 +142,7 @@ jobs:
       packages: read
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
 
       - name: Free disk space
         uses: jlumbroso/free-disk-space@v1.3.1
@@ -179,7 +174,7 @@ jobs:
             bash .github/scripts/ci-package.sh iso
 
       - name: Upload ISO artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: workstation-iso
           path: luminusos-workstation-*.iso
@@ -196,7 +191,7 @@ jobs:
       packages: read
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
 
       - name: Free disk space
         uses: jlumbroso/free-disk-space@v1.3.1
@@ -227,28 +222,81 @@ jobs:
             bash .github/scripts/ci-package.sh qcow2
 
       - name: Upload qcow2 artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: workstation-qcow2
           path: luminusos-workstation-*.qcow2
           compression-level: 0
           if-no-files-found: error
 
+  boot-test:
+    name: Boot smoke test
+    needs: [version, iso, qcow2]
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: Free disk space
+        uses: jlumbroso/free-disk-space@v1.3.1
+        with:
+          tool-cache: true
+          android: true
+          dotnet: true
+          haskell: true
+          large-packages: true
+          docker-images: true
+          swap-storage: true
+
+      - name: Download artifacts
+        uses: actions/download-artifact@v8
+        with:
+          path: dist
+          merge-multiple: true
+
+      - name: Enable KVM for the runner user
+        run: |
+          echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' \
+            | sudo tee /etc/udev/rules.d/99-kvm4all.rules
+          sudo udevadm control --reload-rules
+          sudo udevadm trigger --name-match=kvm
+
+      - name: Install QEMU
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y qemu-system-x86 ovmf socat tesseract-ocr
+
+      - name: Boot installed system (qcow2)
+        run: .github/scripts/boot-test.sh disk dist/luminusos-workstation-*.qcow2 boot-test/disk
+
+      - name: Boot live ISO
+        run: .github/scripts/boot-test.sh iso dist/luminusos-workstation-*.iso boot-test/iso
+
+      - name: Upload boot evidence
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: boot-test
+          path: boot-test/
+          if-no-files-found: warn
+
   release:
     name: Publish release
-    needs: [version, iso, qcow2]
+    needs: [version, iso, qcow2, boot-test]
     runs-on: ubuntu-latest
     permissions:
       contents: write
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
 
       - name: Download artifacts
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v8
         with:
           path: dist
           merge-multiple: true
+          pattern: workstation-*
 
       # GitHub caps release assets at 2 GiB; split anything larger and let
       # users reassemble with `cat FILE.part* > FILE`.
@@ -257,13 +305,13 @@ jobs:
         run: |
           set -euo pipefail
           cd dist
-          for f in *; do
+          for f in ./*; do
             if [ "$(stat -c%s "$f")" -gt 2000000000 ]; then
               split -b 1900M -d "$f" "$f.part"
               rm -f "$f"
             fi
           done
-          sha256sum * > SHA256SUMS
+          sha256sum -- * > SHA256SUMS
           ls -lh
 
       - name: Create GitHub release
@@ -273,14 +321,14 @@ jobs:
         run: |
           set -euo pipefail
           tag="${{ needs.version.outputs.release_tag }}"
-          {
-            echo "LuminusOS Workstation ${{ needs.version.outputs.version_tag }}"
-            echo
-            echo "Containers: ghcr.io/${{ needs.version.outputs.image_namespace }}/luminusos-workstation:${{ needs.version.outputs.version_tag }}"
-            echo
-            echo "Files larger than 2 GiB are split into .partNN pieces;"
-            echo 'reassemble with: `cat FILE.part* > FILE` and verify against SHA256SUMS.'
-          } > notes.md
+          cat > notes.md << 'EOF'
+          LuminusOS Workstation ${{ needs.version.outputs.version_tag }}
+
+          Containers: ghcr.io/${{ needs.version.outputs.image_namespace }}/luminusos-workstation:${{ needs.version.outputs.version_tag }}
+
+          Files larger than 2 GiB are split into .partNN pieces;
+          reassemble with: `cat FILE.part* > FILE` and verify against SHA256SUMS.
+          EOF
           gh release create "$tag" \
             --title "LuminusOS ${{ needs.version.outputs.version_tag }}" \
             --notes-file notes.md \

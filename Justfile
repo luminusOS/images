@@ -314,7 +314,7 @@ qemu target="disk":
       install)
         keep_sudo_alive
         just build workstation
-        ./tools/install-qemu.sh {{ workstation_image }} {{ qemu_disk_size }}
+        ./tools/install-qemu.sh {{ workstation_image }}
         ;;
       run)
         QEMU_RESET_NVRAM="${QEMU_RESET_NVRAM:-1}" QEMU_DISK_PATH=".test/install-disk.qcow2" ./tools/qemu.sh disk
@@ -341,12 +341,16 @@ check:
 	@command -v shellcheck || (echo "shellcheck not found"; exit 1)
 	@command -v shfmt      || (echo "shfmt not found"; exit 1)
 
+# Run the repo test suite (script unit tests + config validation)
+test:
+	tests/run.sh
+
 # Lint all shell scripts
 lint:
-	find editions shared tools -name '*.sh' | xargs shellcheck -S warning
+	find editions shared tools tests .github/scripts -name '*.sh' | xargs shellcheck -S warning
 	shellcheck *.sh 2>/dev/null || true
 
 # Format all shell scripts in-place
 format:
-	find editions shared tools -name '*.sh' | xargs shfmt -w -i 2 -ci
+	find editions shared tools tests .github/scripts -name '*.sh' | xargs shfmt -w -i 2 -ci
 	shfmt -w -i 2 -ci *.sh 2>/dev/null || true

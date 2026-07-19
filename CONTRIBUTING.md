@@ -26,6 +26,23 @@ What each variable does:
 
 Builds squash the local core and workstation payload images by default so OCI whiteouts from lower layers are processed before packaging. The separate `luminusos-workstation:<tag>-iso` live root is not squashed because it can duplicate the full Flatpak tree in local container storage.
 
+## Validation and Tests
+
+Run the same checks CI runs on `main` before pushing:
+
+```bash
+just check   # verifies shellcheck/shfmt are installed
+just lint    # shellcheck over every script
+just test    # tests/run.sh: script unit tests + config validation
+```
+
+`tests/run.sh` unit-tests the `shared/scripts/` helpers and validates every
+config file that ships in the images (TOML, JSON, systemd units, repart
+definitions, sed placeholders). CI additionally lints the workflows with
+actionlint, smoke-builds the core image, and — in the Publish workflow —
+boots the finished qcow2 and ISO under QEMU/KVM and asserts a graphical
+screen came up (`.github/scripts/boot-test.sh`).
+
 ## Packaging
 
 Build the workstation image first, then package the desired artifact:

@@ -2,9 +2,9 @@ name: Build Containers
 
 on:
   push:
-    branches: ["f*"]
+    branches: ["main", "f*"]
   pull_request:
-    branches: ["f*"]
+    branches: ["main", "f*"]
   workflow_dispatch:
     inputs:
       fedora_version:
@@ -14,6 +14,7 @@ on:
 
 env:
   REGISTRY: ghcr.io
+  DEFAULT_FEDORA_VERSION: "44"
   PRIMARY_FEDORA_BRANCH: f44
   AURORA_SHELL_VERSION: v50.3
   AURORA_SHELL_SHA256: 0fcfa7933872184831a80da6521d8535cf4dc1e2f367a45643332cfe7eba111f
@@ -22,12 +23,13 @@ jobs:
   build-containers:
     name: Build core and workstation
     runs-on: ubuntu-latest
+    timeout-minutes: 180
     permissions:
       contents: read
       packages: write
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       - name: Resolve Fedora version
         id: version
@@ -39,14 +41,13 @@ jobs:
           elif [[ "${GITHUB_REF_NAME}" =~ ^f([0-9]+)$ ]]; then
             FEDORA_VERSION="${BASH_REMATCH[1]}"
           else
-            echo "Unable to derive Fedora version from '${GITHUB_REF_NAME}'." >&2
-            exit 1
+            FEDORA_VERSION="${DEFAULT_FEDORA_VERSION}"
           fi
 
           VERSION_TAG="${FEDORA_VERSION}.$(date -u +%Y%m%d)"
           BRANCH_TAG="${FEDORA_VERSION}"
           IMAGE_NAMESPACE="$(printf '%s' "${GITHUB_REPOSITORY_OWNER}" | tr '[:upper:]' '[:lower:]')"
-          if [ "${GITHUB_REF_NAME}" = "${PRIMARY_FEDORA_BRANCH}" ]; then
+          if [ "${GITHUB_REF_NAME}" = "${PRIMARY_FEDORA_BRANCH}" ] || [ "${GITHUB_REF_NAME}" = "main" ]; then
             PUBLISH_LATEST=true
           else
             PUBLISH_LATEST=false
@@ -62,17 +63,24 @@ jobs:
 
       - name: Log in to GHCR
         if: github.event_name != 'pull_request'
-        uses: docker/login-action@v3
+        uses: docker/login-action@v4
         with:
           registry: ${{ env.REGISTRY }}
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
+      # The docker driver keeps built images in the daemon's store, which is
+      # what lets the workstation build resolve its localhost/ core base —
+      # the default container driver cannot see daemon images and fails on
+      # FROM localhost/... (GHA cache is not supported by this driver, so
+      # no cache-from/to here).
       - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v3
+        uses: docker/setup-buildx-action@v4
+        with:
+          driver: docker
 
       - name: Build core locally
-        uses: docker/build-push-action@v5
+        uses: docker/build-push-action@v7
         with:
           context: .
           file: editions/core/Containerfile
@@ -87,8 +95,6 @@ jobs:
             localhost/luminusos:${{ steps.version.outputs.version_tag }}
             ${{ env.REGISTRY }}/${{ steps.version.outputs.image_namespace }}/luminusos:${{ steps.version.outputs.version_tag }}
             ${{ env.REGISTRY }}/${{ steps.version.outputs.image_namespace }}/luminusos:${{ steps.version.outputs.branch_tag }}
-          cache-from: type=gha
-          cache-to: type=gha,mode=max
 
       - name: Publish core
         if: github.event_name != 'pull_request'
@@ -105,7 +111,7 @@ jobs:
           fi
 
       - name: Build workstation locally
-        uses: docker/build-push-action@v5
+        uses: docker/build-push-action@v7
         with:
           context: .
           file: editions/workstation/Containerfile
@@ -124,8 +130,6 @@ jobs:
             localhost/luminusos-workstation:${{ steps.version.outputs.version_tag }}
             ${{ env.REGISTRY }}/${{ steps.version.outputs.image_namespace }}/luminusos-workstation:${{ steps.version.outputs.version_tag }}
             ${{ env.REGISTRY }}/${{ steps.version.outputs.image_namespace }}/luminusos-workstation:${{ steps.version.outputs.branch_tag }}
-          cache-from: type=gha
-          cache-to: type=gha,mode=max
 
       - name: Publish workstation
         if: github.event_name != 'pull_request'

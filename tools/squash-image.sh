@@ -6,7 +6,7 @@ set -euo pipefail
 
 image="$1"
 ctr="$(sudo buildah from --pull=never "${image}")"
-cleanup() { sudo buildah rm "${ctr}" > /dev/null 2>&1 || true; }
+cleanup() { sudo buildah rm "${ctr}" >/dev/null 2>&1 || true; }
 trap cleanup EXIT
 sudo buildah config \
   --unsetlabel ostree.final-diffid \

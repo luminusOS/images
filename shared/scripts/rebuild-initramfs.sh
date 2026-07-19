@@ -4,7 +4,7 @@
 # the live ISO modules with: rebuild-initramfs.sh --add "plymouth dmsquash-live"
 set -euo pipefail
 
-KVER=$(kernel-install list --json pretty 2> /dev/null |
+KVER=$(kernel-install list --json pretty 2>/dev/null |
   jq -r '.[] | select(.has_kernel == true) | .version' |
   head -n1)
 if [ -z "${KVER}" ]; then
