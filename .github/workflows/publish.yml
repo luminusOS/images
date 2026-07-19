@@ -1,0 +1,288 @@
+name: Publish
+
+"on":
+  workflow_dispatch:
+    inputs:
+      fedora_version:
+        description: "Fedora version"
+        default: "44"
+      sirius_version:
+        description: "Sirius release (RPM version on GitHub releases)"
+        default: "0.1.0"
+      release_tag:
+        description: "Release tag (empty = v<fedora>.<date>)"
+        default: ""
+      skip_flatpaks:
+        description: "Skip Flatpak preinstall (faster test builds)"
+        default: "0"
+
+env:
+  REGISTRY: ghcr.io
+  AURORA_SHELL_VERSION: v50.3
+  AURORA_SHELL_SHA256: 0fcfa7933872184831a80da6521d8535cf4dc1e2f367a45643332cfe7eba111f
+
+jobs:
+  version:
+    name: Resolve version
+    runs-on: ubuntu-latest
+    outputs:
+      fedora_version: ${{ steps.version.outputs.fedora_version }}
+      version_tag: ${{ steps.version.outputs.version_tag }}
+      branch_tag: ${{ steps.version.outputs.branch_tag }}
+      image_namespace: ${{ steps.version.outputs.image_namespace }}
+      release_tag: ${{ steps.version.outputs.release_tag }}
+    steps:
+      - name: Resolve version
+        id: version
+        shell: bash
+        run: |
+          set -euo pipefail
+          FEDORA_VERSION="${{ inputs.fedora_version }}"
+          VERSION_TAG="${FEDORA_VERSION}.$(date -u +%Y%m%d)"
+          RELEASE_TAG="${{ inputs.release_tag }}"
+          if [ -z "${RELEASE_TAG}" ]; then
+            RELEASE_TAG="v${VERSION_TAG}"
+          fi
+          {
+            echo "fedora_version=${FEDORA_VERSION}"
+            echo "version_tag=${VERSION_TAG}"
+            echo "branch_tag=${FEDORA_VERSION}"
+            echo "image_namespace=$(printf '%s' "${GITHUB_REPOSITORY_OWNER}" | tr '[:upper:]' '[:lower:]')"
+            echo "release_tag=${RELEASE_TAG}"
+          } >> "$GITHUB_OUTPUT"
+
+  containers:
+    name: Build and push containers
+    needs: version
+    runs-on: ubuntu-latest
+    timeout-minutes: 180
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Log in to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Build core
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          file: editions/core/Containerfile
+          load: true
+          build-args: |
+            base=quay.io/fedora/fedora-bootc:${{ needs.version.outputs.fedora_version }}
+            fedora_version=${{ needs.version.outputs.fedora_version }}
+            distro_version=${{ needs.version.outputs.version_tag }}
+            distro_name=LuminusOS
+            distro_pretty_name=Luminus OS
+          tags: |
+            localhost/luminusos:${{ needs.version.outputs.version_tag }}
+            ${{ env.REGISTRY }}/${{ needs.version.outputs.image_namespace }}/luminusos:${{ needs.version.outputs.version_tag }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      - name: Push core
+        run: docker push "${REGISTRY}/${{ needs.version.outputs.image_namespace }}/luminusos:${{ needs.version.outputs.version_tag }}"
+
+      - name: Build workstation
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          file: editions/workstation/Containerfile
+          load: true
+          build-args: |
+            core_image=localhost/luminusos:${{ needs.version.outputs.version_tag }}
+            fedora_version=${{ needs.version.outputs.fedora_version }}
+            image_version=${{ needs.version.outputs.version_tag }}
+            edition_name=Workstation
+            edition_id=workstation
+            skip_flatpaks=${{ inputs.skip_flatpaks }}
+            aurora_shell_version=${{ env.AURORA_SHELL_VERSION }}
+            aurora_shell_sha256=${{ env.AURORA_SHELL_SHA256 }}
+          tags: |
+            ${{ env.REGISTRY }}/${{ needs.version.outputs.image_namespace }}/luminusos-workstation:${{ needs.version.outputs.version_tag }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      - name: Push workstation
+        run: docker push "${REGISTRY}/${{ needs.version.outputs.image_namespace }}/luminusos-workstation:${{ needs.version.outputs.version_tag }}"
+
+      # The live-root image pulls the workstation image just pushed to GHCR;
+      # its distro.toml must reference the same GHCR ref that the ISO job
+      # embeds as the installer payload.
+      - name: Build and push workstation ISO live root
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          file: editions/workstation/Containerfile.installer
+          push: true
+          build-args: |
+            fedora_version=${{ needs.version.outputs.fedora_version }}
+            sirius_version=${{ inputs.sirius_version }}
+            image_version=${{ needs.version.outputs.version_tag }}
+            workstation_image=${{ env.REGISTRY }}/${{ needs.version.outputs.image_namespace }}/luminusos-workstation:${{ needs.version.outputs.version_tag }}
+            workstation_target_image=${{ env.REGISTRY }}/${{ needs.version.outputs.image_namespace }}/luminusos-workstation:${{ needs.version.outputs.branch_tag }}
+          tags: |
+            ${{ env.REGISTRY }}/${{ needs.version.outputs.image_namespace }}/luminusos-workstation:${{ needs.version.outputs.version_tag }}-iso
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+  iso:
+    name: Package ISO
+    needs: [version, containers]
+    runs-on: ubuntu-latest
+    timeout-minutes: 180
+    permissions:
+      contents: read
+      packages: read
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Free disk space
+        uses: jlumbroso/free-disk-space@v1.3.1
+        with:
+          tool-cache: true
+          android: true
+          dotnet: true
+          haskell: true
+          large-packages: true
+          docker-images: true
+          swap-storage: true
+
+      - name: Build ISO from prebuilt containers
+        env:
+          NAMESPACE: ${{ needs.version.outputs.image_namespace }}
+          VERSION_TAG: ${{ needs.version.outputs.version_tag }}
+          GHCR_USER: ${{ github.actor }}
+          GHCR_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euxo pipefail
+          sudo podman run --rm --privileged \
+            --security-opt label=type:unconfined_t \
+            -v "$PWD:/work" -w /work \
+            -e WORKSTATION_IMAGE="ghcr.io/${NAMESPACE}/luminusos-workstation:${VERSION_TAG}" \
+            -e WORKSTATION_ISO_IMAGE="ghcr.io/${NAMESPACE}/luminusos-workstation:${VERSION_TAG}-iso" \
+            -e OUTPUT_NAME="luminusos-workstation-${VERSION_TAG}.iso" \
+            -e GHCR_USER -e GHCR_TOKEN \
+            "quay.io/fedora/fedora:${{ needs.version.outputs.fedora_version }}" \
+            bash .github/scripts/ci-package.sh iso
+
+      - name: Upload ISO artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: workstation-iso
+          path: luminusos-workstation-*.iso
+          compression-level: 0
+          if-no-files-found: error
+
+  qcow2:
+    name: Package qcow2
+    needs: [version, containers]
+    runs-on: ubuntu-latest
+    timeout-minutes: 180
+    permissions:
+      contents: read
+      packages: read
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Free disk space
+        uses: jlumbroso/free-disk-space@v1.3.1
+        with:
+          tool-cache: true
+          android: true
+          dotnet: true
+          haskell: true
+          large-packages: true
+          docker-images: true
+          swap-storage: true
+
+      - name: Build qcow2 from prebuilt containers
+        env:
+          NAMESPACE: ${{ needs.version.outputs.image_namespace }}
+          VERSION_TAG: ${{ needs.version.outputs.version_tag }}
+          GHCR_USER: ${{ github.actor }}
+          GHCR_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euxo pipefail
+          sudo podman run --rm --privileged \
+            --security-opt label=type:unconfined_t \
+            -v "$PWD:/work" -w /work \
+            -e WORKSTATION_IMAGE="ghcr.io/${NAMESPACE}/luminusos-workstation:${VERSION_TAG}" \
+            -e OUTPUT_NAME="luminusos-workstation-${VERSION_TAG}.qcow2" \
+            -e GHCR_USER -e GHCR_TOKEN \
+            "quay.io/fedora/fedora:${{ needs.version.outputs.fedora_version }}" \
+            bash .github/scripts/ci-package.sh qcow2
+
+      - name: Upload qcow2 artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: workstation-qcow2
+          path: luminusos-workstation-*.qcow2
+          compression-level: 0
+          if-no-files-found: error
+
+  release:
+    name: Publish release
+    needs: [version, iso, qcow2]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Download artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: dist
+          merge-multiple: true
+
+      # GitHub caps release assets at 2 GiB; split anything larger and let
+      # users reassemble with `cat FILE.part* > FILE`.
+      - name: Split oversized artifacts and checksum
+        shell: bash
+        run: |
+          set -euo pipefail
+          cd dist
+          for f in *; do
+            if [ "$(stat -c%s "$f")" -gt 2000000000 ]; then
+              split -b 1900M -d "$f" "$f.part"
+              rm -f "$f"
+            fi
+          done
+          sha256sum * > SHA256SUMS
+          ls -lh
+
+      - name: Create GitHub release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          tag="${{ needs.version.outputs.release_tag }}"
+          {
+            echo "LuminusOS Workstation ${{ needs.version.outputs.version_tag }}"
+            echo
+            echo "Containers: ghcr.io/${{ needs.version.outputs.image_namespace }}/luminusos-workstation:${{ needs.version.outputs.version_tag }}"
+            echo
+            echo "Files larger than 2 GiB are split into .partNN pieces;"
+            echo 'reassemble with: `cat FILE.part* > FILE` and verify against SHA256SUMS.'
+          } > notes.md
+          gh release create "$tag" \
+            --title "LuminusOS ${{ needs.version.outputs.version_tag }}" \
+            --notes-file notes.md \
+            --target "$GITHUB_SHA" \
+            dist/*
