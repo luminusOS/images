@@ -69,8 +69,9 @@ flowchart TD
 │       ├── build.sh
 │       └── files/
 ├── shared/
-│   ├── bootc-image-builder.toml
-│   └── flatpaks
+│   ├── bootc-image-builder.toml.example
+│   ├── flatpaks
+│   └── scripts/
 └── tools/
     ├── install-qemu.sh
     └── qemu.sh
@@ -180,7 +181,8 @@ flowchart TD
 | File | Role |
 | --- | --- |
 | `shared/flatpaks` | Flatpak refs installed into workstation unless `LOS_SKIP_FLATPAKS=1`; related refs are not preinstalled so GPU-specific runtimes are resolved on the installed system. |
-| `shared/bootc-image-builder.toml` | Shared bootc-image-builder config used by the direct QEMU install path and available for future package flows. |
+| `shared/bootc-image-builder.toml.example` | Template for the gitignored local `shared/bootc-image-builder.toml` used by the direct QEMU install path (test user credentials stay out of git). |
+| `shared/scripts/` | Build-time helper scripts (rpmdb repair, releasever pin, os-release branding, initramfs rebuild, session-modes patch) bind-mounted into every edition build. |
 
 ## Workstation Image
 

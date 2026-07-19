@@ -19,6 +19,13 @@ TEST_DIR="$PROJECT_DIR/.test"
 DISK_PATH="$TEST_DIR/install-disk.qcow2"
 BIB_CONFIG="$PROJECT_DIR/shared/bootc-image-builder.toml"
 
+if [ ! -f "$BIB_CONFIG" ]; then
+    echo "Missing $BIB_CONFIG" >&2
+    echo "Copy shared/bootc-image-builder.toml.example there and set your own" >&2
+    echo "test-user password or SSH key (the file is gitignored)." >&2
+    exit 1
+fi
+
 # load .env if it exists
 if [ -f "$PROJECT_DIR/.env" ]; then
     # shellcheck disable=SC1091

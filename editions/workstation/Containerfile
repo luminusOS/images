@@ -27,6 +27,7 @@ FROM quay.io/fedora/fedora-bootc:${fedora_version} AS aurora-extension
 
 ARG fedora_version=44
 ARG aurora_shell_version
+ARG aurora_shell_sha256
 ARG aurora_shell_uuid=aurora-shell@luminusos.github.io
 
 RUN --mount=type=cache,target=/var/cache/dnf \
@@ -38,6 +39,9 @@ RUN --mount=type=cache,target=/var/cache/dnf \
     curl -fsSL \
       "https://github.com/luminusOS/aurora-shell/releases/download/${aurora_shell_version}/${aurora_shell_uuid}.shell-extension.zip" \
       -o /tmp/aurora-shell.zip && \
+    # Release tags are mutable; the pinned digest is what actually
+    # guarantees we ship the artifact we reviewed.
+    echo "${aurora_shell_sha256}  /tmp/aurora-shell.zip" | sha256sum -c - && \
     unzip -q /tmp/aurora-shell.zip -d "/out/${aurora_shell_uuid}" && \
     test -f "/out/${aurora_shell_uuid}/metadata.json" && \
     jq -e --arg uuid "${aurora_shell_uuid}" '.uuid == $uuid' \

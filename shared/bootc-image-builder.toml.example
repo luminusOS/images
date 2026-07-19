@@ -1,0 +1,8 @@
+# Local test-install user for `just qemu install` (bootc-image-builder).
+# Copy to shared/bootc-image-builder.toml (gitignored) and set your own
+# password or SSH key — do not commit real credentials.
+[[customizations.user]]
+name = "luminusos"
+password = "changeme"
+# key = "ssh-ed25519 AAAA... you@host"
+groups = ["wheel"]

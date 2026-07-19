@@ -1,6 +1,8 @@
 [bootc]
 image = "containers-storage:@WORKSTATION_IMAGE@"
 target_imgref = "@WORKSTATION_TARGET_IMAGE@"
+# TODO: sign the published images (cosign/sigstore) and flip this to true —
+# today the ghcr.io images are unsigned, so verification has nothing to check.
 enforce_sigpolicy = false
 kargs = ["rhgb", "quiet", "splash"]
 args = ["--skip-fetch-check"]

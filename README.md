@@ -42,8 +42,9 @@ Releases follow the Fedora base version with a build date suffix:
 │   ├── play/          # Planned gaming handheld edition
 │   └── workstation/   # Desktop edition
 ├── shared/            # Shared data/config inputs
-│   ├── bootc-image-builder.toml
-│   └── flatpaks
+│   ├── bootc-image-builder.toml.example
+│   ├── flatpaks
+│   └── scripts/       # Build-time helpers shared by the Containerfiles
 └── tools/             # Local development helpers (QEMU)
 ```
 

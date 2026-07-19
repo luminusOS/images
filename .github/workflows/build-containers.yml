@@ -16,6 +16,7 @@ env:
   REGISTRY: ghcr.io
   PRIMARY_FEDORA_BRANCH: f44
   AURORA_SHELL_VERSION: v50.3
+  AURORA_SHELL_SHA256: 0fcfa7933872184831a80da6521d8535cf4dc1e2f367a45643332cfe7eba111f
 
 jobs:
   build-containers:
@@ -118,6 +119,7 @@ jobs:
             workstation_image=${{ env.REGISTRY }}/${{ steps.version.outputs.image_namespace }}/luminusos-workstation:${{ steps.version.outputs.version_tag }}
             workstation_target_image=${{ env.REGISTRY }}/${{ steps.version.outputs.image_namespace }}/luminusos-workstation:${{ steps.version.outputs.branch_tag }}
             aurora_shell_version=${{ env.AURORA_SHELL_VERSION }}
+            aurora_shell_sha256=${{ env.AURORA_SHELL_SHA256 }}
           tags: |
             localhost/luminusos-workstation:${{ steps.version.outputs.version_tag }}
             ${{ env.REGISTRY }}/${{ steps.version.outputs.image_namespace }}/luminusos-workstation:${{ steps.version.outputs.version_tag }}

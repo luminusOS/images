@@ -1,8 +1,11 @@
 *.iso
+*.qcow2
 *.7z
 *.log
+*.osbuild-manifest.json
 .test/
 .iso-output/
 .image-builder-cli/
 .env
 docs/superpowers/
+shared/bootc-image-builder.toml

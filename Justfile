@@ -13,6 +13,7 @@ workstation_image := registry + "/luminusos-workstation:" + tag
 workstation_iso_image := registry + "/luminusos-workstation:" + tag + "-iso"
 workstation_target_image := env("LOS_WORKSTATION_TARGET_IMAGE", "ghcr.io/luminusos/luminusos-workstation:" + fedora_ver)
 aurora_shell_version := env("AURORA_SHELL_VERSION", "v50.3")
+aurora_shell_sha256 := env("AURORA_SHELL_SHA256", "0fcfa7933872184831a80da6521d8535cf4dc1e2f367a45643332cfe7eba111f")
 sirius_version := env("SIRIUS_VERSION", "0.1.0")
 force_core := env("LOS_FORCE_CORE", "0")
 skip_flatpaks := env("LOS_SKIP_FLATPAKS", "0")
@@ -90,6 +91,7 @@ build edition="workstation":
           --build-arg edition_name="Workstation" \
           --build-arg edition_id="workstation" \
           --build-arg aurora_shell_version={{ aurora_shell_version }} \
+          --build-arg aurora_shell_sha256={{ aurora_shell_sha256 }} \
           --build-arg skip_flatpaks={{ skip_flatpaks }} \
           --tag {{ workstation_image }} \
           --file editions/workstation/Containerfile \

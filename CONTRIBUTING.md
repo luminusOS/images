@@ -65,6 +65,7 @@ just qemu run
 Shared data and config live in `shared/`:
 
 - `shared/flatpaks`
-- `shared/bootc-image-builder.toml`
+- `shared/bootc-image-builder.toml.example` (copy to `shared/bootc-image-builder.toml`, gitignored, for local `just qemu install`)
+- `shared/scripts/` (build-time helpers bind-mounted into every edition build)
 
-Do not reintroduce shared shell scripts unless there is a concrete cross-edition need that cannot live in `core` or an edition-local script.
+Only add a script to `shared/scripts/` when it is genuinely used by more than one edition Containerfile; edition-specific logic stays in the edition's own script.
