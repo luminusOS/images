@@ -4,7 +4,7 @@
     "hasOverview": false,
     "hasRunDialog": false,
     "showWelcomeDialog": false,
-    "components": ["networkAgent"],
+    "components": ["networkAgent", "polkitAgent"],
     "enabledExtensions": ["aurora-shell@luminusos.github.io"],
     "panel": { "left": [],
                "center": [],

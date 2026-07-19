@@ -14,10 +14,10 @@ Additional edition scaffolding should not be added unless package scope, target 
 - Build on Fedora bootc.
 - Deliver systems as versioned OCI images.
 - Keep the installed workstation payload separate from the ISO live root image.
-- Use ReadyMade only for the live ISO installation experience.
+- Use Sirius only for the live ISO installation experience.
 - Use GNOME Initial Setup after installation for creation of the real local user.
-- Remove live-only state before the installed system reaches first user login.
-- Keep Btrfs storage layout aligned across the ReadyMade ISO install path and local wrappers.
+- Keep live-only state out of the installed workstation payload.
+- Keep Btrfs storage layout aligned across the Sirius ISO install path and the qcow2 config.
 - Preserve `bootc upgrade` behavior through the installed target image reference.
 - Keep package installation as an image-build concern; installed systems do not ship the `rpm-ostree` client.
 
@@ -29,14 +29,14 @@ flowchart TD
     Core["core image<br/>luminusos:<tag>"]
     Shared["shared inputs<br/>Flatpak refs + image-builder config"]
     Aurora["Aurora Shell release<br/>GNOME extension zip"]
-    ReadyMade["ReadyMade upstream<br/>locally built binary"]
+    Sirius["Sirius installer<br/>prebuilt RPM from GitHub release"]
     Gnome["GNOME workstation module"]
     Workstation["workstation image<br/>luminusos-workstation:<tag>"]
     Installer["installer image<br/>luminusos-workstation:<tag>-iso"]
     ISO["ISO artifact<br/>bootc-generic-iso"]
     QCOW2["qcow2 artifact"]
-    Live["Live ISO runtime<br/>system-mode=live"]
-    Installed["Installed runtime<br/>system-mode=installed"]
+    Live["Live ISO runtime"]
+    Installed["Installed runtime"]
 
     Fedora --> Core
     Core --> Workstation
@@ -44,7 +44,7 @@ flowchart TD
     Aurora --> Workstation
     Gnome --> Workstation
     Workstation --> Installer
-    ReadyMade --> Installer
+    Sirius --> Installer
     Installer --> ISO --> Live --> Installed
     Workstation --> QCOW2 --> Installed
 ```
@@ -104,7 +104,6 @@ flowchart TD
 | `AURORA_SHELL_VERSION` | `v50.3` | Aurora Shell release downloaded during build. |
 | `LOS_FORCE_CORE` | `0` | Rebuild core even if the local stamp is unchanged. |
 | `LOS_SKIP_FLATPAKS` | `0` | Skip Flatpak installation during workstation build. |
-| `LOS_SQUASH` | `1` | Post-build squash the final local image to process OCI whiteouts before packaging; set `0` for faster dev-only builds. |
 
 ## Justfile Flow
 
@@ -128,10 +127,10 @@ flowchart TD
     Edition -->|workstation| CoreStamp{"core stamp changed<br/>or local image missing?"}
     CoreStamp -->|yes| BuildCore
     CoreStamp -->|no| ReuseCore["reuse local core image"]
-    BuildCore --> SquashCore["optional post-build squash<br/>buildah commit --squash"]
+    BuildCore --> SquashCore["post-build squash<br/>buildah commit --squash"]
     SquashCore --> BuildWorkstation["buildah bud --layers<br/>editions/workstation/Containerfile"]
     ReuseCore --> BuildWorkstation
-    BuildWorkstation --> SquashWorkstation["optional post-build squash<br/>buildah commit --squash"]
+    BuildWorkstation --> SquashWorkstation["post-build squash<br/>buildah commit --squash"]
 
     Package --> ImageExists{"workstation image exists?"}
     ImageExists -->|no| PackageError["error: build workstation first"]
@@ -187,10 +186,10 @@ flowchart TD
 
 The workstation image is built by `editions/workstation/Containerfile`. It is used as:
 
-- The bootc payload installed by ReadyMade.
+- The bootc payload installed by Sirius.
 - The source image for qcow2 artifacts.
 
-The ISO live root is built by `editions/workstation/Containerfile.installer` as `luminusos-workstation:<tag>-iso`. It starts from the workstation image, then adds the live-only installer packages, ReadyMade, GNOME live session files, image-builder ISO config, and boot/install wrappers. The normal workstation image is also embedded as the install payload.
+The ISO live root is built by `editions/workstation/Containerfile.installer` as `luminusos-workstation:<tag>-iso`. It starts from the workstation image, then adds the live-only installer packages, Sirius, GNOME live session files, and the image-builder ISO config. The normal workstation image is also embedded as the install payload.
 
 The workstation Containerfile has five conceptual stages:
 
@@ -259,19 +258,9 @@ Aurora Shell is enabled through GNOME Shell's native extension paths: live and I
 
 ## Installer Image
 
-`editions/workstation/Containerfile.installer` builds the ISO live root from the workstation image. It adds live-only packages, copies ReadyMade into the image, applies the live GNOME session, and installs the wrappers that are only needed during installation. The image-builder ISO rootfs is sized large enough to copy the live root with Flatpaks and then carry the embedded workstation install payload.
+`editions/workstation/Containerfile.installer` builds the ISO live root from the workstation image. It adds live-only packages, installs Sirius from the prebuilt RPM published on the [sirius GitHub releases](https://github.com/luminusOS/sirius/releases), applies the live GNOME session, and installs the LuminusOS Sirius configuration. The image-builder ISO rootfs is sized large enough to copy the live root with Flatpaks and then carry the embedded workstation install payload.
 
-Its `readymade-main` stage builds ReadyMade from upstream source and installs it into `/out`. Local build-time adjustments:
-
-- Export only `.conf` repart files.
-- Clean `/run/readymade-install` before ReadyMade recreates it.
-- Pass kernel arguments into the bootc filesystem provisioner.
-- Sort mounts before mount/unmount operations.
-- Re-read partition tables after `systemd-repart`.
-- Avoid panic if ReadyMade progress IPC disconnects before subprocess connection.
-- Install the release binary and application resources into `/out`.
-
-The final installer stage copies `/out/` into the `luminusos-workstation:<tag>-iso` image.
+The Sirius RPM ships the binary, the polkit action, the desktop file, and generic default configs. The installer stage then replaces the generic configs with the LuminusOS ones: `/etc/sirius/distro.toml` and `/etc/sirius/sirius.toml` (templated with the payload image references), the LuminusOS repart templates under `/usr/share/sirius/repart.d/`, branding, and the live polkit rule.
 
 ## GNOME Workstation Setup
 
@@ -285,8 +274,7 @@ Responsibilities:
 - Disable GNOME app folders so core apps such as Files and Software appear in the app grid directly.
 - Compile GLib schemas and update dconf.
 - Set graphical boot and GDM display manager links.
-- Enable installed first-boot cleanup fallback.
-- Write installed defaults for `/etc/hostname`, `/etc/luminusos/system-mode`, and GDM Initial Setup.
+- Write installed defaults for `/etc/hostname` and GDM Initial Setup.
 
 ```mermaid
 flowchart TD
@@ -294,7 +282,7 @@ flowchart TD
     Packages["install GNOME packages"]
     Schemas["glib-compile-schemas<br/>dconf update"]
     GDM["graphical.target<br/>display-manager.service"]
-    Hostname["installed /etc/hostname<br/>system-mode=installed"]
+    Hostname["installed /etc/hostname"]
     InitialSetup["InitialSetupEnable=true"]
 
     Files --> Packages --> Schemas --> GDM --> Hostname --> InitialSetup
@@ -308,17 +296,18 @@ The live ISO is not itself a bootc deployment. It is generated from the workstat
 
 | File | Purpose |
 | --- | --- |
-| `/etc/luminusos/system-mode` | Marks the runtime as `live`. |
+| `/etc/hostname` | Marks the live root as `localhost-live`; the installed payload uses `luminus`. |
 | `/etc/gdm/custom.conf` | Enables `liveuser` autologin and selects `live-installer.desktop`. |
 | `/var/lib/AccountsService/users/liveuser` | Pins `liveuser` to the installer session. |
 | `/usr/share/wayland-sessions/live-installer.desktop` | Registers the Wayland session. |
 | `/usr/share/gnome-session/sessions/live-installer.session` | Defines the GNOME session with `Kiosk=true`. |
-| `/usr/lib/systemd/user/gnome-session@live-installer.target.d/live-installer.session.conf` | Requires GNOME Shell in `live-installer` mode and wants ReadyMade. |
-| `/usr/lib/systemd/user/gnome-session@live-installer.target.wants/luminusos-readymade.service` | Vendor-enables ReadyMade for the live installer session target. |
+| `/usr/lib/systemd/user/gnome-session@live-installer.target.d/live-installer.session.conf` | Requires GNOME Shell in `live-installer` mode and wants Sirius. |
+| `/usr/lib/systemd/user/gnome-session@live-installer.target.wants/luminusos-sirius.service` | Vendor-enables Sirius for the live installer session target. |
 | `/usr/share/gnome-shell/modes/live-installer.json` | Defines the custom shell mode and forces Aurora Shell enabled. |
-| `/usr/lib/systemd/user/luminusos-readymade.service` | Starts ReadyMade in the live user session. |
+| `/usr/lib/systemd/user/luminusos-sirius.service` | Starts Sirius in the live user session. |
 | `/etc/dconf/db/local.d/00-iso-live-mode` | Live ISO GNOME Shell and Aurora Shell module defaults. |
-| `/etc/xdg/autostart/com.fyralabs.Readymade.desktop` | Live-only ReadyMade desktop autostart entry. |
+| `/usr/share/polkit-1/rules.d/50-sirius-live.rules` | Lets `liveuser` run the privileged Sirius install action without authentication. |
+| `/usr/lib/systemd/system/var-tmp.mount` | Live-only tmpfs on `/var/tmp` (75% of RAM) so `bootc install` can stage the compressed payload. |
 
 ```mermaid
 flowchart TD
@@ -332,12 +321,12 @@ flowchart TD
     Kiosk["live-installer.session<br/>Kiosk=true"]
     ShellMode["org.gnome.Shell@live-installer<br/>parentMode=user<br/>overview disabled"]
     Aurora["Aurora Shell loaded<br/>CSS applied"]
-    ReadyMadeService["luminusos-readymade.service"]
-    ReadyMade["readymade-wrapper<br/>/usr/bin/readymade"]
+    SiriusService["luminusos-sirius.service"]
+    Sirius["/usr/bin/sirius"]
 
     BootISO --> LiveRoot --> Systemd --> GDM --> Autologin --> DesktopFile --> GnomeSession --> Kiosk
     Kiosk --> ShellMode --> Aurora
-    Kiosk --> ReadyMadeService --> ReadyMade
+    Kiosk --> SiriusService --> Sirius
 ```
 
 ## Live Installer Session
@@ -350,7 +339,7 @@ It combines:
 - A GNOME session file with `Kiosk=true`.
 - A GNOME Shell mode file named `live-installer.json`.
 - A user systemd target drop-in that starts Shell as `org.gnome.Shell@live-installer.service`.
-- A user systemd service that starts ReadyMade.
+- A user systemd service that starts Sirius (`luminusos-sirius.service`).
 
 The shell mode inherits from `user` to keep regular extension loading behavior. It then overrides the interactive surface so the installer session remains constrained:
 
@@ -360,58 +349,53 @@ The shell mode inherits from `user` to keep regular extension loading behavior. 
 - right-side accessibility, keyboard, and quick settings items only
 - Aurora Shell listed in `enabledExtensions`
 
-## ReadyMade In The Live ISO
+## Sirius In The Live ISO
 
-ReadyMade starts through `luminusos-readymade.service`, which executes `readymade-wrapper`.
+Sirius starts through `luminusos-sirius.service`, which executes `/usr/bin/sirius` directly in the live user session. The unprivileged UI collects the user's choices; the actual install runs as `pkexec sirius run-playbook`, allowed without authentication for `liveuser` by `50-sirius-live.rules` (action id `io.sirius.Installer.run-playbook`).
 
-The wrapper:
-
-- Sets `TMPDIR=/run/readymade-tmp`.
-- Keeps ReadyMade temporary files out of the live ISO root.
-- Avoids `/run/readymade-install`, which ReadyMade reserves for repart staging.
-- Forces `LANG=C.UTF-8` and `LC_ALL=C.UTF-8`.
-- Executes `/usr/bin/readymade`.
-
-Main install configuration in `/etc/readymade.toml`:
+Main install configuration in `/etc/sirius/distro.toml`:
 
 ```toml
-copy_mode = "bootc"
-bootc_imgref = "containers-storage:<workstation-image>"
-bootc_target_imgref = "<target-update-ref>"
-bootc_enforce_sigpolicy = false
-bootc_args = ["--skip-fetch-check", "--skip-finalize", "--bootupd-skip-boot-uuid", "--bootloader", "none"]
+[bootc]
+image = "containers-storage:<workstation-image>"
+target_imgref = "<target-update-ref>"
+enforce_sigpolicy = false
+kargs = ["rhgb", "quiet", "splash"]
+args = ["--skip-fetch-check"]
+
+[disk]
+repart_dir = "/usr/share/sirius/repart.d"
 ```
 
-`bootc_imgref` points at the payload image embedded in the live ISO. `bootc_target_imgref` is the image reference the installed system should use for future updates. The live install path disables bootc's internal bootloader call so `bootc-wrapper` can keep image import temp data on the target disk, run bootupctl without the static-config arguments that fail under the ReadyMade filesystem install path, then write the final GRUB configs itself.
+`image` points at the payload embedded in the live ISO; `target_imgref` is the reference the installed system uses for future `bootc upgrade`. `/etc/sirius/sirius.toml` gates the wizard: keyboard/timezone/user pages are disabled (GNOME Initial Setup owns user creation) and diagnostics require UEFI, ≥5 GiB usable RAM, and enough disk space — the RAM gate exists because `bootc install` stages the ~2.5 GiB compressed payload in the live tmpfs `/var/tmp` (see `var-tmp.mount`).
 
 ## Installation Flow
 
 ```mermaid
 flowchart TD
     User["user in live ISO"]
-    ReadyMadeUI["ReadyMade UI"]
+    SiriusUI["Sirius UI (unprivileged)"]
     Disk["target disk selection"]
-    Repart["systemd-repart<br/>ReadyMade templates"]
+    Pkexec["pkexec sirius run-playbook"]
+    Repart["systemd-repart<br/>Sirius templates"]
     Mounts["mount ESP, boot, root"]
     BootcInstall["bootc install to-filesystem"]
-    BootcWrapper["Luminus bootc wrapper"]
     Payload["containers-storage payload image"]
     TargetRoot["target root"]
     PayloadDefaults["installed defaults from payload"]
-    Grub["write final GRUB configs"]
     Done["installed system"]
 
-    User --> ReadyMadeUI --> Disk --> Repart --> Mounts --> BootcInstall
-    Payload --> BootcWrapper
-    BootcInstall --> BootcWrapper --> TargetRoot --> PayloadDefaults --> Grub --> Done
+    User --> SiriusUI --> Disk --> Pkexec --> Repart --> Mounts --> BootcInstall
+    Payload --> BootcInstall
+    BootcInstall --> TargetRoot --> PayloadDefaults --> Done
 ```
 
 ## Disk Layout
 
-The ReadyMade ISO install storage model must remain aligned across:
+The Sirius ISO install storage model must remain aligned across:
 
 - `--bootc-default-fs btrfs` in the `Justfile`.
-- ReadyMade repart templates under `/usr/share/readymade/repart-cfgs/`.
+- Sirius repart templates under `/usr/share/sirius/repart.d/`.
 
 Expected layout:
 
@@ -437,52 +421,27 @@ flowchart TD
 
 ## Live-To-Installed Transition
 
-The installed system comes from the normal workstation payload, not from the live ISO root. Live-only installer files should therefore stay out of the payload image. `bootc-wrapper` only handles target-backed temp storage and final bootloader setup during installation. `installed-firstboot-cleanup` remains as a first-boot fallback for stale mutable state from older installer images or interrupted tests.
+The installed system comes from the normal workstation payload, not from the live ISO root. Live-only installer files stay out of the payload image: the payload never contained them, because Sirius, its configs, and the live session files are only added to the `-iso` live root image.
 
 ```mermaid
 flowchart TD
     InstallDone["bootc install completed"]
-    Bootloader["bootc-wrapper<br/>bootloader setup"]
-    PayloadReady["payload provides<br/>system-mode, hostname, GDM Initial Setup"]
+    PayloadReady["payload provides<br/>hostname + GDM Initial Setup"]
     FirstBoot["first installed boot"]
-    CleanupService{"cleanup service enabled?"}
-    LiveCheck{"live ISO detected?"}
-    Exit["exit without changes"]
-    Fallback["first-boot fallback cleanup"]
     GIS["GNOME Initial Setup"]
     User["real local user created"]
     NormalSession["normal GNOME login"]
 
-    InstallDone --> Bootloader --> PayloadReady --> FirstBoot
-    FirstBoot --> CleanupService
-    CleanupService -->|yes| LiveCheck
-    CleanupService -->|no| GIS
-    LiveCheck -->|yes| Exit
-    LiveCheck -->|no| Fallback --> GIS
+    InstallDone --> PayloadReady --> FirstBoot
+    FirstBoot --> GIS
     GIS --> User --> NormalSession
 ```
 
-### Fallback Live-Only Cleanup
+### Live-Only Isolation
 
-The workstation payload should not contain live-only installer artifacts. If an older installer image or interrupted test leaves stale live state in mutable target paths, `installed-firstboot-cleanup` removes:
+The workstation payload never contains live-only installer artifacts: Sirius, its configs (`/etc/sirius/`), the live polkit rule, the `live-installer` session files, `var-tmp.mount`, and the `liveuser` autologin setup are added only in `Containerfile.installer`, on top of the payload image. The bootc install path deploys the clean payload image, so no exclusion list is needed — live files simply never existed in the payload.
 
-- `/etc/readymade.toml`
-- `/etc/xdg/autostart/com.fyralabs.Readymade.desktop`
-- `/etc/polkit-1/rules.d/49-luminusos-readymade.rules`
-- `/etc/dconf/db/local`
-- `/etc/dconf/db/local.d/00-iso-live-mode`
-- `/etc/dconf/profile/user`
-- stale `/usr/local/share/applications/com.fyralabs.Readymade.desktop` or `/var/usrlocal/share/applications/com.fyralabs.Readymade.desktop` content, replaced with a `Hidden=true` override when writable
-- `/usr/lib/systemd/user/luminusos-readymade.service`
-- `/usr/lib/systemd/user/gnome-session@live-installer.target.d/live-installer.session.conf`
-- `/usr/share/gnome-shell/modes/live-installer.json`
-- `/usr/share/gnome-session/sessions/live-installer.session`
-- `/usr/share/wayland-sessions/live-installer.desktop`
-- `/home/liveuser`
-- `/var/home/liveuser`
-- `liveuser` passwd, shadow, group, gshadow, subuid, subgid, and AccountsService entries
-
-The fallback also hides stale `/usr/local` or `/var/usrlocal` ReadyMade desktop entries if an older live-visible override survives into the target. ReadyMade itself belongs to the installer image, not to the installed workstation payload.
+Sirius itself belongs to the installer image, not to the installed workstation payload.
 
 ## GNOME Initial Setup
 
@@ -507,28 +466,14 @@ flowchart TD
     Initial -->|no| Login
 ```
 
-## Installer Wrappers
+## Install Memory Staging
 
-The installer image replaces `bootc` with a wrapper and stores the original binary under `/usr/libexec/luminusos/`. It does not replace `bootupctl`; the bootc wrapper invokes the normal `/usr/bin/bootupctl` after `bootc install to-filesystem` succeeds.
+`bootc install` stages the compressed payload copy (~2.5 GiB) under `/var/tmp` while the live session itself runs from RAM. Two live-only pieces make that fit:
 
-| Wrapper | Real binary | Purpose |
-| --- | --- | --- |
-| `/usr/bin/bootc` | `/usr/libexec/luminusos/bootc-real` | Redirects install temp data to target storage, runs bootupctl after bootc install, and writes final GRUB configs. |
-| `/usr/libexec/luminusos/readymade-wrapper` | `/usr/bin/readymade` | Sets live-safe temp and locale environment before starting ReadyMade. |
+- `/usr/lib/systemd/system/var-tmp.mount` mounts a dedicated tmpfs at `/var/tmp` sized at 75% of RAM, only when booted with `rd.live.image`.
+- `/etc/containers/containers.conf.d/99-luminusos-bootc-install-tmp.conf` points podman/bootc staging (`image_copy_tmp_dir`) at that tmpfs.
 
-```mermaid
-flowchart TD
-    ReadyMade["ReadyMade"]
-    BootcCommand["bootc install to-filesystem"]
-    BootcWrapper["/usr/bin/bootc wrapper"]
-    BootcReal["bootc-real"]
-    Bootupctl["/usr/bin/bootupctl"]
-    Bootloader["target bootloader + GRUB config"]
-
-    ReadyMade --> BootcCommand --> BootcWrapper --> BootcReal
-    BootcReal --> BootcWrapper
-    BootcWrapper --> Bootupctl --> Bootloader
-```
+The Sirius diagnostics gate (`min_ram_gib = 5`) blocks machines that cannot hold the staging.
 
 ## Workstation Artifact Packaging
 
@@ -588,7 +533,7 @@ flowchart TD
 
 The repository supports two local VM paths:
 
-- Boot an ISO and install manually through ReadyMade.
+- Boot an ISO and install manually through Sirius.
 - Install a bootc image directly into a qcow2 disk with bootc-image-builder, then boot that disk.
 
 ```mermaid
@@ -596,7 +541,7 @@ flowchart TD
     Build["just build workstation"]
     PackageISO["just package workstation iso"]
     QemuISO["just qemu iso"]
-    ManualInstall["install through ReadyMade"]
+    ManualInstall["install through Sirius"]
     QemuRun["just qemu run"]
 
     DirectInstall["just qemu install"]
@@ -634,8 +579,8 @@ stateDiagram-v2
     [*] --> ImageBuild
     ImageBuild --> LiveISO: bootc-generic-iso
     ImageBuild --> QCOW2: qcow2
-    LiveISO --> Installing: ReadyMade
-    Installing --> InstalledPrepared: bootc-wrapper bootloader setup
+    LiveISO --> Installing: Sirius
+    Installing --> InstalledPrepared: bootc install to-filesystem
     InstalledPrepared --> InitialSetup: GDM InitialSetupEnable
     InitialSetup --> InstalledReady: user created
     QCOW2 --> InstalledReady
@@ -644,13 +589,13 @@ stateDiagram-v2
 
 | State | Indicator | Behavior |
 | --- | --- | --- |
-| Live ISO | `/etc/luminusos/system-mode = live` | `liveuser` autologin, `live-installer` session, ReadyMade visible and autostarted. |
-| Installed prepared | `/etc/luminusos/system-mode = installed` | Workstation payload deployed, bootloader configured, GNOME Initial Setup enabled. |
-| Installed ready | Real user exists | Normal GNOME login, Aurora Shell defaults, no ReadyMade installer app. |
+| Live ISO | `/etc/hostname = localhost-live` | `liveuser` autologin, `live-installer` session, Sirius visible and autostarted. |
+| Installed prepared | `/etc/gdm/custom.conf` with `InitialSetupEnable=true` | Workstation payload deployed, bootloader configured, GNOME Initial Setup enabled. |
+| Installed ready | Real user exists | Normal GNOME login, Aurora Shell defaults, no Sirius installer app. |
 
 ## Updates
 
-The installed system is a closed bootc deployment. Its update reference comes from `bootc_target_imgref` in `/etc/readymade.toml` during installation, and normal updates are performed with `bootc upgrade` against that OCI reference.
+The installed system is a closed bootc deployment. Its update reference comes from `target_imgref` in `/etc/sirius/distro.toml` during installation, and normal updates are performed with `bootc upgrade` against that OCI reference.
 
 The final image removes the `rpm-ostree` package, so client-side package layering is not available. Package changes must be made in the Containerfiles or build scripts and delivered as a new OCI image.
 
@@ -681,12 +626,11 @@ flowchart TD
 When changing this repository, keep these points aligned:
 
 - `Justfile`, `README.md`, `ARCHITECTURE.md`, and `AGENTS.md` must agree on active commands and supported editions.
-- `--bootc-default-fs btrfs` and ReadyMade repart templates must describe the same ISO install storage layout.
+- `--bootc-default-fs btrfs` and the Sirius repart templates must describe the same ISO install storage layout.
 - `disk.yaml` must keep root/home/var Btrfs for direct qcow2 artifacts, with `/boot` ext4 for image-builder compatibility.
-- Any live-only file added under `editions/workstation/files/` must stay out of the installed workstation payload and be excluded by repart when applicable. `installed-firstboot-cleanup` should only be a fallback, not the primary separation mechanism.
-- Changes to `live-installer` must consider the Wayland session file, GNOME session file, GNOME Shell mode JSON, systemd user drop-in, Aurora Shell metadata, and cleanup paths.
-- If the ReadyMade desktop file name changes, update GNOME build logic, autostart, cleanup, and repart exclusions.
-- If the install flow changes, update `readymade.toml`, wrappers, and this document.
+- Any live-only file added under `editions/workstation/files/` must be installed only by `Containerfile.installer` so it stays out of the workstation payload.
+- Changes to `live-installer` must consider the Wayland session file, GNOME session file, GNOME Shell mode JSON, systemd user drop-in, and Aurora Shell metadata.
+- If the install flow changes, update `/etc/sirius/distro.toml` / `sirius.toml` and this document.
 
 ## Operational Commands
 
@@ -704,31 +648,29 @@ just qemu run
 Useful live ISO commands:
 
 ```bash
-cat /etc/luminusos/system-mode
 hostname
-grep bootc_imgref /etc/readymade.toml
+grep image /etc/sirius/distro.toml
 sudo podman images
-sudo cat /tmp/readymade-logs*/readymade.log
+sudo cat /tmp/sirius-install-*.log
 journalctl -b -u gdm
-journalctl -b --user -u luminusos-readymade.service
+journalctl -b --user -u luminusos-sirius.service
 journalctl -b --user /usr/bin/gnome-shell
 ```
 
 Useful installed-system commands:
 
 ```bash
-cat /etc/luminusos/system-mode
 hostname
 bootc status
-test ! -e /usr/bin/readymade
+test ! -e /usr/bin/sirius
 test ! -e /usr/share/wayland-sessions/live-installer.desktop
-test ! -e /etc/readymade.toml
+test ! -e /etc/sirius/distro.toml
 ```
 
 ## Known Constraints
 
 - The live ISO itself is not a bootc deployment; `bootc status` is expected after installation.
-- ReadyMade is installed only in the ISO live root, not in the installed workstation payload.
+- Sirius is installed only in the ISO live root, not in the installed workstation payload.
 - The `live-installer` session depends on a custom GNOME Shell mode; extensions used there must declare support for that mode.
-- The install path relies on local wrappers to reconcile live ISO behavior, `bootc install`, and bootupd.
-- The direct qcow2 test path does not exercise the ReadyMade UI.
+- Installs need roughly 6 GB of RAM: the live session runs from memory and `bootc install` stages the payload in the live tmpfs `/var/tmp`.
+- The direct qcow2 test path does not exercise the Sirius UI.

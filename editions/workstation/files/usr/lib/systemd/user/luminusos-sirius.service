@@ -1,0 +1,13 @@
+[Unit]
+Description=Sirius live installer
+PartOf=gnome-session@live-installer.target
+After=gnome-session-services.target org.gnome.Shell@live-installer.service
+
+[Service]
+Type=simple
+ExecStart=/usr/bin/sirius
+Restart=on-failure
+RestartSec=2
+
+[Install]
+WantedBy=gnome-session@live-installer.target

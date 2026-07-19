@@ -2,9 +2,6 @@
 set -uexo pipefail
 
 mkdir -p /boot/efi /boot/loader/entries
-mkdir -p /etc/luminusos
-printf 'installed\n' > /etc/luminusos/system-mode
-printf 'luminus\n' > /etc/hostname
 
 rm -f /usr/share/applications/liveinst.desktop
 rm -f /etc/xdg/autostart/org.gnome.Software.desktop
@@ -31,7 +28,6 @@ fi
 ln -sf /usr/lib/systemd/system/graphical.target /etc/systemd/system/default.target
 ln -sf /usr/lib/systemd/system/gdm.service /etc/systemd/system/display-manager.service
 
-systemctl enable luminusos-installed-firstboot-cleanup.service
 mkdir -p /etc/gdm
 cat > /etc/gdm/custom.conf <<'EOF'
 [daemon]

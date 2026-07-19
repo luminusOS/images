@@ -168,10 +168,10 @@ RUN --mount=type=bind,from=ctx-flatpaks,source=/flatpaks,target=/flatpaks,ro \
 RUN --mount=type=bind,from=ctx-workstation-script,source=/,target=/ctx \
     --mount=type=bind,from=ctx-files,source=/workstation/files,target=/wfiles \
     install -Dm0644 /wfiles/etc/environment.d/electron-wayland.conf /etc/environment.d/electron-wayland.conf && \
+    cat /wfiles/etc/hostname > /etc/hostname && \
+    chmod 0644 /etc/hostname && \
     install -Dm0644 /wfiles/usr/lib/bootc/kargs.d/10-luminusos-splash.toml /usr/lib/bootc/kargs.d/10-luminusos-splash.toml && \
     install -Dm0644 /wfiles/usr/lib/image-builder/bootc/disk.yaml /usr/lib/image-builder/bootc/disk.yaml && \
-    install -Dm0644 /wfiles/usr/lib/systemd/system/luminusos-installed-firstboot-cleanup.service /usr/lib/systemd/system/luminusos-installed-firstboot-cleanup.service && \
-    install -Dm0755 /wfiles/usr/libexec/luminusos/installed-firstboot-cleanup /usr/libexec/luminusos/installed-firstboot-cleanup && \
     install -Dm0644 /wfiles/usr/share/glib-2.0/schemas/99-install-mode.gschema.override /usr/share/glib-2.0/schemas/99-install-mode.gschema.override && \
     env --chdir=/ctx/workstation ./build.sh
 

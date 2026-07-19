@@ -15,7 +15,6 @@ workstation_target_image := env("LOS_WORKSTATION_TARGET_IMAGE", "ghcr.io/luminus
 aurora_shell_version := env("AURORA_SHELL_VERSION", "v50.3")
 force_core := env("LOS_FORCE_CORE", "0")
 skip_flatpaks := env("LOS_SKIP_FLATPAKS", "0")
-squash := env("LOS_SQUASH", "1")
 sudo_keepalive := '''
 keep_sudo_alive() {
   sudo -v
@@ -52,11 +51,6 @@ build edition="workstation":
     squash_image() {
       local image="$1"
       local ctr=""
-
-      if [ "{{ squash }}" != "1" ]; then
-        echo "Skipping squash for ${image} because LOS_SQUASH={{ squash }}"
-        return 0
-      fi
 
       ctr="$(sudo buildah from --pull=never "${image}")"
       if ! sudo buildah config \
@@ -132,8 +126,8 @@ build edition="workstation":
           --build-arg image_version={{ tag }} \
           --tag {{ workstation_iso_image }} \
           --file editions/workstation/Containerfile.installer \
-          .
-        squash_image {{ workstation_iso_image }}
+          ..
+        echo "Skipping squash for {{ workstation_iso_image }} because the ISO live root is packaged as layered container input"
         ;;
       *)
         echo "Unknown edition: {{ edition }}"
@@ -179,7 +173,7 @@ package edition="workstation" format="all":
       fi
 
       echo "Building workstation ISO image from $image_ref"
-      LOS_TAG="${package_tag}" LOS_SQUASH=0 just build workstation-iso
+      LOS_TAG="${package_tag}" just build workstation-iso
     }
 
     squash_local_image() {
@@ -276,8 +270,7 @@ package edition="workstation" format="all":
     package_iso() {
       build_iso_image
       if [[ "$iso_image_ref" == localhost/* ]]; then
-        echo "Ensuring local workstation ISO image is squashed before packaging"
-        squash_local_image "$iso_image_ref"
+        echo "Skipping squash for workstation ISO image because the ISO live root is packaged as layered container input"
       fi
 
       echo "Building workstation ISO from $iso_image_ref with payload $image_ref"
@@ -321,7 +314,7 @@ package edition="workstation" format="all":
         package_iso
         package_qcow2
         ;;
-      iso)
+      iso|sirius-iso)
         package_iso
         ;;
       qcow2)
@@ -329,7 +322,7 @@ package edition="workstation" format="all":
         ;;
       *)
         echo "Unknown package format: {{ format }}"
-        echo "Valid formats: all, iso, qcow2"
+        echo "Valid formats: all, iso, sirius-iso, qcow2"
         exit 1
         ;;
     esac

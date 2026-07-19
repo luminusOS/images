@@ -1,0 +1,32 @@
+[bootc]
+image = "containers-storage:@WORKSTATION_IMAGE@"
+target_imgref = "@WORKSTATION_TARGET_IMAGE@"
+enforce_sigpolicy = false
+kargs = ["rhgb", "quiet", "splash"]
+args = ["--skip-fetch-check"]
+
+[disk]
+repart_dir = "/usr/share/sirius/repart.d"
+
+# Welcome-page branding for Sirius.
+[branding]
+logo = "/usr/share/sirius/logo.png"
+
+# Link cards shown on the Sirius install progress page.
+[[bento]]
+title = "Conheça o Luminus OS"
+desc = "Saiba mais sobre o projeto"
+link = "https://github.com/luminusOS"
+icon = "explore-symbolic"
+
+[[bento]]
+title = "Precisa de ajuda?"
+desc = "Relate problemas e tire dúvidas"
+link = "https://github.com/luminusOS/images/issues"
+icon = "chat-symbolic"
+
+[[bento]]
+title = "Contribua"
+desc = "Participe do desenvolvimento no GitHub"
+link = "https://github.com/luminusOS/images"
+icon = "applications-development-symbolic"

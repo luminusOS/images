@@ -1,0 +1,26 @@
+# Large RAM-backed /var/tmp for the live installer session.
+#
+# The live root's writable overlay keeps its upperdir in /run, a tmpfs the
+# kernel caps at 20% of RAM (1.6 GiB on an 8 GiB machine). `bootc install`
+# stages the compressed container image (~2.5 GiB) in /var/tmp before
+# deploying, which can never fit there. A dedicated tmpfs on /var/tmp lifts
+# that ceiling to 75% of RAM without touching /run or the overlay.
+#
+# Modeled after systemd's stock tmp.mount.
+
+[Unit]
+Description=Large temporary directory for bootc image staging (/var/tmp)
+ConditionKernelCommandLine=rd.live.image
+DefaultDependencies=no
+Conflicts=umount.target
+Before=local-fs.target umount.target
+After=swap.target
+
+[Mount]
+What=tmpfs
+Where=/var/tmp
+Type=tmpfs
+Options=mode=1777,strictatime,nosuid,nodev,size=75%
+
+[Install]
+WantedBy=local-fs.target

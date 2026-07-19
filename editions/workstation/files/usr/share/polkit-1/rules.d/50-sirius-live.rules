@@ -1,0 +1,13 @@
+// Live-ISO-only rule: let the passwordless live user run the Sirius
+// privileged install action without an authentication prompt. The polkit
+// action itself is pinned to `/usr/bin/sirius run-playbook`; without this
+// rule pkexec fails with exit 127 in the kiosk session (auth_admin with a
+// passwordless user). This file ships only in the live installer image,
+// never on installed systems.
+polkit.addRule(function (action, subject) {
+    if (action.id == "io.sirius.Installer.run-playbook" &&
+        subject.user == "liveuser" &&
+        subject.local && subject.active) {
+        return polkit.Result.YES;
+    }
+});

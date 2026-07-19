@@ -11,7 +11,7 @@ folder-children=[]
 
 [org.gnome.desktop.wm.preferences]
 num-workspaces=1
-button-layout='appmenu:minimize,maximize,close'
+button-layout='appmenu:close'
 
 [org.gnome.mutter]
 dynamic-workspaces=false

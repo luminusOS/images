@@ -16,16 +16,15 @@ just build workstation
 For fast iteration on workstation image changes that do not need Flatpaks or immediate ISO/qcow2 packaging, use:
 
 ```bash
-LOS_TAG=44.dev LOS_SKIP_FLATPAKS=1 LOS_SQUASH=0 just build workstation
+LOS_TAG=44.dev LOS_SKIP_FLATPAKS=1 just build workstation
 ```
 
 What each variable does:
 
 - `LOS_TAG=44.dev` keeps the local image tag stable across days, avoiding rebuilds caused only by the date-based default tag changing.
 - `LOS_SKIP_FLATPAKS=1` skips Flatpak installation, which avoids network and install time while testing image/package/session changes.
-- `LOS_SQUASH=0` skips the post-build squash step, keeping the fastest local build path.
 
-Do not use `LOS_SQUASH=0` as the final packaging path. `just package workstation` squashes local images before running image-builder so OCI whiteouts from lower layers are processed.
+Builds squash the local core and workstation payload images by default so OCI whiteouts from lower layers are processed before packaging. The separate `luminusos-workstation:<tag>-iso` live root is not squashed because it can duplicate the full Flatpak tree in local container storage.
 
 ## Packaging
 
@@ -38,7 +37,7 @@ just package workstation iso
 just package workstation qcow2
 ```
 
-The ISO path automatically builds a separate live installer root image tagged as `luminusos-workstation:<tag>-iso`, then embeds the normal `luminusos-workstation:<tag>` image as the ReadyMade install payload. The qcow2 path creates a directly bootable disk image from the normal workstation image and does not exercise the ReadyMade UI.
+The ISO path automatically builds a separate live installer root image tagged as `luminusos-workstation:<tag>-iso`, then embeds the normal `luminusos-workstation:<tag>` image as the Sirius install payload. The qcow2 path creates a directly bootable disk image from the normal workstation image and does not exercise the Sirius UI.
 
 ## QEMU Testing
 
