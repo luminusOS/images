@@ -12,7 +12,7 @@ FROM scratch AS ctx-files
 COPY editions/workstation/files /workstation/files
 
 # -- Workstation live ISO root using Sirius ---------------------------------
-FROM ${workstation_image}
+FROM ${workstation_image} AS live
 
 ARG fedora_version=44
 ARG image_version=44
@@ -21,14 +21,6 @@ ARG workstation_image=localhost/luminusos-workstation:latest
 ARG workstation_target_image=ghcr.io/luminusos/luminusos-workstation:44
 ARG aurora_shell_uuid=aurora-shell@luminusos.github.io
 ARG source_url="https://github.com/LuminusOS/images"
-
-LABEL containers.bootc="1" \
-      org.opencontainers.image.title="LuminusOS Workstation Sirius Installer" \
-      org.opencontainers.image.description="Luminus OS workstation live installer ISO root with Sirius" \
-      org.opencontainers.image.vendor="LuminusOS" \
-      org.opencontainers.image.source="${source_url}" \
-      org.opencontainers.image.licenses="Apache-2.0" \
-      org.opencontainers.image.version="${image_version}"
 
 RUN --mount=type=cache,target=/var/cache/dnf \
     --mount=type=bind,from=ctx-scripts,source=/scripts,target=/scripts \
@@ -136,12 +128,39 @@ RUN --mount=type=bind,from=ctx-files,source=/workstation/files,target=/wfiles \
     install -m 0644 /wfiles/boot/efi/EFI/fedora/grub.cfg /boot/efi/EFI/fedora/grub.cfg && \
     install -m 0644 /boot/efi/EFI/fedora/grub.cfg /boot/efi/EFI/BOOT/grub.cfg
 
+# -- Squashed final image ----------------------------------------------------
+# image-builder/osbuild deploys the ISO live root without applying OCI
+# whiteout semantics, so any ".wh.*" entries from lower layers land in the
+# live rootfs as real, empty files. When the rpm-ostree removal in the base
+# images left such whiteouts behind, the empty
+# /usr/share/dbus-1/system.d/.wh.org.projectatomic.rpmostree1.conf made
+# dbus-broker fail on "Invalid XML", which took down D-Bus and GDM and left
+# the live boot on a black screen. Copy the merged filesystem into a single
+# layer so no whiteouts can reach the ISO.
+FROM scratch
+
+COPY --from=live / /
+
+ARG aurora_shell_uuid=aurora-shell@luminusos.github.io
+ARG image_version=44
+ARG source_url="https://github.com/LuminusOS/images"
+
+LABEL containers.bootc="1" \
+      org.opencontainers.image.title="LuminusOS Workstation Sirius Installer" \
+      org.opencontainers.image.description="Luminus OS workstation live installer ISO root with Sirius" \
+      org.opencontainers.image.vendor="LuminusOS" \
+      org.opencontainers.image.source="${source_url}" \
+      org.opencontainers.image.licenses="Apache-2.0" \
+      org.opencontainers.image.version="${image_version}"
+
 RUN command -v sirius && \
     rpm -q sirius-installer && \
     ldd /usr/bin/sirius | tee /tmp/sirius-ldd && \
     ! grep -q 'not found' /tmp/sirius-ldd && \
     command -v bootc && \
     command -v bootupctl && \
+    # The squashed single layer must not contain materialized OCI whiteouts.
+    test -z "$(find / -xdev -name '.wh.*' -print -quit)" && \
     test -f /etc/sirius/distro.toml && \
     test -f /etc/sirius/sirius.toml && \
     test -f /etc/containers/containers.conf.d/99-luminusos-bootc-install-tmp.conf && \

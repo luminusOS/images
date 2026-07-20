@@ -19,7 +19,7 @@ Additional edition scaffolding should not be added unless package scope, target 
 - Keep live-only state out of the installed workstation payload.
 - Keep Btrfs storage layout aligned across the Sirius ISO install path and the qcow2 config.
 - Preserve `bootc upgrade` behavior through the installed target image reference.
-- Keep package installation as an image-build concern; installed systems do not ship the `rpm-ostree` client.
+- Keep package installation as an image-build concern; package changes ship as a new OCI image via `bootc upgrade`.
 
 ## High-Level View
 
@@ -160,8 +160,8 @@ Responsibilities:
 - Inherit bootc base packages from Fedora bootc.
 - Update `/usr/lib/os-release` branding and image version.
 - Recover RPM database state when the container build path leaves a temporary rebuild database.
-- Run final cleanup, including removal of `rpm-ostree`.
-- Verify `bootc` is present, `rpm-ostree` is absent, and run `bootc container lint`.
+- Run final cleanup (DNF caches, logs, temporary files).
+- Verify `bootc` is present and run `bootc container lint`.
 
 ```mermaid
 flowchart TD
@@ -169,8 +169,8 @@ flowchart TD
     Vars["write releasever vars"]
     Branding["os-release branding"]
     Rpmdb["inline rpmdb recovery"]
-    Cleanup["final cleanup<br/>remove rpm-ostree"]
-    Lint["verify bootc<br/>verify no rpm-ostree<br/>bootc container lint"]
+    Cleanup["final cleanup"]
+    Lint["verify bootc<br/>bootc container lint"]
     Output["luminusos:<tag>"]
 
     Fedora --> Vars --> Branding --> Rpmdb --> Cleanup --> Lint --> Output
@@ -261,6 +261,8 @@ Aurora Shell is enabled through GNOME Shell's native extension paths: live and I
 ## Installer Image
 
 `editions/workstation/Containerfile.installer` builds the ISO live root from the workstation image. It adds live-only packages, installs Sirius from the prebuilt RPM published on the [sirius GitHub releases](https://github.com/luminusOS/sirius/releases), applies the live GNOME session, and installs the LuminusOS Sirius configuration. The image-builder ISO rootfs is sized large enough to copy the live root with Flatpaks and then carry the embedded workstation install payload.
+
+The final stage squashes the live root into a single layer (`FROM scratch` + `COPY --from=live / /`). image-builder/osbuild deploys the ISO live root without applying OCI whiteout semantics, so layered input leaks `.wh.*` files from lower layers into the live rootfs as real, empty files — in the incident that motivated this, an empty `/usr/share/dbus-1/system.d/.wh.org.projectatomic.rpmostree1.conf` (from an rpm-ostree removal) broke dbus-broker and left the live boot on a black screen before GDM. The final verification step fails the build if any `.wh.*` file survives.
 
 The Sirius RPM ships the binary, the polkit action, the desktop file, and generic default configs. The installer stage then replaces the generic configs with the LuminusOS ones: `/etc/sirius/distro.toml` and `/etc/sirius/sirius.toml` (templated with the payload image references), the LuminusOS repart templates under `/usr/share/sirius/repart.d/`, branding, and the live polkit rule.
 
@@ -599,7 +601,7 @@ stateDiagram-v2
 
 The installed system is a closed bootc deployment. Its update reference comes from `target_imgref` in `/etc/sirius/distro.toml` during installation, and normal updates are performed with `bootc upgrade` against that OCI reference.
 
-The final image removes the `rpm-ostree` package, so client-side package layering is not available. Package changes must be made in the Containerfiles or build scripts and delivered as a new OCI image.
+Package changes must be made in the Containerfiles or build scripts and delivered as a new OCI image.
 
 By default, installed systems track the Fedora-versioned workstation image in GHCR:
 

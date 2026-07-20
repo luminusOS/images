@@ -24,7 +24,7 @@ What each variable does:
 - `LOS_TAG=44.dev` keeps the local image tag stable across days, avoiding rebuilds caused only by the date-based default tag changing.
 - `LOS_SKIP_FLATPAKS=1` skips Flatpak installation, which avoids network and install time while testing image/package/session changes.
 
-Builds squash the local core and workstation payload images by default so OCI whiteouts from lower layers are processed before packaging. The separate `luminusos-workstation:<tag>-iso` live root is not squashed because it can duplicate the full Flatpak tree in local container storage.
+Builds squash the local core and workstation payload images by default so OCI whiteouts from lower layers are processed before packaging. The `luminusos-workstation:<tag>-iso` live root squashes itself in `Containerfile.installer` (a final `FROM scratch` + `COPY --from=live / /` stage) because image-builder/osbuild deploys the ISO live root without applying OCI whiteout semantics — leftover `.wh.*` files in the live rootfs break services such as dbus-broker.
 
 ## Validation and Tests
 

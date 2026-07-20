@@ -116,7 +116,7 @@ build edition="workstation":
           --tag {{ workstation_iso_image }} \
           --file editions/workstation/Containerfile.installer \
           .
-        echo "Skipping squash for {{ workstation_iso_image }} because the ISO live root is packaged as layered container input"
+        echo "No post-build squash needed for {{ workstation_iso_image }}: Containerfile.installer squashes itself into a single layer"
         ;;
       *)
         echo "Unknown edition: {{ edition }}"
@@ -264,7 +264,7 @@ package edition="workstation" format="all":
     package_iso() {
       build_iso_image
       if [[ "$iso_image_ref" == localhost/* ]]; then
-        echo "Skipping squash for workstation ISO image because the ISO live root is packaged as layered container input"
+        echo "No post-build squash needed for the workstation ISO image: Containerfile.installer squashes itself into a single layer"
       fi
 
       echo "Building workstation ISO from $iso_image_ref with payload $image_ref"
