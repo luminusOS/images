@@ -3,6 +3,20 @@ enabled-extensions=['aurora-shell@luminusos.github.io']
 disabled-extensions=@as []
 disable-user-extensions=false
 
+# Never blank, dim, or lock the screen in the live installer session: an
+# unattended live boot must keep the installer visible.
+[org/gnome/desktop/session]
+idle-delay=uint32 0
+
+[org/gnome/desktop/screensaver]
+lock-enabled=false
+idle-activation-enabled=false
+
+[org/gnome/settings-daemon/plugins/power]
+sleep-inactive-ac-type='nothing'
+sleep-inactive-battery-type='nothing'
+idle-dim=false
+
 [org/gnome/shell/extensions/aurora-shell]
 module-no-overview=false
 module-pip-on-top=false
