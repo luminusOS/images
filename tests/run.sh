@@ -98,6 +98,21 @@ expect "repart.d ships exactly 3 definitions" \
 expect "repart root is btrfs" grep -q 'Format=btrfs' "${repart_dir}/10-root.conf"
 expect "repart esp exists" test -f "${repart_dir}/30-esp.conf"
 
+# ── patch-iso-payload-to-oci.sh ─────────────────────────────────────────
+cat >"${tmp}/manifest.json" <<'EOF'
+{"pipelines":[{"name":"os-tree","stages":[{"type":"org.osbuild.skopeo","options":{"destination":{"type":"containers-storage"}}}]}]}
+EOF
+bash "${ROOT}/tools/patch-iso-payload-to-oci.sh" "${tmp}/manifest.json" "${tmp}/patched.json"
+expect "payload patch writes oci destination with :latest tag" \
+  jq -e '.pipelines[0].stages[0].options.destination == {"type":"oci","path":"/usr/lib/luminusos/payload.oci:latest"}' \
+  "${tmp}/patched.json"
+echo '{"pipelines":[{"name":"os-tree","stages":[]}]}' >"${tmp}/bad-manifest.json"
+if bash "${ROOT}/tools/patch-iso-payload-to-oci.sh" "${tmp}/bad-manifest.json" "${tmp}/x.json" >/dev/null 2>&1; then
+  fail "payload patch rejects manifest without the skopeo stage"
+else
+  pass "payload patch rejects manifest without the skopeo stage"
+fi
+
 # ── Justfile parses and lists recipes ─────────────────────────────────
 if command -v just >/dev/null 2>&1; then
   expect "Justfile parses" just --justfile "${ROOT}/Justfile" --list
