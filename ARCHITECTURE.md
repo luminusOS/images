@@ -311,7 +311,6 @@ The live ISO is not itself a bootc deployment. It is generated from the workstat
 | `/usr/lib/systemd/user/luminusos-sirius.service` | Starts Sirius in the live user session. |
 | `/etc/dconf/db/local.d/00-iso-live-mode` | Live ISO GNOME Shell and Aurora Shell module defaults. |
 | `/usr/share/polkit-1/rules.d/50-sirius-live.rules` | Lets `liveuser` run the privileged Sirius install action without authentication. |
-| `/usr/lib/systemd/system/var-tmp.mount` | Live-only tmpfs on `/var/tmp` (75% of RAM) so `bootc install` can stage the compressed payload. |
 
 ```mermaid
 flowchart TD
@@ -371,7 +370,7 @@ args = ["--skip-fetch-check"]
 repart_dir = "/usr/share/sirius/repart.d"
 ```
 
-`image` points at the payload embedded in the live ISO; `target_imgref` is the reference the installed system uses for future `bootc upgrade`. `/etc/sirius/sirius.toml` gates the wizard: keyboard/timezone/user pages are disabled (GNOME Initial Setup owns user creation) and diagnostics require UEFI, ≥5 GiB usable RAM, and enough disk space — the RAM gate exists because `bootc install` stages the ~2.5 GiB compressed payload in the live tmpfs `/var/tmp` (see `var-tmp.mount`).
+`image` points at the payload embedded in the live ISO as an OCI layout (`oci:/usr/lib/luminusos/payload.oci:latest`, see [Install Memory Staging](#install-memory-staging)); `target_imgref` is the reference the installed system uses for future `bootc upgrade`. `/etc/sirius/sirius.toml` gates the wizard: keyboard/timezone/user pages are disabled (GNOME Initial Setup owns user creation) and diagnostics require UEFI, ≥2 GiB usable RAM, and enough disk space.
 
 ## Installation Flow
 
@@ -443,7 +442,7 @@ flowchart TD
 
 ### Live-Only Isolation
 
-The workstation payload never contains live-only installer artifacts: Sirius, its configs (`/etc/sirius/`), the live polkit rule, the `live-installer` session files, `var-tmp.mount`, and the `liveuser` autologin setup are added only in `Containerfile.installer`, on top of the payload image. The bootc install path deploys the clean payload image, so no exclusion list is needed — live files simply never existed in the payload.
+The workstation payload never contains live-only installer artifacts: Sirius, its configs (`/etc/sirius/`), the live polkit rule, the `live-installer` session files, and the `liveuser` autologin setup are added only in `Containerfile.installer`, on top of the payload image. The bootc install path deploys the clean payload image, so no exclusion list is needed — live files simply never existed in the payload.
 
 Sirius itself belongs to the installer image, not to the installed workstation payload.
 
@@ -472,12 +471,13 @@ flowchart TD
 
 ## Install Memory Staging
 
-`bootc install` stages the compressed payload copy (~2.5 GiB) under `/var/tmp` while the live session itself runs from RAM. Two live-only pieces make that fit:
+`bootc-generic-iso` normally embeds the installer payload as a `containers-storage` blob. `bootc install` can't stream that directly: containers/storage keeps layers already unpacked on disk, so install has to re-diff and re-tar each layer into a large `/var/tmp` staging area (~2.5 GiB compressed) before it can deploy them. On a live ISO, `/var/tmp` has nowhere to go but RAM, which is why installs used to need a dedicated tmpfs and a ~5 GiB RAM gate.
 
-- `/usr/lib/systemd/system/var-tmp.mount` mounts a dedicated tmpfs at `/var/tmp` sized at 75% of RAM, only when booted with `rd.live.image`.
-- `/etc/containers/containers.conf.d/99-luminusos-bootc-install-tmp.conf` points podman/bootc staging (`image_copy_tmp_dir`) at that tmpfs.
+Instead, `just package iso` generates the `bootc-generic-iso` osbuild manifest, patches the one `org.osbuild.skopeo` stage in the `os-tree` pipeline to embed the payload as an **OCI layout** (`destination: {type: oci, path: /usr/lib/luminusos/payload.oci}`) instead of `containers-storage`, and runs `osbuild` directly against the patched manifest (see `patch_iso_payload_to_oci()` in the Justfile). OCI layout blobs are already ready-made layer tarballs, so `bootc install --source-imgref oci:/usr/lib/luminusos/payload.oci:latest` (set in `distro.toml`) streams them straight to the target disk — no re-tar, no large staging area. This mirrors how Anaconda embeds ostree-native container payloads.
 
-The Sirius diagnostics gate (`min_ram_gib = 5`) blocks machines that cannot hold the staging.
+`image-builder-cli` has no flag for the OCI destination, so the manifest patch is a bridge until `osbuild/images` grows one upstream; the jq patch fails loudly if the manifest shape it depends on changes.
+
+The Sirius diagnostics gate (`min_ram_gib = 2`) only needs to cover the live GNOME session now.
 
 ## Workstation Artifact Packaging
 

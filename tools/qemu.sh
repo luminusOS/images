@@ -17,11 +17,11 @@ if [ -f .env ]; then
 fi
 
 # default values for QEMU
-# NOTE: the live session stages the bootc image copy in RAM (/var/tmp is a
-# dedicated tmpfs capped at 75% of RAM, see var-tmp.mount in the installer
-# image). The compressed payload is ~2.5 GiB, so the installer needs at
-# least ~6 GiB of guest memory; 8 GiB is safe.
-: ${QEMU_MEM:="8G"}
+# NOTE: the installer payload is embedded as an OCI layout, so `bootc
+# install` streams layer blobs straight to disk instead of staging a
+# re-tarred copy in RAM (see distro.toml). 4 GiB comfortably covers the
+# live GNOME session plus headroom.
+: ${QEMU_MEM:="4G"}
 : ${QEMU_CPU:="4"}
 : ${QEMU_BOOT:="uefi"}
 : ${QEMU_DISPLAY:="auto"}

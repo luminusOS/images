@@ -47,9 +47,6 @@ RUN --mount=type=cache,target=/var/cache/dnf \
 RUN --mount=type=bind,from=ctx-files,source=/workstation/files,target=/wfiles \
     install -Dm0644 /wfiles/etc/dconf/db/local.d/00-iso-live-mode /etc/dconf/db/local.d/00-iso-live-mode && \
     install -Dm0644 /wfiles/etc/dconf/profile/user /etc/dconf/profile/user && \
-    install -Dm0644 /wfiles/etc/containers/containers.conf.d/99-luminusos-bootc-install-tmp.conf /etc/containers/containers.conf.d/99-luminusos-bootc-install-tmp.conf && \
-    install -Dm0644 /wfiles/usr/lib/systemd/system/var-tmp.mount /usr/lib/systemd/system/var-tmp.mount && \
-    systemctl enable var-tmp.mount && \
     install -Dm0644 /wfiles/usr/lib/image-builder/bootc/iso.yaml /usr/lib/image-builder/bootc/iso.yaml && \
     install -Dm0644 /wfiles/usr/share/wayland-sessions/live-installer.desktop /usr/share/wayland-sessions/live-installer.desktop && \
     install -Dm0644 /wfiles/usr/share/gnome-session/sessions/live-installer.session /usr/share/gnome-session/sessions/live-installer.session && \
@@ -58,10 +55,9 @@ RUN --mount=type=bind,from=ctx-files,source=/workstation/files,target=/wfiles \
 RUN --mount=type=bind,from=ctx-files,source=/workstation/files,target=/wfiles \
     install -Dm0644 /wfiles/etc/sirius/distro.toml /etc/sirius/distro.toml && \
     sed -i \
-      -e "s|@WORKSTATION_IMAGE@|${workstation_image}|g" \
       -e "s|@WORKSTATION_TARGET_IMAGE@|${workstation_target_image}|g" \
       /etc/sirius/distro.toml && \
-    grep -q 'image = "containers-storage:'"${workstation_image}"'"' /etc/sirius/distro.toml && \
+    grep -q 'image = "oci:/usr/lib/luminusos/payload.oci:latest"' /etc/sirius/distro.toml && \
     grep -q 'target_imgref = "'"${workstation_target_image}"'"' /etc/sirius/distro.toml && \
     install -Dm0644 /wfiles/etc/sirius/sirius.toml /etc/sirius/sirius.toml && \
     install -Dm0644 /wfiles/usr/share/polkit-1/rules.d/50-sirius-live.rules /usr/share/polkit-1/rules.d/50-sirius-live.rules && \
@@ -163,7 +159,6 @@ RUN command -v sirius && \
     test -z "$(find / -xdev -name '.wh.*' -print -quit)" && \
     test -f /etc/sirius/distro.toml && \
     test -f /etc/sirius/sirius.toml && \
-    test -f /etc/containers/containers.conf.d/99-luminusos-bootc-install-tmp.conf && \
     # Exactly the three LuminusOS repart definitions: the RPM's generic
     # 10-esp/20-root pair must be gone or systemd-repart would see five.
     test ! -e /usr/share/sirius/repart.d/10-esp.conf && \
