@@ -177,12 +177,8 @@ RUN test -f /usr/share/gnome-shell/extensions/${aurora_shell_uuid}/metadata.json
       /usr/share/gnome-shell/extensions/${aurora_shell_uuid}/metadata.json
 
 # Final cleanup
-RUN if rpm -q rpm-ostree >/dev/null 2>&1; then \
-      dnf -y remove --no-autoremove rpm-ostree; \
-    fi && \
-    dnf clean all && \
+RUN dnf clean all && \
     rm -rf /var/cache/dnf /var/cache/libdnf5 /tmp/* /var/log/* /var/tmp/*
 
-RUN ! command -v rpm-ostree && \
-    command -v bootc && \
+RUN command -v bootc && \
     bootc container lint --no-truncate

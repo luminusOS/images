@@ -26,9 +26,6 @@ RUN --mount=type=bind,from=ctx-scripts,source=/scripts,target=/scripts \
 
 RUN --mount=type=bind,from=ctx-scripts,source=/scripts,target=/scripts \
     bash /scripts/rpmdb-repair.sh && \
-    if rpm -q rpm-ostree >/dev/null 2>&1; then \
-      dnf -y remove --no-autoremove rpm-ostree; \
-    fi && \
     dnf clean all && \
     rm -rf /var/cache/dnf /var/cache/libdnf5 /tmp/* /var/log/* /var/tmp/*
 
@@ -45,6 +42,5 @@ RUN --mount=type=bind,from=ctx-scripts,source=/scripts,target=/scripts \
 
 LABEL org.opencontainers.image.version="${distro_version}"
 
-RUN ! command -v rpm-ostree && \
-    command -v bootc && \
+RUN command -v bootc && \
     bootc container lint --no-truncate
