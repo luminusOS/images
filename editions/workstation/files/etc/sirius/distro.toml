@@ -1,5 +1,9 @@
 [bootc]
-image = "containers-storage:@WORKSTATION_IMAGE@"
+# The ISO embeds the payload as an OCI layout at this fixed path (see
+# `package_iso()` in the top-level Justfile) instead of containers-storage,
+# so `bootc install` streams ready-made layer blobs straight to disk
+# instead of re-tarring each layer into a large /var/tmp staging area.
+image = "oci:/usr/lib/luminusos/payload.oci:latest"
 target_imgref = "@WORKSTATION_TARGET_IMAGE@"
 # TODO: sign the published images (cosign/sigstore) and flip this to true —
 # today the ghcr.io images are unsigned, so verification has nothing to check.

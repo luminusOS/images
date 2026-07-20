@@ -4,10 +4,8 @@ disabled = ["keyboard", "timezone", "user"]
 [diagnostics]
 require = ["uefi", "ram", "disk_space"]
 warn = ["secure_boot", "network", "virt"]
-# bootc stages the compressed image copy (~2.5 GiB) in /var/tmp, a dedicated
-# tmpfs capped at 75% of RAM (see var-tmp.mount), while the live session
-# itself also runs from RAM. Installs need roughly 6 GB of memory. The probe
-# measures USABLE RAM (a "6 GB" machine reports ~5.7 GiB after
-# kernel/firmware reservations), so the gate sits at 5 GiB: 6 GB machines
-# pass, machines that cannot hold the staging are blocked.
-min_ram_gib = 5
+# The installer payload is embedded as an OCI layout (see distro.toml), so
+# `bootc install` streams layer blobs straight to disk instead of staging a
+# re-tarred copy in RAM. The gate only needs to cover the live GNOME
+# session itself.
+min_ram_gib = 2

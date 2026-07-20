@@ -62,11 +62,11 @@ for toml in "${WORKSTATION_FILES}/etc/sirius/distro.toml" \
     python3 -c 'import sys, tomllib; tomllib.load(open(sys.argv[1], "rb"))' "${toml}"
 done
 
-# ── distro.toml still carries the build-time placeholders ─────────────
-expect "distro.toml has @WORKSTATION_IMAGE@ placeholder" \
-  grep -q '@WORKSTATION_IMAGE@' "${WORKSTATION_FILES}/etc/sirius/distro.toml"
+# ── distro.toml still carries the build-time placeholder ──────────────
 expect "distro.toml has @WORKSTATION_TARGET_IMAGE@ placeholder" \
   grep -q '@WORKSTATION_TARGET_IMAGE@' "${WORKSTATION_FILES}/etc/sirius/distro.toml"
+expect "distro.toml points bootc install at the embedded OCI payload" \
+  grep -q 'image = "oci:/usr/lib/luminusos/payload.oci:latest"' "${WORKSTATION_FILES}/etc/sirius/distro.toml"
 
 # ── JSON files are valid ──────────────────────────────────────────────
 while IFS= read -r json; do

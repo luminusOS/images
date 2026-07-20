@@ -261,17 +261,81 @@ package edition="workstation" format="all":
       echo "Wrote artifact pointer: $pointer -> $path"
     }
 
+    # bootc-generic-iso embeds the installer payload as a containers-storage
+    # blob, which forces `bootc install` to re-diff/tar each layer into
+    # /var/tmp at install time (~2.5 GiB, hence the tmpfs var-tmp.mount and
+    # the 5 GiB RAM gate). osbuild's skopeo stage also supports an "oci"
+    # destination, which stores ready-made layer blobs — no re-tar, no
+    # large staging area — matching how Anaconda embeds ostree-native
+    # container payloads. image-builder-cli has no flag for this, so we
+    # generate the manifest, patch that one stage, and run osbuild directly.
+    patch_iso_payload_to_oci() {
+      local manifest_json="$1" patched_manifest="$2"
+      local skopeo_count
+      skopeo_count="$(jq '[.pipelines[] | select(.name == "os-tree") | .stages[] | select(.type == "org.osbuild.skopeo")] | length' "$manifest_json")"
+      if [ "$skopeo_count" != "1" ]; then
+        echo "Expected exactly 1 org.osbuild.skopeo stage in the 'os-tree' pipeline, found $skopeo_count" >&2
+        echo "osbuild/images changed the bootc-generic-iso manifest shape; update patch_iso_payload_to_oci() in the Justfile" >&2
+        exit 1
+      fi
+      jq '
+        (.pipelines[] | select(.name == "os-tree") | .stages[] | select(.type == "org.osbuild.skopeo") | .options.destination)
+          = {"type": "oci", "path": "/usr/lib/luminusos/payload.oci"}
+      ' "$manifest_json" > "$patched_manifest"
+    }
+
     package_iso() {
       build_iso_image
       if [[ "$iso_image_ref" == localhost/* ]]; then
         echo "No post-build squash needed for the workstation ISO image: Containerfile.installer squashes itself into a single layer"
       fi
 
-      echo "Building workstation ISO from $iso_image_ref with payload $image_ref"
-      run_image_builder bootc-generic-iso \
-        "luminusos-workstation-${package_tag}.iso" .test/last-iso \
+      local out_name="luminusos-workstation-${package_tag}.iso"
+      local ib_cache="$(pwd)/.test/image-builder-cache"
+      local manifest_json=".test/${package_tag}.osbuild-manifest.json"
+      local patched_manifest=".test/${package_tag}.osbuild-manifest.oci.json"
+      mkdir -p "$ib_cache"
+
+      echo "Generating osbuild manifest for bootc-generic-iso (payload: $image_ref)"
+      sudo image-builder build \
+        --bootc-default-fs btrfs \
+        --output-dir . \
+        --output-name "$out_name" \
+        --cache "$ib_cache" \
+        --with-manifest \
         --bootc-ref "$iso_image_ref" \
-        --bootc-installer-payload-ref "$image_ref"
+        --bootc-installer-payload-ref "$image_ref" \
+        bootc-generic-iso
+
+      local generated_manifest="${out_name%.iso}.osbuild-manifest.json"
+      if [ ! -f "$generated_manifest" ]; then
+        echo "Expected osbuild manifest was not generated: $generated_manifest"
+        exit 1
+      fi
+      mv "$generated_manifest" "$manifest_json"
+
+      echo "Patching installer payload embed: containers-storage -> oci"
+      patch_iso_payload_to_oci "$manifest_json" "$patched_manifest"
+
+      echo "Rebuilding ISO from the patched manifest (payload embedded as OCI layout)"
+      sudo rm -rf bootiso
+      sudo osbuild \
+        --store "$ib_cache" \
+        --output-directory . \
+        --export bootiso \
+        "$patched_manifest"
+
+      if [ ! -f bootiso/install.iso ]; then
+        echo "Expected osbuild export not found: bootiso/install.iso"
+        exit 1
+      fi
+      sudo mv bootiso/install.iso "$out_name"
+      sudo rm -rf bootiso
+      sudo chown "$(id -u):$(id -g)" "$out_name"
+
+      local iso_path="$(pwd)/$out_name"
+      printf '%s\n' "$iso_path" > .test/last-iso
+      echo "Wrote artifact pointer: .test/last-iso -> $iso_path"
     }
 
     package_qcow2() {
