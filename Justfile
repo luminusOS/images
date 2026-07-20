@@ -270,18 +270,7 @@ package edition="workstation" format="all":
     # container payloads. image-builder-cli has no flag for this, so we
     # generate the manifest, patch that one stage, and run osbuild directly.
     patch_iso_payload_to_oci() {
-      local manifest_json="$1" patched_manifest="$2"
-      local skopeo_count
-      skopeo_count="$(jq '[.pipelines[] | select(.name == "os-tree") | .stages[] | select(.type == "org.osbuild.skopeo")] | length' "$manifest_json")"
-      if [ "$skopeo_count" != "1" ]; then
-        echo "Expected exactly 1 org.osbuild.skopeo stage in the 'os-tree' pipeline, found $skopeo_count" >&2
-        echo "osbuild/images changed the bootc-generic-iso manifest shape; update patch_iso_payload_to_oci() in the Justfile" >&2
-        exit 1
-      fi
-      jq '
-        (.pipelines[] | select(.name == "os-tree") | .stages[] | select(.type == "org.osbuild.skopeo") | .options.destination)
-          = {"type": "oci", "path": "/usr/lib/luminusos/payload.oci"}
-      ' "$manifest_json" > "$patched_manifest"
+      ./tools/patch-iso-payload-to-oci.sh "$1" "$2"
     }
 
     package_iso() {
