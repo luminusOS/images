@@ -1,68 +1,39 @@
+<div align="center">
+  <img src="editions/workstation/files/usr/share/sirius/logo.png" width="160" />
+</div>
+
 # Luminus OS
 
-An immutable operating system built on [Fedora bootc](https://containers.github.io/bootc/). Atomic updates, OCI container delivery, and a workstation image packaged as installable artifacts.
+An immutable operating system built on [Fedora bootc](https://containers.github.io/bootc/) — atomic updates, OCI container delivery, and a GNOME workstation packaged as installable artifacts.
 
 ## Editions
 
 | Edition | Description | Output |
 |---------|-------------|--------|
-| **core** | Minimal base for containers and downstream Luminus images | `luminusos:<tag>` container image |
-| **workstation** | GNOME desktop for PCs and notebooks | Container image + ISO + qcow2; ISO packaging also creates a local `luminusos-workstation:<tag>-iso` installer root image |
+| **core** | Minimal base for downstream Luminus images | `luminusos:<tag>` container image |
+| **workstation** | GNOME desktop for PCs and notebooks | Container image, installable ISO (Sirius), qcow2 |
 
-## Planned Editions
+Planned editions (not active build targets yet): **mobile**, **cast**, **play**, **education** — planning notes live under `editions/`.
 
-These names are reserved for future planning only. They are not active build targets yet.
+## Quick Start
 
-| Planned edition | Target |
-|-----------------|--------|
-| **mobile** | Phones and touch-first mobile devices |
-| **cast** | TVs and living-room displays |
-| **play** | Gaming handhelds |
-| **education** | Classrooms, labs, and student learning devices |
+```bash
+just build workstation        # build the desktop image
+just package workstation iso  # produce the installer ISO
+just qemu iso                 # boot it in QEMU/KVM
+```
 
-Planning notes live in each planned edition directory under `editions/`. These directories should only become active build targets after their package set, target devices, installer flow, and test matrix are defined.
+See [CONTRIBUTING.md](CONTRIBUTING.md) for prerequisites, faster iteration flags, packaging, and QEMU testing.
 
 ## Versioning
 
-Releases follow the Fedora base version with a build date suffix:
+Releases follow the Fedora base version plus a build date:
 
 ```
 {FEDORA_VERSION}.{YYYYMMDD}   →   44.20260322
 ```
 
-## Project Structure
-
-```
-.
-├── editions/          # Bootable image definitions
-│   ├── cast/          # Planned TV/living-room edition
-│   ├── core/          # Shared base edition
-│   ├── education/     # Planned education edition
-│   ├── mobile/        # Planned mobile edition
-│   ├── play/          # Planned gaming handheld edition
-│   └── workstation/   # Desktop edition
-├── shared/            # Shared data/config inputs
-│   ├── bootc-image-builder.toml.example
-│   ├── flatpaks
-│   └── scripts/       # Build-time helpers shared by the Containerfiles
-└── tools/             # Local development helpers (QEMU)
-```
-
-See [ARCHITECTURE.md](ARCHITECTURE.md) for the detailed image layering, installer, QEMU, and runtime model.
-
-## Development
-
-See [CONTRIBUTING.md](CONTRIBUTING.md) for prerequisites, cache-friendly build commands, packaging, QEMU testing, and environment variables.
-
-## CI / Releases
-
-GitHub Actions builds active editions from Fedora release branches. Branch names follow Fedora versions: `f44`, `f45`, `f46`, and so on.
-
-| Workflow | Trigger | Output |
-|----------|---------|--------|
-| `build-containers` | Push/PR on `f*` | `core` and `workstation` container images → GHCR |
-
-Container images use the Fedora version number as the floating tag, without the branch `f` prefix:
+Container images use the Fedora version as a floating tag:
 
 ```
 ghcr.io/luminusos/luminusos:44
@@ -71,13 +42,23 @@ ghcr.io/luminusos/luminusos-workstation:44
 
 ## Rebasing to Luminus OS
 
-Once the workstation image is published, rebase an existing bootc-capable Fedora
-Atomic system into Luminus OS:
+Rebase an existing bootc-capable Fedora Atomic system:
 
 ```bash
 bootc switch ghcr.io/luminusos/luminusos-workstation:44
 ```
 
-## License
+## CI & Releases
 
-MIT — see [LICENSE](LICENSE).
+| Workflow | Trigger | What it does |
+|----------|---------|--------------|
+| `ci` | Push to `main` | Lint, unit/config tests, core smoke build |
+| `build-containers` | Push/PR on `main` and `f*` | Builds `core` and `workstation` containers → GHCR |
+| `publish` | Manual | Builds containers, packages ISO + qcow2, boot smoke test, GitHub Release |
+
+Release assets larger than 2 GiB are split into `.partNN` files (GitHub per-asset limit); reassemble with `cat FILE.part* > FILE` and verify against `SHA256SUMS`.
+
+## Documentation
+
+- [ARCHITECTURE.md](ARCHITECTURE.md) — image layering, installer flow, storage layout, CI internals
+- [CONTRIBUTING.md](CONTRIBUTING.md) — local builds, tests, packaging, contribution policies

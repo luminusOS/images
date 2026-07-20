@@ -77,6 +77,17 @@ just qemu install
 just qemu run
 ```
 
+## AI-Assisted Contributions
+
+Contributions made with AI assistance are welcome, but the contributor remains
+responsible for the change. Do not submit code you do not understand. You must
+be able to explain what the code does, why it is correct, and what tradeoffs or
+risks it introduces.
+
+AI-assisted changes must be tested thoroughly. Maintainers may ask for evidence
+that the functionality works and was tested, such as test output, screenshots,
+screen recordings, logs, or clear reproduction steps.
+
 ## Shared Inputs
 
 Shared data and config live in `shared/`:
