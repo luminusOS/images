@@ -397,7 +397,7 @@ flowchart TD
 
 The Sirius ISO install storage model must remain aligned across:
 
-- `--bootc-default-fs btrfs` in the `Justfile`.
+- `/usr/lib/image-builder/bootc/disk.yaml` in the workstation image (btrfs root), which image-builder uses for both the ISO install path and direct qcow2 artifacts — it overrides `--bootc-default-fs`.
 - Sirius repart templates under `/usr/share/sirius/repart.d/`.
 
 Expected layout:
@@ -489,7 +489,6 @@ Conceptual command:
 
 ```bash
 sudo image-builder build \
-  --bootc-default-fs btrfs \
   --output-dir . \
   --output-name luminusos-workstation-<tag>.iso \
   --bootc-ref <workstation-iso-image> \
@@ -505,7 +504,6 @@ Conceptual command:
 
 ```bash
 sudo image-builder build \
-  --bootc-default-fs btrfs \
   --output-dir . \
   --output-name luminusos-workstation-<tag>.qcow2 \
   --bootc-ref <workstation-image> \
@@ -630,8 +628,7 @@ flowchart TD
 When changing this repository, keep these points aligned:
 
 - `Justfile`, `README.md`, `ARCHITECTURE.md`, and `AGENTS.md` must agree on active commands and supported editions.
-- `--bootc-default-fs btrfs` and the Sirius repart templates must describe the same ISO install storage layout.
-- `disk.yaml` must keep root/home/var Btrfs for direct qcow2 artifacts, with `/boot` ext4 for image-builder compatibility.
+- `disk.yaml` must keep root/home/var Btrfs with `/boot` ext4 (image-builder compatibility) and describe the same storage layout as the Sirius repart templates; image-builder takes the filesystem from `disk.yaml`, not from `--bootc-default-fs`.
 - Any live-only file added under `editions/workstation/files/` must be installed only by `Containerfile.installer` so it stays out of the workstation payload.
 - Changes to `live-installer` must consider the Wayland session file, GNOME session file, GNOME Shell mode JSON, systemd user drop-in, and Aurora Shell metadata.
 - If the install flow changes, update `/etc/sirius/distro.toml` / `sirius.toml` and this document.

@@ -34,7 +34,6 @@ case "${format}" in
     patched_manifest="${OUTPUT_NAME%.iso}.osbuild-manifest.oci.json"
     image-builder build \
       --cache "${cache_dir}" \
-      --bootc-default-fs btrfs \
       --output-dir . \
       --output-name "${OUTPUT_NAME}" \
       --with-manifest \
@@ -53,13 +52,12 @@ case "${format}" in
       --output-directory . \
       --export bootiso \
       "${patched_manifest}"
-    mv bootiso/install.iso "${OUTPUT_NAME}"
+    mv -f bootiso/install.iso "${OUTPUT_NAME}"
     rm -rf bootiso
     ;;
   qcow2)
     image-builder build \
       --cache "${cache_dir}" \
-      --bootc-default-fs btrfs \
       --output-dir . \
       --output-name "${OUTPUT_NAME}" \
       --bootc-ref "${WORKSTATION_IMAGE}" \

@@ -246,7 +246,6 @@ package edition="workstation" format="all":
       shift 3
 
       sudo image-builder build \
-        --bootc-default-fs btrfs \
         --output-dir . \
         --output-name "$output" \
         "$@" \
@@ -275,9 +274,6 @@ package edition="workstation" format="all":
 
     package_iso() {
       build_iso_image
-      if [[ "$iso_image_ref" == localhost/* ]]; then
-        echo "No post-build squash needed for the workstation ISO image: Containerfile.installer squashes itself into a single layer"
-      fi
 
       local out_name="luminusos-workstation-${package_tag}.iso"
       local ib_cache="$(pwd)/.test/image-builder-cache"
@@ -287,7 +283,6 @@ package edition="workstation" format="all":
 
       echo "Generating osbuild manifest for bootc-generic-iso (payload: $image_ref)"
       sudo image-builder build \
-        --bootc-default-fs btrfs \
         --output-dir . \
         --output-name "$out_name" \
         --cache "$ib_cache" \
@@ -301,7 +296,7 @@ package edition="workstation" format="all":
         echo "Expected osbuild manifest was not generated: $generated_manifest"
         exit 1
       fi
-      mv "$generated_manifest" "$manifest_json"
+      mv -f "$generated_manifest" "$manifest_json"
 
       echo "Patching installer payload embed: containers-storage -> oci"
       patch_iso_payload_to_oci "$manifest_json" "$patched_manifest"
@@ -318,7 +313,7 @@ package edition="workstation" format="all":
         echo "Expected osbuild export not found: bootiso/install.iso"
         exit 1
       fi
-      sudo mv bootiso/install.iso "$out_name"
+      sudo mv -f bootiso/install.iso "$out_name"
       sudo rm -rf bootiso
       sudo chown "$(id -u):$(id -g)" "$out_name"
 
