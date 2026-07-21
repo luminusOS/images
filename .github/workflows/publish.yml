@@ -118,8 +118,22 @@ jobs:
           cache-from: type=gha
           cache-to: type=gha,mode=max
 
+      # The live root embeds the installer payload as an OCI layout copied
+      # from the build context (see Containerfile.installer); export it from
+      # the payload image pushed above. skopeo reuses the GHCR credentials
+      # written by docker/login-action.
+      - name: Export installer payload as OCI layout
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y skopeo
+          mkdir -p .test
+          rm -rf .test/payload.oci
+          skopeo copy \
+            "docker://${WORKSTATION_IMAGE}" \
+            "oci:.test/payload.oci:latest"
+
       # The live root's distro.toml must reference the same GHCR ref that
-      # the ISO job embeds as the installer payload.
+      # the installed system will track for future `bootc upgrade`.
       - name: Build and push workstation ISO live root
         uses: docker/build-push-action@v7
         with:
@@ -170,7 +184,6 @@ jobs:
           sudo podman run --rm --privileged \
             --security-opt label=type:unconfined_t \
             -v "$PWD:/work" -w /work \
-            -e WORKSTATION_IMAGE="ghcr.io/${NAMESPACE}/luminusos-workstation:${VERSION_TAG}" \
             -e WORKSTATION_ISO_IMAGE="ghcr.io/${NAMESPACE}/luminusos-workstation:${VERSION_TAG}-iso" \
             -e OUTPUT_NAME="luminusos-workstation-${VERSION_TAG}.iso" \
             -e GHCR_USER="${GHCR_USER}" -e GHCR_TOKEN="${GHCR_TOKEN}" \

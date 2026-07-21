@@ -471,11 +471,11 @@ flowchart TD
 
 ## Install Memory Staging
 
-`bootc-generic-iso` normally embeds the installer payload as a `containers-storage` blob. `bootc install` can't stream that directly: containers/storage keeps layers already unpacked on disk, so install has to re-diff and re-tar each layer into a large `/var/tmp` staging area (~2.5 GiB compressed) before it can deploy them. On a live ISO, `/var/tmp` has nowhere to go but RAM, which is why installs used to need a dedicated tmpfs and a ~5 GiB RAM gate.
+`bootc-generic-iso` can embed the installer payload as a `containers-storage` blob. `bootc install` can't stream that directly: containers/storage keeps layers already unpacked on disk, so install has to re-diff and re-tar each layer into a large `/var/tmp` staging area (~2.5 GiB compressed) before it can deploy them. On a live ISO, `/var/tmp` has nowhere to go but RAM, which is why installs used to need a dedicated tmpfs and a ~5 GiB RAM gate.
 
-Instead, `just package iso` generates the `bootc-generic-iso` osbuild manifest, patches the one `org.osbuild.skopeo` stage in the `os-tree` pipeline to embed the payload as an **OCI layout** (`destination: {type: oci, path: /usr/lib/luminusos/payload.oci:latest}`) instead of `containers-storage`, and runs `osbuild` directly against the patched manifest (see `tools/patch-iso-payload-to-oci.sh`). The `:latest` suffix in the destination path is load-bearing: `skopeo copy oci:...` strips it from the on-disk directory name and records it as the `org.opencontainers.image.ref.name` annotation in `index.json`, which is what makes the `oci:/usr/lib/luminusos/payload.oci:latest` reference resolvable. OCI layout blobs are already ready-made layer tarballs, so `bootc install --source-imgref oci:/usr/lib/luminusos/payload.oci:latest` (set in `distro.toml`) streams them straight to the target disk — no re-tar, no large staging area. This mirrors how Anaconda embeds ostree-native container payloads.
+Instead, the payload is embedded in the `-iso` container image itself as an **OCI layout** at `/usr/lib/luminusos/payload.oci`. The build exports it into the build context beforehand — `skopeo copy <payload-image> oci:.test/payload.oci:latest` (Justfile locally, a workflow step in CI) — and `Containerfile.installer` copies it into the live root. OCI layout blobs are already ready-made layer tarballs, so `bootc install --source-imgref oci:/usr/lib/luminusos/payload.oci:latest` (set in `distro.toml`) streams them straight to the target disk — no re-tar, no large staging area, and no image-builder payload-embedding support required at all.
 
-`image-builder-cli` has no flag for the OCI destination, so the manifest patch is a bridge until `osbuild/images` grows one upstream; the jq patch fails loudly if the manifest shape it depends on changes.
+The `:latest` suffix is load-bearing: `skopeo copy oci:...` strips it from the on-disk directory name and records it as the `org.opencontainers.image.ref.name` annotation in `index.json`, which is what makes the `:latest` reference resolvable. The container build fails its final verification if the annotation is missing.
 
 The Sirius diagnostics gate (`min_ram_gib = 2`) only needs to cover the live GNOME session now.
 
@@ -492,11 +492,10 @@ sudo image-builder build \
   --output-dir . \
   --output-name luminusos-workstation-<tag>.iso \
   --bootc-ref <workstation-iso-image> \
-  --bootc-installer-payload-ref <workstation-image> \
   bootc-generic-iso
 ```
 
-`--bootc-ref` defines the live root and points at `luminusos-workstation:<tag>-iso`. `--bootc-installer-payload-ref` embeds the normal `luminusos-workstation:<tag>` image as the installer payload.
+`--bootc-ref` defines the live root and points at `luminusos-workstation:<tag>-iso`. The installer payload is already embedded in that image as an OCI layout (see [Install Memory Staging](#install-memory-staging)), so no payload flag is passed to image-builder.
 
 ### qcow2
 
@@ -515,18 +514,17 @@ The direct qcow2 artifact uses `/usr/lib/image-builder/bootc/disk.yaml`. It keep
 ```mermaid
 flowchart TD
     Workstation["workstation image"]
+    PayloadOCI["payload OCI layout<br/>.test/payload.oci"]
     ISOBuilder["image-builder<br/>bootc-generic-iso"]
     QCOW2Builder["image-builder<br/>qcow2"]
     BootcRef["--bootc-ref"]
-    PayloadRef["--bootc-installer-payload-ref"]
     WorkstationISO["workstation ISO root<br/>luminusos-workstation:&lt;tag&gt;-iso"]
     ISO["luminusos-workstation-<tag>.iso"]
     QCOW2["luminusos-workstation-<tag>.qcow2"]
     LastISO[".test/last-iso"]
     LastQCOW2[".test/last-qcow2"]
 
-    Workstation --> WorkstationISO --> BootcRef --> ISOBuilder
-    Workstation --> PayloadRef --> ISOBuilder
+    Workstation --> PayloadOCI --> WorkstationISO --> BootcRef --> ISOBuilder
     ISOBuilder --> ISO --> LastISO
     Workstation --> QCOW2Builder --> QCOW2 --> LastQCOW2
 ```
