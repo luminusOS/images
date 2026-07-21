@@ -124,15 +124,14 @@ RUN --mount=type=bind,from=ctx-files,source=/workstation/files,target=/wfiles \
     install -m 0644 /wfiles/boot/efi/EFI/fedora/grub.cfg /boot/efi/EFI/fedora/grub.cfg && \
     install -m 0644 /boot/efi/EFI/fedora/grub.cfg /boot/efi/EFI/BOOT/grub.cfg
 
+# -- Installer payload as OCI layout ------------------------------------------
+# Generated into the build context by the caller:
+#   skopeo copy <payload-image> oci:.test/payload.oci:latest
+COPY .test/payload.oci /usr/lib/luminusos/payload.oci
+
 # -- Squashed final image ----------------------------------------------------
-# image-builder/osbuild deploys the ISO live root without applying OCI
-# whiteout semantics, so any ".wh.*" entries from lower layers land in the
-# live rootfs as real, empty files. When the rpm-ostree removal in the base
-# images left such whiteouts behind, the empty
-# /usr/share/dbus-1/system.d/.wh.org.projectatomic.rpmostree1.conf made
-# dbus-broker fail on "Invalid XML", which took down D-Bus and GDM and left
-# the live boot on a black screen. Copy the merged filesystem into a single
-# layer so no whiteouts can reach the ISO.
+# osbuild deploys the ISO live root without applying OCI whiteout semantics,
+# so the merged filesystem is copied into a single whiteout-free layer.
 FROM scratch
 
 COPY --from=live / /
@@ -157,6 +156,10 @@ RUN command -v sirius && \
     command -v bootupctl && \
     # The squashed single layer must not contain materialized OCI whiteouts.
     test -z "$(find / -xdev -name '.wh.*' -print -quit)" && \
+    # The installer payload is embedded as an OCI layout tagged "latest".
+    test -f /usr/lib/luminusos/payload.oci/index.json && \
+    jq -e '.manifests[0].annotations."org.opencontainers.image.ref.name" == "latest"' \
+      /usr/lib/luminusos/payload.oci/index.json && \
     test -f /etc/sirius/distro.toml && \
     test -f /etc/sirius/sirius.toml && \
     # Exactly the three LuminusOS repart definitions: the RPM's generic
