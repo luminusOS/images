@@ -1,17 +1,14 @@
 ARG fedora_version=44
 ARG workstation_image=localhost/luminusos-workstation:latest
 
-# -- Context stage: shared build scripts -------------------------------------
 FROM scratch AS ctx-scripts
 
 COPY shared/scripts /scripts
 
-# -- Context stage: workstation static files --------------------------------
 FROM scratch AS ctx-files
 
 COPY editions/workstation/files /workstation/files
 
-# -- Workstation live ISO root using Sirius ---------------------------------
 FROM ${workstation_image} AS live
 
 ARG fedora_version=44
@@ -124,12 +121,10 @@ RUN --mount=type=bind,from=ctx-files,source=/workstation/files,target=/wfiles \
     install -m 0644 /wfiles/boot/efi/EFI/fedora/grub.cfg /boot/efi/EFI/fedora/grub.cfg && \
     install -m 0644 /boot/efi/EFI/fedora/grub.cfg /boot/efi/EFI/BOOT/grub.cfg
 
-# -- Installer payload as OCI layout ------------------------------------------
 # Generated into the build context by the caller:
 #   skopeo copy <payload-image> oci:.test/payload.oci:latest
 COPY .test/payload.oci /usr/lib/luminusos/payload.oci
 
-# -- Squashed final image ----------------------------------------------------
 # osbuild deploys the ISO live root without applying OCI whiteout semantics,
 # so the merged filesystem is copied into a single whiteout-free layer.
 FROM scratch

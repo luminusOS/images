@@ -1,11 +1,9 @@
 ARG base=quay.io/fedora/fedora-bootc:44
 
-# ── Context stage: shared build scripts ──────────────────────────────────
 FROM scratch AS ctx-scripts
 
 COPY shared/scripts /scripts
 
-# ── Core image (container-only, no desktop) ───────────────────────────────
 FROM ${base}
 
 ARG fedora_version=44

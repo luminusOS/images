@@ -22,13 +22,11 @@ expect() { # expect <description> <command...>
 tmp="$(mktemp -d)"
 trap 'rm -rf "${tmp}"' EXIT
 
-# ── shared script syntax ──────────────────────────────────────────────
 for script in "${ROOT}"/shared/scripts/*.sh "${ROOT}"/tools/*.sh \
   "${ROOT}"/.github/scripts/*.sh "${ROOT}"/editions/workstation/build.sh; do
   expect "bash -n $(basename "${script}")" bash -n "${script}"
 done
 
-# ── os-release-set.sh ─────────────────────────────────────────────────
 printf 'NAME="Fedora"\nVERSION_ID=44\n' >"${tmp}/os-release"
 OS_RELEASE_FILE="${tmp}/os-release" \
   bash "${ROOT}/shared/scripts/os-release-set.sh" \
@@ -40,7 +38,6 @@ expect "os-release-set appends missing keys" \
 expect "os-release-set leaves other keys alone" \
   grep -qx 'VERSION_ID=44' "${tmp}/os-release"
 
-# ── aurora-session-modes.sh ───────────────────────────────────────────
 echo '{"uuid":"x","session-modes":["user"]}' >"${tmp}/metadata.json"
 bash "${ROOT}/shared/scripts/aurora-session-modes.sh" \
   "${tmp}/metadata.json" live-installer initial-setup
@@ -54,7 +51,6 @@ bash "${ROOT}/shared/scripts/aurora-session-modes.sh" \
 expect "aurora-session-modes defaults missing list to user" \
   jq -e '."session-modes" == ["initial-setup","user"]' "${tmp}/metadata2.json"
 
-# ── TOML configs parse ────────────────────────────────────────────────
 for toml in "${WORKSTATION_FILES}/etc/sirius/distro.toml" \
   "${WORKSTATION_FILES}/etc/sirius/sirius.toml" \
   "${ROOT}/shared/bootc-image-builder.toml.example"; do
@@ -62,19 +58,16 @@ for toml in "${WORKSTATION_FILES}/etc/sirius/distro.toml" \
     python3 -c 'import sys, tomllib; tomllib.load(open(sys.argv[1], "rb"))' "${toml}"
 done
 
-# ── distro.toml still carries the build-time placeholder ──────────────
 expect "distro.toml has @WORKSTATION_TARGET_IMAGE@ placeholder" \
   grep -q '@WORKSTATION_TARGET_IMAGE@' "${WORKSTATION_FILES}/etc/sirius/distro.toml"
 expect "distro.toml points bootc install at the embedded OCI payload" \
   grep -q 'image = "oci:/usr/lib/luminusos/payload.oci:latest"' "${WORKSTATION_FILES}/etc/sirius/distro.toml"
 
-# ── JSON files are valid ──────────────────────────────────────────────
 while IFS= read -r json; do
   expect "JSON parses: ${json#"${ROOT}"/}" \
     python3 -c 'import sys, json; json.load(open(sys.argv[1]))' "${json}"
 done < <(find "${WORKSTATION_FILES}" -name '*.json')
 
-# ── ini-style files parse (systemd units, repart, desktop, gdm) ───────
 while IFS= read -r ini; do
   expect "INI parses: ${ini#"${ROOT}"/}" \
     python3 -c '
@@ -91,14 +84,12 @@ done < <(find "${WORKSTATION_FILES}" \
   -name '*.desktop' -o \
   -path '*/gdm/custom.conf')
 
-# ── repart layout invariants ──────────────────────────────────────────
 repart_dir="${WORKSTATION_FILES}/usr/share/sirius/repart.d"
 expect "repart.d ships exactly 3 definitions" \
   test "$(find "${repart_dir}" -name '*.conf' | wc -l)" = 3
 expect "repart root is btrfs" grep -q 'Format=btrfs' "${repart_dir}/10-root.conf"
 expect "repart esp exists" test -f "${repart_dir}/30-esp.conf"
 
-# ── Justfile parses and lists recipes ─────────────────────────────────
 if command -v just >/dev/null 2>&1; then
   expect "Justfile parses" just --justfile "${ROOT}/Justfile" --list
 else
