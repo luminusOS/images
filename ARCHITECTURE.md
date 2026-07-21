@@ -262,7 +262,7 @@ Aurora Shell is enabled through GNOME Shell's native extension paths: live and I
 
 `editions/workstation/Containerfile.installer` builds the ISO live root from the workstation image. It adds live-only packages, installs Sirius from the prebuilt RPM published on the [sirius GitHub releases](https://github.com/luminusOS/sirius/releases), applies the live GNOME session, and installs the LuminusOS Sirius configuration. The image-builder ISO rootfs is sized large enough to copy the live root with Flatpaks and then carry the embedded workstation install payload.
 
-The final stage squashes the live root into a single layer (`FROM scratch` + `COPY --from=live / /`). image-builder/osbuild deploys the ISO live root without applying OCI whiteout semantics, so layered input leaks `.wh.*` files from lower layers into the live rootfs as real, empty files — in the incident that motivated this, an empty `/usr/share/dbus-1/system.d/.wh.org.projectatomic.rpmostree1.conf` (from an rpm-ostree removal) broke dbus-broker and left the live boot on a black screen before GDM. The final verification step fails the build if any `.wh.*` file survives.
+The final stage squashes the live root into a single layer (`FROM scratch` + `COPY --from=live / /`). image-builder/osbuild deploys the ISO live root without applying OCI whiteout semantics, so layered input leaks `.wh.*` files from lower layers into the live rootfs as real, empty files. In the incident that motivated this, an empty `/usr/share/dbus-1/system.d/.wh.org.projectatomic.rpmostree1.conf` (from an rpm-ostree removal) broke dbus-broker and left the live boot on a black screen before GDM. The final verification step fails the build if any `.wh.*` file survives.
 
 The Sirius RPM ships the binary, the polkit action, the desktop file, and generic default configs. The installer stage then replaces the generic configs with the LuminusOS ones: `/etc/sirius/distro.toml` and `/etc/sirius/sirius.toml` (templated with the payload image references), the LuminusOS repart templates under `/usr/share/sirius/repart.d/`, branding, and the live polkit rule.
 
@@ -397,7 +397,7 @@ flowchart TD
 
 The Sirius ISO install storage model must remain aligned across:
 
-- `/usr/lib/image-builder/bootc/disk.yaml` in the workstation image (btrfs root), which image-builder uses for both the ISO install path and direct qcow2 artifacts — it overrides `--bootc-default-fs`.
+- `/usr/lib/image-builder/bootc/disk.yaml` in the workstation image (btrfs root), which image-builder uses for both the ISO install path and direct qcow2 artifacts; it overrides `--bootc-default-fs`.
 - Sirius repart templates under `/usr/share/sirius/repart.d/`.
 
 Expected layout:
@@ -442,7 +442,7 @@ flowchart TD
 
 ### Live-Only Isolation
 
-The workstation payload never contains live-only installer artifacts: Sirius, its configs (`/etc/sirius/`), the live polkit rule, the `live-installer` session files, and the `liveuser` autologin setup are added only in `Containerfile.installer`, on top of the payload image. The bootc install path deploys the clean payload image, so no exclusion list is needed — live files simply never existed in the payload.
+The workstation payload never contains live-only installer artifacts: Sirius, its configs (`/etc/sirius/`), the live polkit rule, the `live-installer` session files, and the `liveuser` autologin setup are added only in `Containerfile.installer`, on top of the payload image. The bootc install path deploys the clean payload image, so no exclusion list is needed: live files simply never existed in the payload.
 
 Sirius itself belongs to the installer image, not to the installed workstation payload.
 
@@ -473,7 +473,7 @@ flowchart TD
 
 `bootc-generic-iso` can embed the installer payload as a `containers-storage` blob. `bootc install` can't stream that directly: containers/storage keeps layers already unpacked on disk, so install has to re-diff and re-tar each layer into a large `/var/tmp` staging area (~2.5 GiB compressed) before it can deploy them. On a live ISO, `/var/tmp` has nowhere to go but RAM, which is why installs used to need a dedicated tmpfs and a ~5 GiB RAM gate.
 
-Instead, the payload is embedded in the `-iso` container image itself as an **OCI layout** at `/usr/lib/luminusos/payload.oci`. The build exports it into the build context beforehand — `skopeo copy <payload-image> oci:.test/payload.oci:latest` (Justfile locally, a workflow step in CI) — and `Containerfile.installer` copies it into the live root. OCI layout blobs are already ready-made layer tarballs, so `bootc install --source-imgref oci:/usr/lib/luminusos/payload.oci:latest` (set in `distro.toml`) streams them straight to the target disk — no re-tar, no large staging area, and no image-builder payload-embedding support required at all.
+Instead, the payload is embedded in the `-iso` container image itself as an **OCI layout** at `/usr/lib/luminusos/payload.oci`. The build exports it into the build context beforehand (`skopeo copy <payload-image> oci:.test/payload.oci:latest` in the Justfile locally, a workflow step in CI) and `Containerfile.installer` copies it into the live root. OCI layout blobs are already ready-made layer tarballs, so `bootc install --source-imgref oci:/usr/lib/luminusos/payload.oci:latest` (set in `distro.toml`) streams them straight to the target disk, with no re-tar, no large staging area, and no image-builder payload-embedding support required at all.
 
 The `:latest` suffix is load-bearing: `skopeo copy oci:...` strips it from the on-disk directory name and records it as the `org.opencontainers.image.ref.name` annotation in `index.json`, which is what makes the `:latest` reference resolvable. The container build fails its final verification if the annotation is missing.
 
