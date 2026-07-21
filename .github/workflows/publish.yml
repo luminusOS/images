@@ -325,7 +325,7 @@ jobs:
             echo
             echo "## Workstation"
             echo
-            echo 'Container: `ghcr.io/${{ needs.version.outputs.image_namespace }}/luminusos-workstation:${{ needs.version.outputs.version_tag }}`'
+            printf 'Container: `%s`\n' "ghcr.io/${{ needs.version.outputs.image_namespace }}/luminusos-workstation:${{ needs.version.outputs.version_tag }}"
             echo
             echo "### Downloads (mirrored worldwide by SourceForge)"
             echo
@@ -336,7 +336,7 @@ jobs:
               sha="$(sha256sum "$f" | cut -d' ' -f1)"
               echo "| [${f}](https://sourceforge.net/projects/luminusos/files/${{ needs.version.outputs.version_tag }}/${f}/download) | ${size} | \`${sha}\` |"
             done
-          } > ../notes.md
+          } > notes.md
 
       # Full ISO/qcow2 go to SourceForge FRS (mirrored worldwide, no GitHub
       # 2 GiB asset cap); the GitHub release carries notes only.
