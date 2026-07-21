@@ -2,27 +2,22 @@ ARG core_image=localhost/luminusos:latest
 ARG fedora_version=44
 ARG aurora_shell_version=v50.3
 
-# ── Context stage: shared build scripts ──────────────────────────────────
 FROM scratch AS ctx-scripts
 
 COPY shared/scripts /scripts
 
-# ── Context stage: workstation script (stable — changes rarely) ───────────
 FROM scratch AS ctx-workstation-script
 
 COPY editions/workstation/build.sh /workstation/build.sh
 
-# ── Context stage: shared Flatpak refs ────────────────────────────────────
 FROM scratch AS ctx-flatpaks
 
 COPY shared/flatpaks /flatpaks
 
-# ── Context stage: static files (volatile — changes often) ────────────────
 FROM scratch AS ctx-files
 
 COPY editions/workstation/files /workstation/files
 
-# ── Aurora-shell release artifact ─────────────────────────────────────────
 FROM quay.io/fedora/fedora-bootc:${fedora_version} AS aurora-extension
 
 ARG fedora_version=44
@@ -47,7 +42,6 @@ RUN --mount=type=cache,target=/var/cache/dnf \
     jq -e --arg uuid "${aurora_shell_uuid}" '.uuid == $uuid' \
       "/out/${aurora_shell_uuid}/metadata.json"
 
-# ── Workstation image (installed desktop payload) ────────────────────────
 FROM ${core_image}
 
 ARG fedora_version=44
