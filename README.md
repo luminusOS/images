@@ -56,7 +56,7 @@ bootc switch ghcr.io/luminusos/luminusos-workstation:44
 | `build-containers` | Push/PR on `main` and `f*` | Builds `core` and `workstation` containers → GHCR |
 | `publish` | Manual | Builds containers, packages ISO + qcow2, boot smoke test, GitHub Release |
 
-Release assets larger than 2 GiB are split into `.partNN` files (GitHub per-asset limit); reassemble with `cat FILE.part* > FILE` and verify against `SHA256SUMS`.
+ISO and qcow2 downloads are hosted on [SourceForge](https://sourceforge.net/projects/luminusos/files/) (mirrored worldwide); GitHub Releases carry the notes and `SHA256SUMS`.
 
 ## Documentation
 
