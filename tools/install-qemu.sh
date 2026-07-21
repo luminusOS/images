@@ -25,7 +25,6 @@ if [ ! -f "$BIB_CONFIG" ]; then
   exit 1
 fi
 
-# load .env if it exists
 if [ -f "$PROJECT_DIR/.env" ]; then
   # shellcheck disable=SC1091
   source "$PROJECT_DIR/.env"
@@ -46,8 +45,6 @@ fi
 
 echo "==> Installing $IMAGE_REF into disk via bootc-image-builder..."
 
-# Use bootc-image-builder (via podman) to write the image to a qcow2 disk.
-# This handles partitioning, bootloader setup, and writing the ostree commit.
 # --rootfs btrfs: required to specify the filesystem type for partitions.
 # The output disk lands at $TEST_DIR/qcow2/disk.qcow2
 sudo podman run --rm -it --privileged \
