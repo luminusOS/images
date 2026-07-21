@@ -10,7 +10,6 @@ cat >/usr/share/gnome-shell/search-providers/org.gnome.Software-search-provider.
 DefaultDisabled=true
 EOF
 
-# Compile GNOME schema overrides
 glib-compile-schemas /usr/share/glib-2.0/schemas/
 if command -v dconf >/dev/null 2>&1; then
   dconf update
@@ -24,7 +23,6 @@ if [ -f /usr/share/gnome-shell/modes/initial-setup.json ]; then
   rm -f "${tmp}"
 fi
 
-# Ensure graphical boot and GDM as display manager
 ln -sf /usr/lib/systemd/system/graphical.target /etc/systemd/system/default.target
 ln -sf /usr/lib/systemd/system/gdm.service /etc/systemd/system/display-manager.service
 

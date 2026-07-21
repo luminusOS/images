@@ -29,7 +29,6 @@ keep_sudo_alive() {
 '''
 
 
-# QEMU settings
 qemu_disk_size := env("QEMU_INSTALL_DISK_SIZE", "64G")
 
 

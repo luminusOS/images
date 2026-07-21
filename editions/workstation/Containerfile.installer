@@ -95,7 +95,6 @@ RUN --mount=type=bind,from=ctx-files,source=/workstation/files,target=/wfiles \
     install -Dm0644 /wfiles/etc/gdm/custom.conf /etc/gdm/custom.conf && \
     install -Dm0644 /wfiles/var/lib/AccountsService/users/liveuser /var/lib/AccountsService/users/liveuser
 
-# Rebuild initramfs for live ISO boot.
 RUN --mount=type=bind,from=ctx-scripts,source=/scripts,target=/scripts \
     bash /scripts/rebuild-initramfs.sh --add "plymouth dmsquash-live"
 

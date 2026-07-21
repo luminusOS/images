@@ -9,14 +9,10 @@ set -x
 # ./qemu.sh [disk|iso]
 # If no argument is provided, disk is used by default
 
-# Variables for test environment
-
-# load .env if it exists
 if [ -f .env ]; then
   source .env
 fi
 
-# default values for QEMU
 # NOTE: the installer payload is embedded as an OCI layout, so `bootc
 # install` streams layer blobs straight to disk instead of staging a
 # re-tarred copy in RAM (see distro.toml). 4 GiB comfortably covers the
@@ -45,14 +41,11 @@ if [ "$QEMU_DISPLAY" = "auto" ]; then
 fi
 
 # Install disk for ISO boots (set QEMU_INSTALL_DISK_SIZE like "64G")
-# Defaults are set after TEST_HOME is known
 : ${QEMU_INSTALL_DISK_SIZE:="64G"}
 : ${QEMU_INSTALL_DISK_PATH:=""}
 : ${QEMU_OVMF_CODE:="/usr/share/OVMF/OVMF_CODE.fd"}
 : ${QEMU_OVMF_VARS_TEMPLATE:="/usr/share/OVMF/OVMF_VARS.fd"}
 : ${QEMU_OVMF_VARS:="$TEST_HOME/OVMF_VARS.fd"}
-
-# Get testing mode from first argument
 
 if [ -z "${1:-}" ]; then
   SCRIPT_MODE="disk"
@@ -160,7 +153,6 @@ else
   exit 1
 fi
 
-# if QEMU_BOOT = "uefi" then add UEFI firmware
 if [ "$QEMU_BOOT" = "uefi" ]; then
   if [ "$QEMU_RESET_NVRAM" != "0" ]; then
     rm -f "$QEMU_OVMF_VARS"
@@ -172,14 +164,10 @@ if [ "$QEMU_BOOT" = "uefi" ]; then
   QEMU_ARGS+=" -drive if=pflash,format=raw,file=$QEMU_OVMF_VARS"
 fi
 
-# Run QEMU
-
-# Now that TEST_HOME exists, set a default path for the optional install disk
 if [ -z "$QEMU_INSTALL_DISK_PATH" ]; then
   QEMU_INSTALL_DISK_PATH="$TEST_HOME/install-disk.qcow2"
 fi
 
-# If requested and we are booting an ISO, create/attach an empty install disk
 function ensure_install_disk {
   if [ -n "$QEMU_INSTALL_DISK_SIZE" ]; then
     if [ "$QEMU_RESET_DISK" != "0" ]; then
