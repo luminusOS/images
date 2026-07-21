@@ -47,19 +47,20 @@ build edition="workstation":
         find editions/core -type f -print0 | sort -z | xargs -0 sha256sum
       } | sha256sum | awk '{print $1}'
     }
+    build_image() { # build_image <tag> <containerfile> [extra buildah bud args...]
+      local image_tag="$1" file="$2"
+      shift 2
+      sudo buildah bud --layers "$@" --tag "$image_tag" --file "$file" .
+    }
     keep_sudo_alive
     case "{{ edition }}" in
       core)
-        sudo buildah bud \
-          --layers \
+        build_image {{ core_image }} editions/core/Containerfile \
           --build-arg base={{ base }} \
           --build-arg fedora_version={{ fedora_ver }} \
           --build-arg distro_version={{ tag }} \
           --build-arg distro_name="{{ name }}" \
-          --build-arg distro_pretty_name="{{ pretty }}" \
-          --tag {{ core_image }} \
-          --file editions/core/Containerfile \
-          .
+          --build-arg distro_pretty_name="{{ pretty }}"
         ./tools/squash-image.sh {{ core_image }}
         mkdir -p .test
         printf '%s\n' "{{ tag }}" > .test/last-core-tag
@@ -78,8 +79,7 @@ build edition="workstation":
         else
           echo "Using existing core image: {{ core_image }}"
         fi
-        sudo buildah bud \
-          --layers \
+        build_image {{ workstation_image }} editions/workstation/Containerfile \
           --cap-add sys_admin \
           --security-opt label=disable \
           --build-arg core_image={{ core_image }} \
@@ -89,10 +89,7 @@ build edition="workstation":
           --build-arg edition_id="workstation" \
           --build-arg aurora_shell_version={{ aurora_shell_version }} \
           --build-arg aurora_shell_sha256={{ aurora_shell_sha256 }} \
-          --build-arg skip_flatpaks={{ skip_flatpaks }} \
-          --tag {{ workstation_image }} \
-          --file editions/workstation/Containerfile \
-          .
+          --build-arg skip_flatpaks={{ skip_flatpaks }}
         ./tools/squash-image.sh {{ workstation_image }}
         mkdir -p .test
         printf '%s\n' "{{ tag }}" > .test/last-workstation-tag
@@ -108,16 +105,12 @@ build edition="workstation":
         sudo rm -rf .test/payload.oci
         sudo skopeo copy "containers-storage:{{ workstation_image }}" "oci:.test/payload.oci:latest"
         sudo chown -R "$(id -u):$(id -g)" .test/payload.oci
-        sudo buildah bud \
-          --layers \
+        build_image {{ workstation_iso_image }} editions/workstation/Containerfile.installer \
           --build-arg fedora_version={{ fedora_ver }} \
           --build-arg sirius_version={{ sirius_version }} \
           --build-arg workstation_image={{ workstation_image }} \
           --build-arg workstation_target_image={{ workstation_target_image }} \
-          --build-arg image_version={{ tag }} \
-          --tag {{ workstation_iso_image }} \
-          --file editions/workstation/Containerfile.installer \
-          .
+          --build-arg image_version={{ tag }}
         echo "No post-build squash needed for {{ workstation_iso_image }}: Containerfile.installer squashes itself into a single layer"
         ;;
       *)
