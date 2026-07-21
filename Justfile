@@ -161,67 +161,29 @@ package edition="workstation" format="all":
     }
 
     check_qcow2_disk_layout() {
-      local image="$1"
-      local ctr=""
-      local rootfs=""
+      local image="$1" ctr rootfs boot_fstype
       local disk_yaml="/usr/lib/image-builder/bootc/disk.yaml"
-      local status=0
 
       [[ "$image" == localhost/* ]] || return 0
 
       ctr="$(sudo buildah from --pull=never "${image}")"
       rootfs="$(sudo buildah mount "${ctr}")"
 
-      if [ ! -f "${rootfs}${disk_yaml}" ]; then
-        echo "Missing ${disk_yaml} inside ${image}" >&2
-        status=1
-      else
-        set +e
-        sudo awk '
-        BEGIN {
-          code = 12
-        }
-        /payload:/ {
-          in_payload = 1
-          fs = ""
-        }
-        in_payload && /^[[:space:]]+type:/ {
-          fs = $2
-          gsub(/"/, "", fs)
-        }
-        in_payload && /^[[:space:]]+mountpoint:[[:space:]]+"\/boot"$/ {
-          if (fs == "ext4") {
-            code = 0
-            exit 0
-          }
-          if (fs == "btrfs") {
-            code = 10
-            exit 10
-          }
-          code = 11
-          exit 11
-        }
-        END {
-          exit code
-        }
-      ' "${rootfs}${disk_yaml}"
-        status=$?
-        set -e
-      fi
-
-      if [ "${status}" != "0" ]; then
-        if [ "${status}" = "10" ]; then
-          echo "${image} still has /boot as btrfs in ${disk_yaml}." >&2
-          echo "Rebuild the workstation image before packaging qcow2:" >&2
-          echo "  LOS_TAG=${package_tag} just build workstation" >&2
-        else
-          echo "Unable to validate /boot ext4 in ${image}:${disk_yaml}" >&2
-        fi
-      fi
+      # /boot must stay ext4: image-builder qcow2 generation rejects btrfs there.
+      boot_fstype="$(sudo awk '
+        /^[[:space:]]+type: "(ext4|btrfs)"$/ { t = $2; gsub(/"/, "", t) }
+        /mountpoint:[[:space:]]+"\/boot"/    { print t; exit }
+      ' "${rootfs}${disk_yaml}" 2>/dev/null || true)"
 
       sudo buildah umount "${ctr}" >/dev/null 2>&1 || true
       sudo buildah rm "${ctr}" >/dev/null 2>&1 || true
-      return "${status}"
+
+      if [ "${boot_fstype}" != "ext4" ]; then
+        echo "${image} does not have /boot as ext4 in ${disk_yaml} (found: '${boot_fstype:-missing}')." >&2
+        echo "Rebuild the workstation image before packaging qcow2:" >&2
+        echo "  LOS_TAG=${package_tag} just build workstation" >&2
+        return 1
+      fi
     }
 
     case "{{ format }}" in
