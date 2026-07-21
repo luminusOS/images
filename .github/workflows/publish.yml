@@ -315,21 +315,28 @@ jobs:
           merge-multiple: true
           pattern: workstation-*
 
-      # GitHub caps release assets at 2 GiB; split anything larger and let
-      # users reassemble with `cat FILE.part* > FILE`.
-      - name: Split oversized artifacts and checksum
+      - name: Checksum artifacts
         shell: bash
         run: |
           set -euo pipefail
           cd dist
-          for f in ./*; do
-            if [ "$(stat -c%s "$f")" -gt 2000000000 ]; then
-              split -b 1900M -d "$f" "$f.part"
-              rm -f "$f"
-            fi
-          done
           sha256sum -- * > SHA256SUMS
           ls -lh
+
+      # Full ISO/qcow2 go to SourceForge FRS (mirrored worldwide, no GitHub
+      # 2 GiB asset cap); the GitHub release keeps notes + SHA256SUMS only.
+      - name: Upload artifacts to SourceForge
+        env:
+          SF_USER: ${{ secrets.SF_USER }}
+          SF_SSH_KEY: ${{ secrets.SF_SSH_KEY }}
+        run: |
+          set -euo pipefail
+          install -m 0700 -d ~/.ssh
+          install -m 0600 /dev/null ~/.ssh/id_sourceforge
+          printf '%s\n' "${SF_SSH_KEY}" > ~/.ssh/id_sourceforge
+          ssh-keyscan frs.sourceforge.net >> ~/.ssh/known_hosts 2>/dev/null
+          dest="${SF_USER}@frs.sourceforge.net:/home/frs/project/luminusos/${{ needs.version.outputs.version_tag }}/"
+          rsync -avP --rsh="ssh -i ~/.ssh/id_sourceforge" dist/ "${dest}"
 
       - name: Create GitHub release
         env:
@@ -343,11 +350,14 @@ jobs:
 
           Containers: ghcr.io/${{ needs.version.outputs.image_namespace }}/luminusos-workstation:${{ needs.version.outputs.version_tag }}
 
-          Files larger than 2 GiB are split into .partNN pieces;
-          reassemble with: `cat FILE.part* > FILE` and verify against SHA256SUMS.
+          Downloads (mirrored worldwide by SourceForge):
+          - [ISO](https://sourceforge.net/projects/luminusos/files/${{ needs.version.outputs.version_tag }}/luminusos-workstation-${{ needs.version.outputs.version_tag }}.iso/download)
+          - [qcow2](https://sourceforge.net/projects/luminusos/files/${{ needs.version.outputs.version_tag }}/luminusos-workstation-${{ needs.version.outputs.version_tag }}.qcow2/download)
+
+          Verify downloads against the attached SHA256SUMS.
           EOF
           gh release create "$tag" \
             --title "LuminusOS ${{ needs.version.outputs.version_tag }}" \
             --notes-file notes.md \
             --target "$GITHUB_SHA" \
-            dist/*
+            dist/SHA256SUMS
