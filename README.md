@@ -4,7 +4,7 @@
 
 # Luminus OS
 
-An immutable operating system built on [Fedora bootc](https://containers.github.io/bootc/) — atomic updates, OCI container delivery, and a GNOME workstation packaged as installable artifacts.
+An immutable operating system built on [Fedora bootc](https://containers.github.io/bootc/), with atomic updates, OCI container delivery, and a GNOME workstation packaged as installable artifacts.
 
 ## Editions
 
@@ -13,7 +13,7 @@ An immutable operating system built on [Fedora bootc](https://containers.github.
 | **core** | Minimal base for downstream Luminus images | `luminusos:<tag>` container image |
 | **workstation** | GNOME desktop for PCs and notebooks | Container image, installable ISO (Sirius), qcow2 |
 
-Planned editions (not active build targets yet): **mobile**, **cast**, **play**, **education** — planning notes live under `editions/`.
+Planned editions (not active build targets yet): **mobile**, **cast**, **play**, **education**. Planning notes live under `editions/`.
 
 ## Quick Start
 
@@ -60,5 +60,5 @@ ISO and qcow2 downloads are hosted on [SourceForge](https://sourceforge.net/proj
 
 ## Documentation
 
-- [ARCHITECTURE.md](ARCHITECTURE.md) — image layering, installer flow, storage layout, CI internals
-- [CONTRIBUTING.md](CONTRIBUTING.md) — local builds, tests, packaging, contribution policies
+- [ARCHITECTURE.md](ARCHITECTURE.md): image layering, installer flow, storage layout, CI internals
+- [CONTRIBUTING.md](CONTRIBUTING.md): local builds, tests, packaging, contribution policies
