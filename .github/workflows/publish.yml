@@ -315,16 +315,31 @@ jobs:
           merge-multiple: true
           pattern: workstation-*
 
-      - name: Checksum artifacts
+      - name: Build release notes with checksum table
         shell: bash
         run: |
           set -euo pipefail
           cd dist
-          sha256sum -- * > SHA256SUMS
-          ls -lh
+          {
+            echo "LuminusOS ${{ needs.version.outputs.version_tag }}"
+            echo
+            echo "## Workstation"
+            echo
+            echo 'Container: `ghcr.io/${{ needs.version.outputs.image_namespace }}/luminusos-workstation:${{ needs.version.outputs.version_tag }}`'
+            echo
+            echo "### Downloads (mirrored worldwide by SourceForge)"
+            echo
+            echo "| File | Size | SHA256 |"
+            echo "| --- | --- | --- |"
+            for f in luminusos-workstation-*; do
+              size="$(du -h "$f" | cut -f1)"
+              sha="$(sha256sum "$f" | cut -d' ' -f1)"
+              echo "| [${f}](https://sourceforge.net/projects/luminusos/files/${{ needs.version.outputs.version_tag }}/${f}/download) | ${size} | \`${sha}\` |"
+            done
+          } > ../notes.md
 
       # Full ISO/qcow2 go to SourceForge FRS (mirrored worldwide, no GitHub
-      # 2 GiB asset cap); the GitHub release keeps notes + SHA256SUMS only.
+      # 2 GiB asset cap); the GitHub release carries notes only.
       - name: Upload artifacts to SourceForge
         env:
           SF_USER: ${{ secrets.SF_USER }}
@@ -344,20 +359,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          tag="${{ needs.version.outputs.release_tag }}"
-          cat > notes.md << 'EOF'
-          LuminusOS Workstation ${{ needs.version.outputs.version_tag }}
-
-          Containers: ghcr.io/${{ needs.version.outputs.image_namespace }}/luminusos-workstation:${{ needs.version.outputs.version_tag }}
-
-          Downloads (mirrored worldwide by SourceForge):
-          - [ISO](https://sourceforge.net/projects/luminusos/files/${{ needs.version.outputs.version_tag }}/luminusos-workstation-${{ needs.version.outputs.version_tag }}.iso/download)
-          - [qcow2](https://sourceforge.net/projects/luminusos/files/${{ needs.version.outputs.version_tag }}/luminusos-workstation-${{ needs.version.outputs.version_tag }}.qcow2/download)
-
-          Verify downloads against the attached SHA256SUMS.
-          EOF
-          gh release create "$tag" \
+          gh release create "${{ needs.version.outputs.release_tag }}" \
             --title "LuminusOS ${{ needs.version.outputs.version_tag }}" \
-            --notes-file notes.md \
-            --target "$GITHUB_SHA" \
-            dist/SHA256SUMS
+            --notes-file dist/notes.md \
+            --target "$GITHUB_SHA"
