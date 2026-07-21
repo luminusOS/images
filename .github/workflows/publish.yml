@@ -325,7 +325,7 @@ jobs:
             echo
             echo "## Workstation"
             echo
-            printf 'Container: `%s`\n' "ghcr.io/${{ needs.version.outputs.image_namespace }}/luminusos-workstation:${{ needs.version.outputs.version_tag }}"
+            printf "Container: \`%s\`\n" "ghcr.io/${{ needs.version.outputs.image_namespace }}/luminusos-workstation:${{ needs.version.outputs.version_tag }}"
             echo
             echo "### Downloads (mirrored worldwide by SourceForge)"
             echo
