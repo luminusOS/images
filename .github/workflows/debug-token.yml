@@ -12,18 +12,36 @@ jobs:
     steps:
       - uses: actions/checkout@v7
 
-      - name: Exact replica of the failing command
+      - name: Isolation matrix
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           mkdir -p dist
           printf '# test notes\n' > dist/notes.md
+
+          cleanup() {
+            gh release delete v44.20260721 --cleanup-tag --yes 2>/dev/null || true
+            gh api repos/${{ github.repository }}/git/refs/tags/v44.20260721 -X DELETE 2>/dev/null || true
+          }
+
+          echo "== T1: raw api, target=69312d6 =="
+          gh api repos/${{ github.repository }}/releases -X POST \
+            -f tag_name=v44.20260721 -f name=t1 \
+            -f target_commitish=69312d6cd77090eb286d7368376426ca8d76f062 \
+            > /dev/null && echo "T1_OK" || echo "T1_FAIL"
+          cleanup
+
+          echo "== T2: raw api, target=github.sha, notes body =="
+          gh api repos/${{ github.repository }}/releases -X POST \
+            -f tag_name=v44.20260721 -f name=t2 \
+            -f target_commitish="${{ github.sha }}" \
+            -F body=@dist/notes.md \
+            > /dev/null && echo "T2_OK" || echo "T2_FAIL"
+          cleanup
+
+          echo "== T3: gh release create, no --target =="
           gh release create "v44.20260721" \
             --title "LuminusOS 44.20260721" \
             --notes-file dist/notes.md \
-            --target "69312d6cd77090eb286d7368376426ca8d76f062" \
-            && echo "REPLICA_OK" || echo "REPLICA_FAIL"
-
-          echo "== cleanup =="
-          gh release delete v44.20260721 --cleanup-tag --yes || true
-          gh api repos/${{ github.repository }}/git/refs/tags/v44.20260721 -X DELETE || true
+            && echo "T3_OK" || echo "T3_FAIL"
+          cleanup
