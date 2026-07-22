@@ -1,0 +1,28 @@
+name: Debug token permissions
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  probe:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Probe GITHUB_TOKEN capabilities
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          echo "== create git ref (tag) =="
+          gh api repos/${{ github.repository }}/git/refs -X POST \
+            -f ref=refs/tags/v0.0.0-token-probe \
+            -f sha="${{ github.sha }}" && echo "REF_OK" || echo "REF_FAIL"
+
+          echo "== create release (tag exists) =="
+          gh api repos/${{ github.repository }}/releases -X POST \
+            -f tag_name=v0.0.0-token-probe -f name=token-probe && echo "RELEASE_OK" || echo "RELEASE_FAIL"
+
+          echo "== cleanup =="
+          gh release delete v0.0.0-token-probe --cleanup-tag --yes || true
+          gh api repos/${{ github.repository }}/git/refs/tags/v0.0.0-token-probe -X DELETE || true
