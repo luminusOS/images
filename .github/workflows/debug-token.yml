@@ -10,6 +10,8 @@ jobs:
   probe:
     runs-on: ubuntu-latest
     steps:
+      - uses: actions/checkout@v7
+
       - name: Exact replica of the failing command
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
