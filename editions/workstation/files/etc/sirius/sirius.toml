@@ -9,3 +9,8 @@ warn = ["secure_boot", "network", "virt"]
 # re-tarred copy in RAM. The gate only needs to cover the live GNOME
 # session itself.
 min_ram_gib = 2
+
+# The live session ships Ptyxis; Ctrl+Shift+P opens it from the wizard.
+[terminal]
+command = "ptyxis"
+show_button = true

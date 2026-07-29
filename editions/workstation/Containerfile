@@ -14,10 +14,6 @@ FROM scratch AS ctx-flatpaks
 
 COPY shared/flatpaks /flatpaks
 
-FROM scratch AS ctx-files
-
-COPY editions/workstation/files /workstation/files
-
 FROM quay.io/fedora/fedora-bootc:${fedora_version} AS aurora-extension
 
 ARG fedora_version=44
@@ -75,6 +71,7 @@ RUN --mount=type=cache,target=/var/cache/dnf \
       bootc \
       toolbox \
       flatpak \
+      glibc-all-langpacks \
       mesa-dri-drivers \
       mesa-libGL \
       mesa-libEGL \
@@ -125,6 +122,17 @@ RUN --mount=type=cache,target=/var/cache/dnf \
       gnome-software && \
     dnf clean all
 
+# Static workstation files are copied declaratively from files/. Keep RUN for
+# commands that transform the image, not for materializing repository files.
+COPY editions/workstation/files/etc/environment.d/electron-wayland.conf /etc/environment.d/electron-wayland.conf
+COPY editions/workstation/files/etc/gdm/workstation.conf /etc/gdm/custom.conf
+COPY editions/workstation/files/etc/gnome-initial-setup/vendor.conf /etc/gnome-initial-setup/vendor.conf
+COPY editions/workstation/files/etc/hostname /etc/hostname
+COPY editions/workstation/files/usr/lib/bootc/kargs.d/10-luminusos-splash.toml /usr/lib/bootc/kargs.d/10-luminusos-splash.toml
+COPY editions/workstation/files/usr/lib/image-builder/bootc/disk.yaml /usr/lib/image-builder/bootc/disk.yaml
+COPY editions/workstation/files/usr/share/glib-2.0/schemas/99-install-mode.gschema.override /usr/share/glib-2.0/schemas/99-install-mode.gschema.override
+COPY editions/workstation/files/usr/share/gnome-shell/search-providers/org.gnome.Software-search-provider.ini /usr/share/gnome-shell/search-providers/org.gnome.Software-search-provider.ini
+
 # Flatpaks (invalidated only by shared/flatpaks or skip flag)
 RUN --mount=type=bind,from=ctx-flatpaks,source=/flatpaks,target=/flatpaks,ro \
     --mount=type=cache,target=/var/cache/dnf \
@@ -140,15 +148,8 @@ RUN --mount=type=bind,from=ctx-flatpaks,source=/flatpaks,target=/flatpaks,ro \
       xargs flatpak install -y --noninteractive --no-related < /flatpaks; \
     fi
 
-# Static files + installed workstation configuration (invalidated only by files/ or build.sh changes)
+# Installed workstation configuration (invalidated only by build.sh changes)
 RUN --mount=type=bind,from=ctx-workstation-script,source=/,target=/ctx \
-    --mount=type=bind,from=ctx-files,source=/workstation/files,target=/wfiles \
-    install -Dm0644 /wfiles/etc/environment.d/electron-wayland.conf /etc/environment.d/electron-wayland.conf && \
-    cat /wfiles/etc/hostname > /etc/hostname && \
-    chmod 0644 /etc/hostname && \
-    install -Dm0644 /wfiles/usr/lib/bootc/kargs.d/10-luminusos-splash.toml /usr/lib/bootc/kargs.d/10-luminusos-splash.toml && \
-    install -Dm0644 /wfiles/usr/lib/image-builder/bootc/disk.yaml /usr/lib/image-builder/bootc/disk.yaml && \
-    install -Dm0644 /wfiles/usr/share/glib-2.0/schemas/99-install-mode.gschema.override /usr/share/glib-2.0/schemas/99-install-mode.gschema.override && \
     env --chdir=/ctx/workstation ./build.sh
 
 # Dynamic branding stays late so version-only changes reuse package layers.
@@ -176,4 +177,11 @@ RUN dnf clean all && \
     rm -rf /var/cache/dnf /var/cache/libdnf5 /tmp/* /var/log/* /var/tmp/*
 
 RUN command -v bootc && \
+    locale -a | grep -qx 'pt_BR.utf8' && \
+    test -f /usr/share/locale/pt_BR/LC_MESSAGES/gnome-initial-setup.mo && \
+    test -f /etc/gnome-initial-setup/vendor.conf && \
+    grep -Eq '^skip=software$' /etc/gnome-initial-setup/vendor.conf && \
+    grep -Eq '^existing_user_only=language$' /etc/gnome-initial-setup/vendor.conf && \
+    ! grep -Eiq '^[[:space:]]*(skip|existing_user_only)[[:space:]]*=.*keyboard' \
+      /etc/gnome-initial-setup/vendor.conf && \
     bootc container lint --no-truncate

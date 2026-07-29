@@ -62,6 +62,33 @@ expect "distro.toml has @WORKSTATION_TARGET_IMAGE@ placeholder" \
   grep -q '@WORKSTATION_TARGET_IMAGE@' "${WORKSTATION_FILES}/etc/sirius/distro.toml"
 expect "distro.toml points bootc install at the embedded OCI payload" \
   grep -q 'image = "oci:/usr/lib/luminusos/payload.oci:latest"' "${WORKSTATION_FILES}/etc/sirius/distro.toml"
+expect "live installer launches Ptyxis" \
+  grep -qx 'command = "ptyxis"' "${WORKSTATION_FILES}/etc/sirius/sirius.toml"
+expect "live installer exposes the terminal fallback button" \
+  grep -qx 'show_button = true' "${WORKSTATION_FILES}/etc/sirius/sirius.toml"
+expect "GNOME Initial Setup delegates keyboard choice to the user" \
+  python3 -c '
+import configparser, sys
+p = configparser.ConfigParser(interpolation=None)
+p.read(sys.argv[1])
+items = lambda key: {v for v in p.get("pages", key, fallback="").split(";") if v}
+assert items("skip") == {"software"}
+assert items("existing_user_only") == {"language"}
+assert "keyboard" not in items("skip") | items("existing_user_only")
+' "${WORKSTATION_FILES}/etc/gnome-initial-setup/vendor.conf"
+expect "workstation enables GNOME Initial Setup from a static file" \
+  grep -qx 'InitialSetupEnable=true' "${WORKSTATION_FILES}/etc/gdm/workstation.conf"
+expect "workstation disables GNOME Software search from a static file" \
+  grep -qx 'DefaultDisabled=true' \
+  "${WORKSTATION_FILES}/usr/share/gnome-shell/search-providers/org.gnome.Software-search-provider.ini"
+expect "workstation build script does not write static heredoc files" \
+  sh -c '! grep -Eq "cat[[:space:]]*>" "$1"' sh \
+  "${ROOT}/editions/workstation/build.sh"
+expect "Containerfiles copy repository files declaratively" \
+  sh -c '! grep -Eq "/wfiles|install[^[:cntrl:]]*/wfiles|cat[^[:cntrl:]]*/wfiles" "$@"' \
+  sh \
+  "${ROOT}/editions/workstation/Containerfile" \
+  "${ROOT}/editions/workstation/Containerfile.installer"
 
 while IFS= read -r json; do
   expect "JSON parses: ${json#"${ROOT}"/}" \

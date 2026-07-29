@@ -5,15 +5,11 @@ FROM scratch AS ctx-scripts
 
 COPY shared/scripts /scripts
 
-FROM scratch AS ctx-files
-
-COPY editions/workstation/files /workstation/files
-
 FROM ${workstation_image} AS live
 
 ARG fedora_version=44
 ARG image_version=44
-ARG sirius_version=0.1.0
+ARG sirius_version=1.0.3
 ARG workstation_image=localhost/luminusos-workstation:latest
 ARG workstation_target_image=ghcr.io/luminusos/luminusos-workstation:44
 ARG aurora_shell_uuid=aurora-shell@luminusos.github.io
@@ -23,8 +19,10 @@ RUN --mount=type=cache,target=/var/cache/dnf \
     --mount=type=bind,from=ctx-scripts,source=/scripts,target=/scripts \
     bash /scripts/rpmdb-repair.sh && \
     dnf -y --releasever="${fedora_version}" install \
+      bubblewrap \
       dracut-live \
       fuse-overlayfs \
+      glibc-all-langpacks \
       gtk4 \
       isomd5sum \
       libadwaita \
@@ -41,43 +39,41 @@ RUN --mount=type=cache,target=/var/cache/dnf \
     # installed there; the LuminusOS templates are installed below.
     rm -f /usr/share/sirius/repart.d/*.conf
 
-RUN --mount=type=bind,from=ctx-files,source=/workstation/files,target=/wfiles \
-    install -Dm0644 /wfiles/etc/dconf/db/local.d/00-iso-live-mode /etc/dconf/db/local.d/00-iso-live-mode && \
-    install -Dm0644 /wfiles/etc/dconf/profile/user /etc/dconf/profile/user && \
-    install -Dm0644 /wfiles/usr/lib/image-builder/bootc/iso.yaml /usr/lib/image-builder/bootc/iso.yaml && \
-    install -Dm0644 /wfiles/usr/share/wayland-sessions/live-installer.desktop /usr/share/wayland-sessions/live-installer.desktop && \
-    install -Dm0644 /wfiles/usr/share/gnome-session/sessions/live-installer.session /usr/share/gnome-session/sessions/live-installer.session && \
-    install -Dm0644 /wfiles/usr/share/gnome-shell/modes/live-installer.json /usr/share/gnome-shell/modes/live-installer.json
+# Static installer files are copied declaratively from files/. The following
+# RUN blocks only perform transformations or runtime image configuration.
+COPY editions/workstation/files/etc/dconf/db/local.d/00-iso-live-mode /etc/dconf/db/local.d/00-iso-live-mode
+COPY editions/workstation/files/etc/dconf/profile/user /etc/dconf/profile/user
+COPY editions/workstation/files/etc/gdm/custom.conf /etc/gdm/custom.conf
+COPY editions/workstation/files/etc/sirius/distro.toml /etc/sirius/distro.toml
+COPY editions/workstation/files/etc/sirius/hostname /etc/hostname
+COPY editions/workstation/files/etc/sirius/sirius.toml /etc/sirius/sirius.toml
+COPY editions/workstation/files/usr/lib/image-builder/bootc/iso.yaml /usr/lib/image-builder/bootc/iso.yaml
+COPY editions/workstation/files/usr/lib/systemd/user/gnome-session@live-installer.target.d/live-installer.sirius.conf /usr/lib/systemd/user/gnome-session@live-installer.target.d/live-installer.session.conf
+COPY editions/workstation/files/usr/lib/systemd/user/luminusos-sirius.service /usr/lib/systemd/user/luminusos-sirius.service
+COPY editions/workstation/files/usr/share/gnome-session/sessions/live-installer.session /usr/share/gnome-session/sessions/live-installer.session
+COPY editions/workstation/files/usr/share/gnome-shell/modes/live-installer.json /usr/share/gnome-shell/modes/live-installer.json
+COPY editions/workstation/files/usr/share/icons/hicolor/scalable/actions/ /usr/share/icons/hicolor/scalable/actions/
+COPY editions/workstation/files/usr/share/polkit-1/rules.d/50-sirius-live.rules /usr/share/polkit-1/rules.d/50-sirius-live.rules
+COPY editions/workstation/files/usr/share/sirius/logo.png /usr/share/sirius/logo.png
+COPY editions/workstation/files/usr/share/sirius/welcome-banner.png /usr/share/sirius/welcome-banner.png
+COPY editions/workstation/files/usr/share/sirius/repart.d/ /usr/share/sirius/repart.d/
+COPY editions/workstation/files/usr/share/wayland-sessions/live-installer.desktop /usr/share/wayland-sessions/live-installer.desktop
+COPY editions/workstation/files/var/lib/AccountsService/users/liveuser /var/lib/AccountsService/users/liveuser
+COPY editions/workstation/files/boot/efi/EFI/fedora/grub.cfg /boot/efi/EFI/fedora/grub.cfg
+COPY editions/workstation/files/boot/efi/EFI/fedora/grub.cfg /boot/efi/EFI/BOOT/grub.cfg
 
-RUN --mount=type=bind,from=ctx-files,source=/workstation/files,target=/wfiles \
-    install -Dm0644 /wfiles/etc/sirius/distro.toml /etc/sirius/distro.toml && \
-    sed -i \
+RUN sed -i \
       -e "s|@WORKSTATION_TARGET_IMAGE@|${workstation_target_image}|g" \
       /etc/sirius/distro.toml && \
     grep -q 'image = "oci:/usr/lib/luminusos/payload.oci:latest"' /etc/sirius/distro.toml && \
     grep -q 'target_imgref = "'"${workstation_target_image}"'"' /etc/sirius/distro.toml && \
-    install -Dm0644 /wfiles/etc/sirius/sirius.toml /etc/sirius/sirius.toml && \
-    install -Dm0644 /wfiles/usr/share/polkit-1/rules.d/50-sirius-live.rules /usr/share/polkit-1/rules.d/50-sirius-live.rules && \
-    install -Dm0644 /wfiles/usr/share/sirius/logo.png /usr/share/sirius/logo.png && \
-    for icon in explore-symbolic chat-symbolic applications-development-symbolic; do \
-      install -Dm0644 "/wfiles/usr/share/icons/hicolor/scalable/actions/${icon}.svg" \
-        "/usr/share/icons/hicolor/scalable/actions/${icon}.svg"; \
-    done && \
-    gtk-update-icon-cache -f -t /usr/share/icons/hicolor || true && \
-    install -Dm0644 /wfiles/usr/share/sirius/repart.d/10-root.conf /usr/share/sirius/repart.d/10-root.conf && \
-    install -Dm0644 /wfiles/usr/share/sirius/repart.d/20-boot.conf /usr/share/sirius/repart.d/20-boot.conf && \
-    install -Dm0644 /wfiles/usr/share/sirius/repart.d/30-esp.conf /usr/share/sirius/repart.d/30-esp.conf
+    (gtk-update-icon-cache -f -t /usr/share/icons/hicolor || true)
 
-RUN --mount=type=bind,from=ctx-files,source=/workstation/files,target=/wfiles \
-    --mount=type=bind,from=ctx-scripts,source=/scripts,target=/scripts \
+RUN --mount=type=bind,from=ctx-scripts,source=/scripts,target=/scripts \
     mkdir -p /boot/efi /boot/loader/entries && \
-    cat /wfiles/etc/sirius/hostname > /etc/hostname && \
-    chmod 0644 /etc/hostname && \
     rm -f /usr/share/applications/liveinst.desktop && \
     mkdir -p /usr/lib/systemd/user/gnome-session@live-installer.target.d \
       /usr/lib/systemd/user/gnome-session@live-installer.target.wants && \
-    install -Dm0644 /wfiles/usr/lib/systemd/user/gnome-session@live-installer.target.d/live-installer.sirius.conf /usr/lib/systemd/user/gnome-session@live-installer.target.d/live-installer.session.conf && \
-    install -Dm0644 /wfiles/usr/lib/systemd/user/luminusos-sirius.service /usr/lib/systemd/user/luminusos-sirius.service && \
     ln -sf ../luminusos-sirius.service /usr/lib/systemd/user/gnome-session@live-installer.target.wants/luminusos-sirius.service && \
     bash /scripts/aurora-session-modes.sh \
       /usr/share/gnome-shell/extensions/${aurora_shell_uuid}/metadata.json live-installer initial-setup && \
@@ -91,16 +87,13 @@ RUN --mount=type=bind,from=ctx-files,source=/workstation/files,target=/wfiles \
     if ! id -u liveuser >/dev/null 2>&1; then \
       useradd -m -G wheel liveuser; \
     fi && \
-    passwd -d liveuser && \
-    install -Dm0644 /wfiles/etc/gdm/custom.conf /etc/gdm/custom.conf && \
-    install -Dm0644 /wfiles/var/lib/AccountsService/users/liveuser /var/lib/AccountsService/users/liveuser
+    passwd -d liveuser
 
 RUN --mount=type=bind,from=ctx-scripts,source=/scripts,target=/scripts \
     bash /scripts/rebuild-initramfs.sh --add "plymouth dmsquash-live"
 
 # Copy EFI files for image-builder and provide a removable-media fallback path.
-RUN --mount=type=bind,from=ctx-files,source=/workstation/files,target=/wfiles \
-    mkdir -p /boot/efi && \
+RUN mkdir -p /boot/efi && \
     cp -av /usr/lib/efi/*/*/EFI /boot/efi/ && \
     mkdir -p /boot/efi/EFI/BOOT /boot/efi/EFI/fedora && \
     shim="$(find /usr/share/shim /usr/lib/efi -type f -iname 'shimx64.efi' 2>/dev/null | head -n 1 || true)" && \
@@ -116,9 +109,7 @@ RUN --mount=type=bind,from=ctx-files,source=/workstation/files,target=/wfiles \
     if [ -n "${grub}" ]; then \
       install -m 0644 "${grub}" /boot/efi/EFI/BOOT/grubx64.efi; \
       install -m 0644 "${grub}" /boot/efi/EFI/fedora/grubx64.efi; \
-    fi && \
-    install -m 0644 /wfiles/boot/efi/EFI/fedora/grub.cfg /boot/efi/EFI/fedora/grub.cfg && \
-    install -m 0644 /boot/efi/EFI/fedora/grub.cfg /boot/efi/EFI/BOOT/grub.cfg
+    fi
 
 # Generated into the build context by the caller:
 #   skopeo copy <payload-image> oci:.test/payload.oci:latest
@@ -132,6 +123,7 @@ COPY --from=live / /
 
 ARG aurora_shell_uuid=aurora-shell@luminusos.github.io
 ARG image_version=44
+ARG sirius_version=1.0.3
 ARG source_url="https://github.com/LuminusOS/images"
 
 LABEL containers.bootc="1" \
@@ -144,10 +136,25 @@ LABEL containers.bootc="1" \
 
 RUN command -v sirius && \
     rpm -q sirius-installer && \
+    test "$(rpm -q --queryformat '%{VERSION}' sirius-installer)" = "${sirius_version}" && \
     ldd /usr/bin/sirius | tee /tmp/sirius-ldd && \
     ! grep -q 'not found' /tmp/sirius-ldd && \
     command -v bootc && \
     command -v bootupctl && \
+    # Sirius 1.0 runtime: bwrap sandboxes the glycin SVG decoder, the full
+    # langpack keeps the language page from listing only the C locales, and
+    # the RPM ships the timezone map artwork plus the welcome banner.
+    command -v bwrap && \
+    command -v ptyxis && \
+    locale -a | grep -qx 'pt_BR.utf8' && \
+    test -f /usr/share/sirius/timezone-map.svg && \
+    test -f /usr/share/sirius/timezone-pin.png && \
+    test -f /usr/share/sirius/welcome-banner.png && \
+    test -f /etc/gnome-initial-setup/vendor.conf && \
+    grep -Eq '^skip=software$' /etc/gnome-initial-setup/vendor.conf && \
+    grep -Eq '^existing_user_only=language$' /etc/gnome-initial-setup/vendor.conf && \
+    ! grep -Eiq '^[[:space:]]*(skip|existing_user_only)[[:space:]]*=.*keyboard' \
+      /etc/gnome-initial-setup/vendor.conf && \
     # The squashed single layer must not contain materialized OCI whiteouts.
     test -z "$(find / -xdev -name '.wh.*' -print -quit)" && \
     # The installer payload is embedded as an OCI layout tagged "latest".
@@ -156,6 +163,8 @@ RUN command -v sirius && \
       /usr/lib/luminusos/payload.oci/index.json && \
     test -f /etc/sirius/distro.toml && \
     test -f /etc/sirius/sirius.toml && \
+    grep -Eq '^command = "ptyxis"$' /etc/sirius/sirius.toml && \
+    grep -Eq '^show_button = true$' /etc/sirius/sirius.toml && \
     # Exactly the three LuminusOS repart definitions: the RPM's generic
     # 10-esp/20-root pair must be gone or systemd-repart would see five.
     test ! -e /usr/share/sirius/repart.d/10-esp.conf && \

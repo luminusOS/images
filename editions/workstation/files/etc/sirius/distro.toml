@@ -17,6 +17,7 @@ repart_dir = "/usr/share/sirius/repart.d"
 # Welcome-page branding for Sirius.
 [branding]
 logo = "/usr/share/sirius/logo.png"
+welcome_banner = "/usr/share/sirius/welcome-banner.png"
 
 # Link cards shown on the Sirius install progress page.
 [[bento]]
