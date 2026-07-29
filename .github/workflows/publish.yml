@@ -8,7 +8,7 @@ name: Publish
         default: "44"
       sirius_version:
         description: "Sirius release (RPM version on GitHub releases)"
-        default: "0.1.0"
+        default: "1.0.3"
       release_tag:
         description: "Release tag (empty = v<fedora>.<date>)"
         default: ""
