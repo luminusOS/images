@@ -57,6 +57,10 @@ flowchart TD
 ├── ARCHITECTURE.md
 ├── Justfile
 ├── README.md
+├── .just/
+│   ├── build.just
+│   ├── package.just
+│   └── qemu.just
 ├── editions/
 │   ├── cast/
 │   ├── core/
@@ -108,7 +112,7 @@ flowchart TD
 
 ## Justfile Flow
 
-The `Justfile` is the operational entry point. It computes image tags, rebuilds core when needed, packages artifacts, and starts local QEMU test flows.
+The root `Justfile` is the operational entry point and keeps the shared image tags, cleanup, and quality recipes. The `.just/` directory separates the build, packaging, and QEMU flows into thematic modules while preserving the public commands documented below.
 
 ```mermaid
 flowchart TD
