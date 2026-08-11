@@ -88,7 +88,7 @@ flowchart TD
 | Core image | `luminusos:<tag>` |
 | Workstation image | `luminusos-workstation:<tag>` |
 | Fedora version | Controlled by `LOS_FEDORA_VERSION`, default `44`. |
-| Local tag | `<fedora>.<YYYYMMDD>` unless `LOS_TAG` is set. |
+| Local tag | `testing-<fedora>.<YYYYMMDD>` unless `LOS_TAG` is set. |
 | Shared data/config | Stored in `shared/`; current shared inputs are Flatpak refs and bootc-image-builder config. |
 | Desktop files | Stored under `editions/workstation/files/` and copied into `/`. |
 | Desktop build script | `editions/workstation/build.sh`, called from the workstation Containerfile. |
@@ -102,11 +102,11 @@ flowchart TD
 | `LOS_BASE` | `quay.io/fedora/fedora-bootc:44` | Base image for the core edition. |
 | `LOS_FEDORA_VERSION` | `44` | Fedora release version used for DNF repos and tags. |
 | `LOS_REGISTRY` | `localhost` | Registry prefix for local builds. |
-| `LOS_TAG` | `<fedora>.<date>` | Build tag written to `VERSION`, `BUILD_ID`, `IMAGE_VERSION`, and bootloader entries. |
+| `LOS_TAG` | `testing-<fedora>.<date>` | Build tag written to `VERSION`, `BUILD_ID`, `IMAGE_VERSION`, and bootloader entries. |
 | `LOS_NAME` | `LuminusOS` | OS name written to os-release. |
 | `LOS_PRETTY_NAME` | `Luminus OS` | Base pretty OS name; active editions append their edition name and `LOS_TAG` for bootloader entries. |
-| `LOS_WORKSTATION_TARGET_IMAGE` | `ghcr.io/luminusos/luminusos-workstation:44` | Installed bootc update reference. |
-| `AURORA_SHELL_VERSION` | `v50.3` | Aurora Shell release downloaded during build. |
+| `LOS_WORKSTATION_TARGET_IMAGE` | `ghcr.io/luminusos/luminusos-workstation:testing-44` | Installed bootc testing update reference. |
+| `AURORA_SHELL_VERSION` | `v50.11` | Aurora Shell release downloaded during build. |
 | `LOS_FORCE_CORE` | `0` | Rebuild core even if the local stamp is unchanged. |
 | `LOS_SKIP_FLATPAKS` | `0` | Skip Flatpak installation during workstation build. |
 
@@ -603,10 +603,10 @@ The installed system is a closed bootc deployment. Its update reference comes fr
 
 Package changes must be made in the Containerfiles or build scripts and delivered as a new OCI image.
 
-By default, installed systems track the Fedora-versioned workstation image in GHCR:
+By default, installed systems track the Fedora-specific testing channel in GHCR:
 
 ```bash
-LOS_WORKSTATION_TARGET_IMAGE=ghcr.io/luminusos/luminusos-workstation:44
+LOS_WORKSTATION_TARGET_IMAGE=ghcr.io/luminusos/luminusos-workstation:testing-44
 ```
 
 Local installer tests may override `LOS_WORKSTATION_TARGET_IMAGE`, but release builds should leave it on the registry-published reference so installed systems use `bootc upgrade` from the Luminus OS OCI registry.

@@ -42,3 +42,4 @@ show-ratings=false
 [org.gnome.login-screen]
 disable-user-list=false
 disable-restart-buttons=true
+logo='/usr/share/pixmaps/luminusos-gdm-logo.png'

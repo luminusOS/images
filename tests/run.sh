@@ -81,6 +81,13 @@ expect "workstation enables GNOME Initial Setup from a static file" \
 expect "workstation disables GNOME Software search from a static file" \
   grep -qx 'DefaultDisabled=true' \
   "${WORKSTATION_FILES}/usr/share/gnome-shell/search-providers/org.gnome.Software-search-provider.ini"
+expect "GDM uses the Luminus logo" \
+  grep -Fqx "logo='/usr/share/pixmaps/luminusos-gdm-logo.png'" \
+  "${WORKSTATION_FILES}/usr/share/glib-2.0/schemas/99-install-mode.gschema.override"
+expect "workstation installs the configured GDM logo" \
+  grep -Fqx \
+  'COPY editions/workstation/files/usr/share/sirius/logo.png /usr/share/pixmaps/luminusos-gdm-logo.png' \
+  "${ROOT}/editions/workstation/Containerfile"
 expect "workstation build script does not write static heredoc files" \
   sh -c '! grep -Eq "cat[[:space:]]*>" "$1"' sh \
   "${ROOT}/editions/workstation/build.sh"

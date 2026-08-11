@@ -1,6 +1,6 @@
 ARG core_image=localhost/luminusos:latest
 ARG fedora_version=44
-ARG aurora_shell_version=v50.3
+ARG aurora_shell_version=v50.11
 
 FROM scratch AS ctx-scripts
 
@@ -132,6 +132,7 @@ COPY editions/workstation/files/usr/lib/bootc/kargs.d/10-luminusos-splash.toml /
 COPY editions/workstation/files/usr/lib/image-builder/bootc/disk.yaml /usr/lib/image-builder/bootc/disk.yaml
 COPY editions/workstation/files/usr/share/glib-2.0/schemas/99-install-mode.gschema.override /usr/share/glib-2.0/schemas/99-install-mode.gschema.override
 COPY editions/workstation/files/usr/share/gnome-shell/search-providers/org.gnome.Software-search-provider.ini /usr/share/gnome-shell/search-providers/org.gnome.Software-search-provider.ini
+COPY editions/workstation/files/usr/share/sirius/logo.png /usr/share/pixmaps/luminusos-gdm-logo.png
 
 # Flatpaks (invalidated only by shared/flatpaks or skip flag)
 RUN --mount=type=bind,from=ctx-flatpaks,source=/flatpaks,target=/flatpaks,ro \

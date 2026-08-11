@@ -1,4 +1,4 @@
-name: Build Containers
+name: Build Testing Containers
 
 on:
   push:
@@ -20,8 +20,8 @@ env:
   REGISTRY: ghcr.io
   DEFAULT_FEDORA_VERSION: "44"
   PRIMARY_FEDORA_BRANCH: f44
-  AURORA_SHELL_VERSION: v50.3
-  AURORA_SHELL_SHA256: 0fcfa7933872184831a80da6521d8535cf4dc1e2f367a45643332cfe7eba111f
+  AURORA_SHELL_VERSION: v50.11
+  AURORA_SHELL_SHA256: 381dd0d74b9c6c9ef391632ceab365819423b4513950d512766d1af3b972f7cd
 
 jobs:
   build-containers:
@@ -48,13 +48,13 @@ jobs:
             FEDORA_VERSION="${DEFAULT_FEDORA_VERSION}"
           fi
 
-          VERSION_TAG="${FEDORA_VERSION}.$(date -u +%Y%m%d)"
-          BRANCH_TAG="${FEDORA_VERSION}"
+          VERSION_TAG="testing-${FEDORA_VERSION}.$(date -u +%Y%m%d)"
+          BRANCH_TAG="testing-${FEDORA_VERSION}"
           IMAGE_NAMESPACE="$(printf '%s' "${GITHUB_REPOSITORY_OWNER}" | tr '[:upper:]' '[:lower:]')"
           if [ "${GITHUB_REF_NAME}" = "${PRIMARY_FEDORA_BRANCH}" ] || [ "${GITHUB_REF_NAME}" = "main" ]; then
-            PUBLISH_LATEST=true
+            PUBLISH_CHANNEL=true
           else
-            PUBLISH_LATEST=false
+            PUBLISH_CHANNEL=false
           fi
 
           {
@@ -62,7 +62,7 @@ jobs:
             echo "version_tag=${VERSION_TAG}"
             echo "branch_tag=${BRANCH_TAG}"
             echo "image_namespace=${IMAGE_NAMESPACE}"
-            echo "publish_latest=${PUBLISH_LATEST}"
+            echo "publish_channel=${PUBLISH_CHANNEL}"
           } >> "$GITHUB_OUTPUT"
 
       - name: Log in to GHCR
@@ -107,11 +107,11 @@ jobs:
           set -euo pipefail
           docker push "${REGISTRY}/${{ steps.version.outputs.image_namespace }}/luminusos:${{ steps.version.outputs.version_tag }}"
           docker push "${REGISTRY}/${{ steps.version.outputs.image_namespace }}/luminusos:${{ steps.version.outputs.branch_tag }}"
-          if [ "${{ steps.version.outputs.publish_latest }}" = "true" ]; then
+          if [ "${{ steps.version.outputs.publish_channel }}" = "true" ]; then
             docker tag \
               "${REGISTRY}/${{ steps.version.outputs.image_namespace }}/luminusos:${{ steps.version.outputs.version_tag }}" \
-              "${REGISTRY}/${{ steps.version.outputs.image_namespace }}/luminusos:latest"
-            docker push "${REGISTRY}/${{ steps.version.outputs.image_namespace }}/luminusos:latest"
+              "${REGISTRY}/${{ steps.version.outputs.image_namespace }}/luminusos:testing"
+            docker push "${REGISTRY}/${{ steps.version.outputs.image_namespace }}/luminusos:testing"
           fi
 
       - name: Build workstation locally
@@ -142,9 +142,9 @@ jobs:
           set -euo pipefail
           docker push "${REGISTRY}/${{ steps.version.outputs.image_namespace }}/luminusos-workstation:${{ steps.version.outputs.version_tag }}"
           docker push "${REGISTRY}/${{ steps.version.outputs.image_namespace }}/luminusos-workstation:${{ steps.version.outputs.branch_tag }}"
-          if [ "${{ steps.version.outputs.publish_latest }}" = "true" ]; then
+          if [ "${{ steps.version.outputs.publish_channel }}" = "true" ]; then
             docker tag \
               "${REGISTRY}/${{ steps.version.outputs.image_namespace }}/luminusos-workstation:${{ steps.version.outputs.version_tag }}" \
-              "${REGISTRY}/${{ steps.version.outputs.image_namespace }}/luminusos-workstation:latest"
-            docker push "${REGISTRY}/${{ steps.version.outputs.image_namespace }}/luminusos-workstation:latest"
+              "${REGISTRY}/${{ steps.version.outputs.image_namespace }}/luminusos-workstation:testing"
+            docker push "${REGISTRY}/${{ steps.version.outputs.image_namespace }}/luminusos-workstation:testing"
           fi

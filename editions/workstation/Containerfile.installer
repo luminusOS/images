@@ -11,7 +11,7 @@ ARG fedora_version=44
 ARG image_version=44
 ARG sirius_version=1.0.3
 ARG workstation_image=localhost/luminusos-workstation:latest
-ARG workstation_target_image=ghcr.io/luminusos/luminusos-workstation:44
+ARG workstation_target_image=ghcr.io/luminusos/luminusos-workstation:testing-44
 ARG aurora_shell_uuid=aurora-shell@luminusos.github.io
 ARG source_url="https://github.com/LuminusOS/images"
 

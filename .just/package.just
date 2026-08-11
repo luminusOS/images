@@ -3,7 +3,7 @@ set dotenv-load := true
 registry := env("LOS_REGISTRY", "localhost")
 fedora_ver := env("LOS_FEDORA_VERSION", "44")
 build_date := `date +%Y%m%d`
-tag := env("LOS_TAG", fedora_ver + "." + build_date)
+tag := env("LOS_TAG", "testing-" + fedora_ver + "." + build_date)
 sudo_keepalive := '''
 keep_sudo_alive() {
   sudo -v

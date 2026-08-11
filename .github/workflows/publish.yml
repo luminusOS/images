@@ -1,4 +1,4 @@
-name: Publish
+name: Publish Testing
 
 "on":
   workflow_dispatch:
@@ -9,9 +9,6 @@ name: Publish
       sirius_version:
         description: "Sirius release (RPM version on GitHub releases)"
         default: "1.0.3"
-      release_tag:
-        description: "Release tag (empty = v<fedora>.<date>)"
-        default: ""
       skip_flatpaks:
         description: "Skip Flatpak preinstall (faster test builds)"
         default: "0"
@@ -22,8 +19,8 @@ concurrency:
 
 env:
   REGISTRY: ghcr.io
-  AURORA_SHELL_VERSION: v50.3
-  AURORA_SHELL_SHA256: 0fcfa7933872184831a80da6521d8535cf4dc1e2f367a45643332cfe7eba111f
+  AURORA_SHELL_VERSION: v50.11
+  AURORA_SHELL_SHA256: 381dd0d74b9c6c9ef391632ceab365819423b4513950d512766d1af3b972f7cd
 
 jobs:
   version:
@@ -33,6 +30,7 @@ jobs:
       fedora_version: ${{ steps.version.outputs.fedora_version }}
       version_tag: ${{ steps.version.outputs.version_tag }}
       branch_tag: ${{ steps.version.outputs.branch_tag }}
+      channel_tag: ${{ steps.version.outputs.channel_tag }}
       image_namespace: ${{ steps.version.outputs.image_namespace }}
       release_tag: ${{ steps.version.outputs.release_tag }}
     steps:
@@ -42,17 +40,14 @@ jobs:
         run: |
           set -euo pipefail
           FEDORA_VERSION="${{ inputs.fedora_version }}"
-          VERSION_TAG="${FEDORA_VERSION}.$(date -u +%Y%m%d)"
-          RELEASE_TAG="${{ inputs.release_tag }}"
-          if [ -z "${RELEASE_TAG}" ]; then
-            RELEASE_TAG="v${VERSION_TAG}"
-          fi
+          VERSION_TAG="testing-${FEDORA_VERSION}.$(date -u +%Y%m%d)"
           {
             echo "fedora_version=${FEDORA_VERSION}"
             echo "version_tag=${VERSION_TAG}"
-            echo "branch_tag=${FEDORA_VERSION}"
+            echo "branch_tag=testing-${FEDORA_VERSION}"
+            echo "channel_tag=testing"
             echo "image_namespace=$(printf '%s' "${GITHUB_REPOSITORY_OWNER}" | tr '[:upper:]' '[:lower:]')"
-            echo "release_tag=${RELEASE_TAG}"
+            echo "release_tag=${VERSION_TAG}"
           } >> "$GITHUB_OUTPUT"
 
   containers:
@@ -95,7 +90,10 @@ jobs:
             distro_version=${{ needs.version.outputs.version_tag }}
             distro_name=LuminusOS
             distro_pretty_name=Luminus OS
-          tags: ${{ env.CORE_IMAGE }}
+          tags: |
+            ${{ env.CORE_IMAGE }}
+            ghcr.io/${{ needs.version.outputs.image_namespace }}/luminusos:${{ needs.version.outputs.branch_tag }}
+            ghcr.io/${{ needs.version.outputs.image_namespace }}/luminusos:${{ needs.version.outputs.channel_tag }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
 
@@ -114,7 +112,10 @@ jobs:
             skip_flatpaks=${{ inputs.skip_flatpaks }}
             aurora_shell_version=${{ env.AURORA_SHELL_VERSION }}
             aurora_shell_sha256=${{ env.AURORA_SHELL_SHA256 }}
-          tags: ${{ env.WORKSTATION_IMAGE }}
+          tags: |
+            ${{ env.WORKSTATION_IMAGE }}
+            ghcr.io/${{ needs.version.outputs.image_namespace }}/luminusos-workstation:${{ needs.version.outputs.branch_tag }}
+            ghcr.io/${{ needs.version.outputs.image_namespace }}/luminusos-workstation:${{ needs.version.outputs.channel_tag }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
 
@@ -360,6 +361,7 @@ jobs:
         run: |
           set -euo pipefail
           gh release create "${{ needs.version.outputs.release_tag }}" \
-            --title "LuminusOS ${{ needs.version.outputs.version_tag }}" \
+            --title "LuminusOS ${{ needs.version.outputs.version_tag }}: Testing" \
             --notes-file dist/notes.md \
+            --prerelease \
             --target "$GITHUB_SHA"

@@ -27,17 +27,19 @@ See [CONTRIBUTING.md](CONTRIBUTING.md) for prerequisites, faster iteration flags
 
 ## Versioning
 
-Releases follow the Fedora base version plus a build date:
+Testing releases follow the channel, Fedora base version, and build date:
 
 ```
-{FEDORA_VERSION}.{YYYYMMDD}   →   44.20260322
+testing-{FEDORA_VERSION}.{YYYYMMDD}   →   testing-44.20260322
 ```
 
-Container images use the Fedora version as a floating tag:
+Container images publish both channel-wide and Fedora-specific floating tags:
 
 ```
-ghcr.io/luminusos/luminusos:44
-ghcr.io/luminusos/luminusos-workstation:44
+ghcr.io/luminusos/luminusos:testing
+ghcr.io/luminusos/luminusos:testing-44
+ghcr.io/luminusos/luminusos-workstation:testing
+ghcr.io/luminusos/luminusos-workstation:testing-44
 ```
 
 ## Rebasing to Luminus OS
@@ -45,7 +47,7 @@ ghcr.io/luminusos/luminusos-workstation:44
 Rebase an existing bootc-capable Fedora Atomic system:
 
 ```bash
-bootc switch ghcr.io/luminusos/luminusos-workstation:44
+bootc switch ghcr.io/luminusos/luminusos-workstation:testing-44
 ```
 
 ## CI & Releases
@@ -53,8 +55,8 @@ bootc switch ghcr.io/luminusos/luminusos-workstation:44
 | Workflow | Trigger | What it does |
 |----------|---------|--------------|
 | `ci` | Push to `main` | Lint, unit/config tests, core smoke build |
-| `build-containers` | Push/PR on `main` and `f*` | Builds `core` and `workstation` containers → GHCR |
-| `publish` | Manual | Builds containers, packages ISO + qcow2, boot smoke test, GitHub Release |
+| `build-containers` | Push/PR on `main` and `f*` | Builds testing `core` and `workstation` containers → GHCR |
+| `publish` | Manual | Builds containers, packages and boot-tests ISO/qcow2, then publishes a dated testing pre-release |
 
 ISO and qcow2 downloads are hosted on [SourceForge](https://sourceforge.net/projects/luminusos/files/) (mirrored worldwide); GitHub Releases carry the notes with direct links and a SHA256 table per edition.
 
