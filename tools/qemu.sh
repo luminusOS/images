@@ -1,207 +1,136 @@
-#!/bin/bash
+#!/usr/bin/env bash
+# Launch a local workstation ISO or disk under QEMU/KVM.
+set -euo pipefail
 
-set -x
+project_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd -P)"
+test_dir="${project_dir}/.test"
+mkdir -p "${test_dir}"
 
-# Quickly set up a QEMU VM test environment for manual testing.
-# This script shouldn't be used in prod and is meant for development only.
-
-# USAGE
-# ./qemu.sh [disk|iso]
-# If no argument is provided, disk is used by default
-
-if [ -f .env ]; then
-  source .env
+if [ -f "${project_dir}/.env" ]; then
+  # shellcheck disable=SC1091
+  source "${project_dir}/.env"
 fi
+# shellcheck disable=SC1091
+source "${project_dir}/tools/qemu-common.sh"
 
-# NOTE: the installer payload is embedded as an OCI layout, so `bootc
-# install` streams layer blobs straight to disk instead of staging a
-# re-tarred copy in RAM (see distro.toml). 4 GiB comfortably covers the
-# live GNOME session plus headroom.
-: ${QEMU_MEM:="4G"}
-: ${QEMU_CPU:="4"}
-: ${QEMU_BOOT:="uefi"}
-: ${QEMU_DISPLAY:="auto"}
-: ${QEMU_DEBUG:="1"}
-: ${QEMU_NO_REBOOT:="0"}
-: ${QEMU_RESET_NVRAM:="0"}
-: ${QEMU_RESET_DISK:="0"}
-: ${QEMU_DISK_BUS:="ahci"}
-: ${QEMU_ISO_PATH:=""}
+: "${QEMU_MEM:=4G}"
+: "${QEMU_CPU:=4}"
+: "${QEMU_BOOT:=uefi}"
+: "${QEMU_DISPLAY:=auto}"
+: "${QEMU_DEBUG:=1}"
+: "${QEMU_NO_REBOOT:=0}"
+: "${QEMU_RESET_NVRAM:=0}"
+: "${QEMU_RESET_DISK:=0}"
+: "${QEMU_DISK_BUS:=ahci}"
+: "${QEMU_ISO_PATH:=}"
+: "${QEMU_DISK_PATH:=}"
+: "${QEMU_INSTALL_DISK_SIZE:=64G}"
+: "${QEMU_INSTALL_DISK_PATH:=${test_dir}/install-disk.qcow2}"
+: "${QEMU_OVMF_VARS:=${test_dir}/OVMF_VARS.fd}"
+: "${QEMU_BINARY:=qemu-kvm}"
+: "${QEMU_DRY_RUN:=0}"
 
-TEST_HOME=$(pwd)/.test
-
-function setup_test_home {
-  mkdir -p $TEST_HOME
-}
-
-setup_test_home
-
-if [ "$QEMU_DISPLAY" = "auto" ]; then
-  QEMU_DISPLAY="gtk"
-fi
-
-# Install disk for ISO boots (set QEMU_INSTALL_DISK_SIZE like "64G")
-: ${QEMU_INSTALL_DISK_SIZE:="64G"}
-: ${QEMU_INSTALL_DISK_PATH:=""}
-: ${QEMU_OVMF_CODE:="/usr/share/OVMF/OVMF_CODE.fd"}
-: ${QEMU_OVMF_VARS_TEMPLATE:="/usr/share/OVMF/OVMF_VARS.fd"}
-: ${QEMU_OVMF_VARS:="$TEST_HOME/OVMF_VARS.fd"}
-
-if [ -z "${1:-}" ]; then
-  SCRIPT_MODE="disk"
-else
-  SCRIPT_MODE=$1
-fi
-
-function find_iso {
-  local iso_path
-  local latest_iso_path
-  local latest_iso_mtime
-  local pointer_mtime
-
-  if [ -n "$QEMU_ISO_PATH" ]; then
-    if [ ! -f "$QEMU_ISO_PATH" ]; then
-      echo "QEMU_ISO_PATH does not exist: $QEMU_ISO_PATH" >&2
-      exit 1
-    fi
-    realpath "$QEMU_ISO_PATH"
-    return
-  fi
-
-  latest_iso_path=$(
-    find "$(pwd)" -maxdepth 1 -type f -name "*.iso" -printf "%T@ %p\n" |
-      sort -nr |
-      awk 'NR == 1 { sub(/^[^ ]+ /, ""); print }'
-  )
-
-  if [ -f "$TEST_HOME/last-iso" ]; then
-    iso_path=$(cat "$TEST_HOME/last-iso")
-    if [ -f "$iso_path" ]; then
-      if [ -n "$latest_iso_path" ]; then
-        pointer_mtime=$(stat -c "%Y" "$iso_path")
-        latest_iso_mtime=$(stat -c "%Y" "$latest_iso_path")
-        if [ "$pointer_mtime" -lt "$latest_iso_mtime" ]; then
-          echo "Ignoring older ISO pointer: $iso_path" >&2
-        else
-          realpath "$iso_path"
-          return
-        fi
-      else
-        realpath "$iso_path"
-        return
-      fi
-    fi
-    echo "Ignoring stale ISO pointer: $iso_path" >&2
-  fi
-
-  if [ -z "$latest_iso_path" ]; then
-    echo "No ISO found in $(pwd)" >&2
+mode="${1:-disk}"
+case "${mode}" in
+  disk | iso) ;;
+  *)
+    echo "Unknown QEMU mode: ${mode} (expected disk or iso)" >&2
     exit 1
-  fi
-  realpath "$latest_iso_path"
-}
+    ;;
+esac
 
-function disk_format {
-  if [[ "$1" == *.qcow2 ]]; then
-    echo "qcow2"
-  else
-    echo "raw"
-  fi
-}
+if [ "${QEMU_DISPLAY}" = auto ]; then
+  QEMU_DISPLAY=gtk
+fi
 
-function add_disk {
-  local path="$1"
-  local id="$2"
-  local bootindex="$3"
-  local format
+qemu_args=(
+  -machine "type=q35,accel=kvm"
+  -cpu host
+  -m "${QEMU_MEM}"
+  -smp "${QEMU_CPU}"
+  -display "${QEMU_DISPLAY}"
+  -netdev "user,id=net0,hostfwd=tcp::2222-:22"
+  -device "virtio-net-pci,netdev=net0"
+)
+ahci_added=0
 
-  format=$(disk_format "$path")
-  QEMU_ARGS+=" -drive file=$path,format=$format,if=none,id=$id"
+add_disk() {
+  local path="$1" id="$2" bootindex="$3" format
+  format="$(qemu_disk_format "${path}")"
+  qemu_args+=(-drive "file=${path},format=${format},if=none,id=${id}")
 
-  case "$QEMU_DISK_BUS" in
+  case "${QEMU_DISK_BUS}" in
     ahci | sata)
-      if [[ "$QEMU_ARGS" != *"ich9-ahci,id=ahci"* ]]; then
-        QEMU_ARGS+=" -device ich9-ahci,id=ahci"
+      if [ "${ahci_added}" -eq 0 ]; then
+        qemu_args+=(-device "ich9-ahci,id=ahci")
+        ahci_added=1
       fi
-      QEMU_ARGS+=" -device ide-hd,drive=$id,bus=ahci.$((bootindex - 1)),bootindex=$bootindex"
+      qemu_args+=(-device "ide-hd,drive=${id},bus=ahci.$((bootindex - 1)),bootindex=${bootindex}")
       ;;
     virtio)
-      QEMU_ARGS+=" -device virtio-blk-pci,drive=$id,bootindex=$bootindex"
+      qemu_args+=(-device "virtio-blk-pci,drive=${id},bootindex=${bootindex}")
       ;;
     *)
-      echo "Unknown QEMU_DISK_BUS: $QEMU_DISK_BUS"
-      echo "Valid values: ahci, sata, virtio"
+      echo "Unknown QEMU_DISK_BUS: ${QEMU_DISK_BUS} (expected ahci, sata or virtio)" >&2
       exit 1
       ;;
   esac
 }
 
-: ${QEMU_DISK_PATH:="$TEST_HOME/disk.qcow2"}
-
-if [ "$SCRIPT_MODE" = "disk" ]; then
-  QEMU_ARGS=""
-  add_disk "$QEMU_DISK_PATH" "system_disk" "1"
-  QEMU_ARGS+=" -boot order=c,menu=on"
-elif [ "$SCRIPT_MODE" = "iso" ]; then
-  ISO_PATH=$(find_iso)
-  echo "Booting ISO: $ISO_PATH"
-  QEMU_ARGS="-cdrom $ISO_PATH"
-  QEMU_ARGS+=" -boot once=d,order=c,menu=on"
+if [ "${mode}" = disk ]; then
+  disk_path="$(qemu_resolve_artifact "${project_dir}" \
+    "${QEMU_DISK_PATH}" \
+    "${test_dir}/last-qcow2" \
+    '*.qcow2' \
+    "${test_dir}/disk.qcow2")"
+  echo "Booting disk: ${disk_path}"
+  add_disk "${disk_path}" system_disk 1
+  qemu_args+=(-boot "order=c,menu=on")
 else
-  echo "Unknown QEMU mode: $SCRIPT_MODE"
-  echo "Valid modes: disk, iso"
-  exit 1
-fi
+  iso_path="$(qemu_resolve_artifact "${project_dir}" \
+    "${QEMU_ISO_PATH}" \
+    "${test_dir}/last-iso" \
+    '*.iso' \
+    '')"
+  echo "Booting ISO: ${iso_path}"
+  qemu_args+=(-cdrom "${iso_path}" -boot "once=d,order=c,menu=on")
 
-if [ "$QEMU_BOOT" = "uefi" ]; then
-  if [ "$QEMU_RESET_NVRAM" != "0" ]; then
-    rm -f "$QEMU_OVMF_VARS"
+  if [ "${QEMU_RESET_DISK}" != 0 ] && [ "${QEMU_DRY_RUN}" != 1 ]; then
+    rm -f "${QEMU_INSTALL_DISK_PATH}"
   fi
-  if [ ! -f "$QEMU_OVMF_VARS" ]; then
-    cp "$QEMU_OVMF_VARS_TEMPLATE" "$QEMU_OVMF_VARS"
+  if [ ! -f "${QEMU_INSTALL_DISK_PATH}" ] && [ "${QEMU_DRY_RUN}" != 1 ]; then
+    echo "Creating install disk at ${QEMU_INSTALL_DISK_PATH} (${QEMU_INSTALL_DISK_SIZE})"
+    qemu-img create -f qcow2 "${QEMU_INSTALL_DISK_PATH}" "${QEMU_INSTALL_DISK_SIZE}"
   fi
-  QEMU_ARGS+=" -drive if=pflash,format=raw,readonly=on,file=$QEMU_OVMF_CODE"
-  QEMU_ARGS+=" -drive if=pflash,format=raw,file=$QEMU_OVMF_VARS"
+  add_disk "${QEMU_INSTALL_DISK_PATH}" install_disk 2
 fi
 
-if [ -z "$QEMU_INSTALL_DISK_PATH" ]; then
-  QEMU_INSTALL_DISK_PATH="$TEST_HOME/install-disk.qcow2"
-fi
-
-function ensure_install_disk {
-  if [ -n "$QEMU_INSTALL_DISK_SIZE" ]; then
-    if [ "$QEMU_RESET_DISK" != "0" ]; then
-      rm -f "$QEMU_INSTALL_DISK_PATH"
-    fi
-    if [ ! -f "$QEMU_INSTALL_DISK_PATH" ]; then
-      echo "Creating install disk at $QEMU_INSTALL_DISK_PATH ($QEMU_INSTALL_DISK_SIZE)"
-      qemu-img create -f qcow2 "$QEMU_INSTALL_DISK_PATH" "$QEMU_INSTALL_DISK_SIZE"
-    fi
-    add_disk "$QEMU_INSTALL_DISK_PATH" "install_disk" "2"
+if [ "${QEMU_BOOT}" = uefi ]; then
+  qemu_resolve_ovmf
+  if [ "${QEMU_RESET_NVRAM}" != 0 ] && [ "${QEMU_DRY_RUN}" != 1 ]; then
+    rm -f "${QEMU_OVMF_VARS}"
   fi
-}
-
-if [ "$SCRIPT_MODE" = "iso" ]; then
-  ensure_install_disk
+  if [ ! -f "${QEMU_OVMF_VARS}" ] && [ "${QEMU_DRY_RUN}" != 1 ]; then
+    cp "${QEMU_OVMF_VARS_TEMPLATE_RESOLVED}" "${QEMU_OVMF_VARS}"
+  fi
+  qemu_args+=(
+    -drive "if=pflash,format=raw,readonly=on,file=${QEMU_OVMF_CODE_RESOLVED}"
+    -drive "if=pflash,format=raw,file=${QEMU_OVMF_VARS}"
+  )
 fi
 
-if [ "$QEMU_DEBUG" != "0" ]; then
-  QEMU_LOG_FILE="$TEST_HOME/qemu.log"
-  # Capture guest errors and print a serial console for easy debugging.
-  QEMU_ARGS+=" -d guest_errors -D $QEMU_LOG_FILE -serial mon:stdio -monitor none"
-  echo "Debug logging enabled. Log: $QEMU_LOG_FILE"
+if [ "${QEMU_DEBUG}" != 0 ]; then
+  qemu_log="${test_dir}/qemu.log"
+  qemu_args+=(-d guest_errors -D "${qemu_log}" -serial mon:stdio -monitor none)
+  echo "Debug logging enabled: ${qemu_log}"
+fi
+if [ "${QEMU_NO_REBOOT}" != 0 ]; then
+  qemu_args+=(-no-reboot)
 fi
 
-if [ "$QEMU_NO_REBOOT" != "0" ]; then
-  QEMU_ARGS+=" -no-reboot"
+if [ "${QEMU_DRY_RUN}" = 1 ]; then
+  printf '%q ' "${QEMU_BINARY}" "${qemu_args[@]}"
+  printf '\n'
+  exit 0
 fi
-
-qemu-kvm \
-  -machine type=q35,accel=kvm \
-  -cpu host \
-  -m $QEMU_MEM \
-  -smp $QEMU_CPU \
-  -display $QEMU_DISPLAY \
-  -netdev user,id=net0,hostfwd=tcp::2222-:22 \
-  -device virtio-net-pci,netdev=net0 \
-  $QEMU_ARGS
+exec "${QEMU_BINARY}" "${qemu_args[@]}"

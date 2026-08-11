@@ -11,6 +11,14 @@ if command -v dconf >/dev/null 2>&1; then
   dconf update
 fi
 
+# The overlay ships luminusos-logo-icon.svg after the last dnf transaction, so
+# the hicolor cache written by rpm file triggers would not list it.
+if command -v gtk4-update-icon-cache >/dev/null 2>&1; then
+  gtk4-update-icon-cache -f -t /usr/share/icons/hicolor
+elif command -v gtk-update-icon-cache >/dev/null 2>&1; then
+  gtk-update-icon-cache -f -t /usr/share/icons/hicolor
+fi
+
 if [ -f /usr/share/gnome-shell/modes/initial-setup.json ]; then
   tmp="$(mktemp)"
   jq '.enabledExtensions = (((.enabledExtensions // []) + ["aurora-shell@luminusos.github.io"]) | unique)' \

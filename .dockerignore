@@ -1,0 +1,17 @@
+.git
+.claude
+.env
+.image-builder-cli
+.iso-output
+.osbuild-cache
+*.7z
+*.iso
+*.log
+*.qcow2
+docs
+shared/bootc-image-builder.toml
+
+# The installer build is the only build that consumes generated state.
+.test/*
+!.test/payload.oci
+!.test/payload.oci/**

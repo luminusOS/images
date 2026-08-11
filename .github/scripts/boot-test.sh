@@ -13,6 +13,10 @@ image="$2"
 outdir="${3:-boot-test-out}"
 mkdir -p "${outdir}"
 
+project_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd -P)"
+# shellcheck disable=SC1091
+source "${project_dir}/tools/qemu-common.sh"
+
 # The final screendump must contain at least this many distinct sampled
 # colors. A black screen has 1; a text console under 32; any rendered
 # GNOME surface (gradients, antialiased text) has hundreds.
@@ -26,22 +30,8 @@ case "${mode}" in
     ;;
 esac
 
-ovmf_code=""
-ovmf_vars=""
-for c in /usr/share/OVMF/OVMF_CODE_4M.fd /usr/share/edk2/ovmf/OVMF_CODE.fd; do
-  if [ -f "${c}" ]; then
-    ovmf_code="${c}"
-    break
-  fi
-done
-for v in /usr/share/OVMF/OVMF_VARS_4M.fd /usr/share/edk2/ovmf/OVMF_VARS.fd; do
-  if [ -f "${v}" ]; then
-    ovmf_vars="${v}"
-    break
-  fi
-done
-[ -n "${ovmf_code}" ] && [ -n "${ovmf_vars}" ]
-cp "${ovmf_vars}" "${outdir}/vars.fd"
+qemu_resolve_ovmf
+cp "${QEMU_OVMF_VARS_TEMPLATE_RESOLVED}" "${outdir}/vars.fd"
 
 qmp_sock="${outdir}/qmp.sock"
 
@@ -50,7 +40,7 @@ args=(
   -display none -vga virtio
   -serial "file:${outdir}/serial.log"
   -qmp "unix:${qmp_sock},server,nowait"
-  -drive "if=pflash,format=raw,readonly=on,file=${ovmf_code}"
+  -drive "if=pflash,format=raw,readonly=on,file=${QEMU_OVMF_CODE_RESOLVED}"
   -drive "if=pflash,format=raw,file=${outdir}/vars.fd"
 )
 if [ -w /dev/kvm ]; then

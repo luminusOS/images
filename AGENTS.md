@@ -36,7 +36,7 @@ Use `QEMU_RESET_DISK=1 just qemu iso` when the installer test needs a fresh disk
 
 The workstation ISO uses Sirius (the LuminusOS installer, consumed as a prebuilt RPM from its GitHub release) and installs the embedded workstation image from container storage. ISO packaging uses `luminusos-workstation:<tag>-iso` as the live root and `luminusos-workstation:<tag>` as the installed payload. The live ISO itself is not booted as a bootc deployment.
 
-Installed Linux filesystems should be Btrfs in the Sirius ISO install path. Keep `/usr/lib/image-builder/bootc/disk.yaml` (which image-builder uses for the filesystem layout, overriding `--bootc-default-fs`) and the Sirius repart templates (`files/usr/share/sirius/repart.d/`) aligned when changing that storage layout: root/home/var stay Btrfs, but `/boot` must remain ext4 because image-builder qcow2 generation does not support Btrfs for `/boot`. The ISO boot menu is configured through `/usr/lib/image-builder/bootc/iso.yaml`.
+The Sirius ISO install path should use Btrfs for Linux filesystems. Keep `/usr/lib/image-builder/bootc/disk.yaml` (which controls the image-builder filesystem layout and overrides `--bootc-default-fs`) aligned with the Sirius repart templates in `files/installer/usr/share/sirius/repart.d/`. Root, home, and var stay on Btrfs. `/boot` must remain ext4 because image-builder cannot generate a qcow2 with a Btrfs `/boot`. The ISO boot menu is configured through `/usr/lib/image-builder/bootc/iso.yaml`.
 
 Sirius is configured through `/etc/sirius/distro.toml` and `/etc/sirius/sirius.toml`, installed only into the ISO live root by `editions/workstation/Containerfile.installer`. The installed workstation payload should not ship Sirius.
 

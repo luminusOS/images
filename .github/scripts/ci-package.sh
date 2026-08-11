@@ -24,27 +24,18 @@ fi
 # graph driver refuses to run on top of overlayfs. /work is a bind mount
 # of the runner's ext4 disk, which is a supported backing filesystem.
 cache_dir="${PWD}/.osbuild-cache"
+export IMAGE_BUILDER_CACHE="${cache_dir}"
 
 case "${format}" in
   iso)
     # The installer payload is already embedded in the live root as an OCI
     # layout (see Containerfile.installer), so only the live root is needed.
     podman pull "${WORKSTATION_ISO_IMAGE}"
-    image-builder build \
-      --cache "${cache_dir}" \
-      --output-dir . \
-      --output-name "${OUTPUT_NAME}" \
-      --bootc-ref "${WORKSTATION_ISO_IMAGE}" \
-      bootc-generic-iso
+    ./tools/package-artifact.sh iso "${WORKSTATION_ISO_IMAGE}" "${OUTPUT_NAME}"
     ;;
   qcow2)
     podman pull "${WORKSTATION_IMAGE}"
-    image-builder build \
-      --cache "${cache_dir}" \
-      --output-dir . \
-      --output-name "${OUTPUT_NAME}" \
-      --bootc-ref "${WORKSTATION_IMAGE}" \
-      qcow2
+    ./tools/package-artifact.sh qcow2 "${WORKSTATION_IMAGE}" "${OUTPUT_NAME}"
     ;;
   *)
     echo "Unknown format: ${format} (expected iso or qcow2)" >&2

@@ -59,8 +59,11 @@ flowchart TD
 ├── README.md
 ├── .just/
 │   ├── build.just
+│   ├── common.just
 │   ├── package.just
 │   └── qemu.just
+├── config/
+│   └── versions.env
 ├── editions/
 │   ├── cast/
 │   ├── core/
@@ -69,15 +72,22 @@ flowchart TD
 │   ├── mobile/
 │   ├── play/
 │   └── workstation/
+│       ├── assets/
 │       ├── Containerfile
+│       ├── Containerfile.installer
 │       ├── build.sh
 │       └── files/
+│           ├── installer/
+│           └── system/
 ├── shared/
 │   ├── bootc-image-builder.toml.example
 │   ├── flatpaks
 │   └── scripts/
 └── tools/
+    ├── config-value.sh
     ├── install-qemu.sh
+    ├── package-artifact.sh
+    ├── qemu-common.sh
     └── qemu.sh
 ```
 
@@ -88,9 +98,9 @@ flowchart TD
 | Core image | `luminusos:<tag>` |
 | Workstation image | `luminusos-workstation:<tag>` |
 | Fedora version | Controlled by `LOS_FEDORA_VERSION`, default `44`. |
-| Local tag | `<fedora>.<YYYYMMDD>` unless `LOS_TAG` is set. |
+| Local tag | `testing-<fedora>.<YYYYMMDD>` unless `LOS_TAG` is set. |
 | Shared data/config | Stored in `shared/`; current shared inputs are Flatpak refs and bootc-image-builder config. |
-| Desktop files | Stored under `editions/workstation/files/` and copied into `/`. |
+| Workstation overlays | Installed files live under `files/system/`; live-only files live under `files/installer/`. Both mirror `/`. |
 | Desktop build script | `editions/workstation/build.sh`, called from the workstation Containerfile. |
 | Artifact packaging | Handled by `image-builder` through `just package workstation`. |
 | Local VM testing | Handled by `tools/qemu.sh` and `tools/install-qemu.sh`. |
@@ -102,11 +112,11 @@ flowchart TD
 | `LOS_BASE` | `quay.io/fedora/fedora-bootc:44` | Base image for the core edition. |
 | `LOS_FEDORA_VERSION` | `44` | Fedora release version used for DNF repos and tags. |
 | `LOS_REGISTRY` | `localhost` | Registry prefix for local builds. |
-| `LOS_TAG` | `<fedora>.<date>` | Build tag written to `VERSION`, `BUILD_ID`, `IMAGE_VERSION`, and bootloader entries. |
+| `LOS_TAG` | `testing-<fedora>.<date>` | Build tag written to `VERSION`, `BUILD_ID`, `IMAGE_VERSION`, and bootloader entries. |
 | `LOS_NAME` | `LuminusOS` | OS name written to os-release. |
 | `LOS_PRETTY_NAME` | `Luminus OS` | Base pretty OS name; active editions append their edition name and `LOS_TAG` for bootloader entries. |
-| `LOS_WORKSTATION_TARGET_IMAGE` | `ghcr.io/luminusos/luminusos-workstation:44` | Installed bootc update reference. |
-| `AURORA_SHELL_VERSION` | `v50.3` | Aurora Shell release downloaded during build. |
+| `LOS_WORKSTATION_TARGET_IMAGE` | `ghcr.io/luminusos/luminusos-workstation:testing-44` | Installed bootc testing update reference. |
+| `AURORA_SHELL_VERSION` | `v50.11` | Aurora Shell release downloaded during build. |
 | `LOS_FORCE_CORE` | `0` | Rebuild core even if the local stamp is unchanged. |
 | `LOS_SKIP_FLATPAKS` | `0` | Skip Flatpak installation during workstation build. |
 
@@ -187,6 +197,7 @@ flowchart TD
 | `shared/flatpaks` | Flatpak refs installed into workstation unless `LOS_SKIP_FLATPAKS=1`; related refs are not preinstalled so GPU-specific runtimes are resolved on the installed system. |
 | `shared/bootc-image-builder.toml.example` | Template for the gitignored local `shared/bootc-image-builder.toml` used by the direct QEMU install path (test user credentials stay out of git). |
 | `shared/scripts/` | Build-time helper scripts (rpmdb repair, releasever pin, os-release branding, initramfs rebuild, session-modes patch) bind-mounted into every edition build. |
+| `config/versions.env` | Shared Fedora, Aurora Shell, Sirius, and primary Fedora branch defaults consumed by Just and GitHub Actions. |
 
 ## Workstation Image
 
@@ -197,11 +208,11 @@ The workstation image is built by `editions/workstation/Containerfile`. It is us
 
 The ISO live root is built by `editions/workstation/Containerfile.installer` as `luminusos-workstation:<tag>-iso`. It starts from the workstation image, then adds the live-only installer packages, Sirius, GNOME live session files, and the image-builder ISO config. The normal workstation image is also embedded as the install payload.
 
-The workstation Containerfile has five conceptual stages:
+The workstation Containerfile has five stages:
 
-1. `ctx-workstation-script`: edition build script context.
-2. `ctx-flatpaks`: shared Flatpak refs from `shared/flatpaks`.
-3. `ctx-files`: workstation static file context.
+1. `ctx-scripts`: shared build helpers.
+2. `ctx-workstation-script`: edition build script context.
+3. `ctx-flatpaks`: shared Flatpak refs from `shared/flatpaks`.
 4. `aurora-extension`: downloads and validates the Aurora Shell extension zip.
 5. Final workstation stage: starts from core and installs installed-system boot packages, Plymouth, GNOME, Aurora Shell, Flatpaks, qcow2 image-builder config, and first-boot cleanup.
 
@@ -209,7 +220,7 @@ The workstation Containerfile has five conceptual stages:
 flowchart TD
     ScriptCtx["ctx-workstation-script<br/>editions/workstation/build.sh"]
     FlatpakCtx["ctx-flatpaks<br/>shared/flatpaks"]
-    FilesCtx["ctx-files<br/>editions/workstation/files"]
+    FilesCtx["system overlay<br/>files/system"]
     AuroraStage["aurora-extension stage"]
     CoreImage["core image<br/>luminusos:<tag>"]
     BootPkgs["installed boot packages<br/>kernel, dracut, grub, shim, bootc, toolbox, flatpak, plymouth"]
@@ -411,7 +422,7 @@ flowchart TD
     Disk["GPT disk"]
     BIOS["1 MiB<br/>BIOS boot partition"]
     ESP["512 MiB<br/>vfat ESP<br/>/boot/efi"]
-    Boot["2 GiB<br/>Btrfs<br/>/boot"]
+    Boot["1–2 GiB<br/>ext4<br/>/boot"]
     Root["remaining space<br/>Btrfs"]
     RootSubvol["root subvolume<br/>/"]
     HomeSubvol["home subvolume<br/>/home"]
@@ -567,7 +578,7 @@ flowchart TD
 
 `tools/qemu.sh disk`:
 
-- Boots `QEMU_DISK_PATH`, defaulting to `.test/disk.qcow2`.
+- Selects `QEMU_DISK_PATH`, `.test/last-qcow2`, the newest root-level qcow2, or the legacy `.test/disk.qcow2`, in that order.
 - `just qemu run` uses `.test/install-disk.qcow2` and resets NVRAM by default.
 
 `tools/install-qemu.sh`:
@@ -603,10 +614,10 @@ The installed system is a closed bootc deployment. Its update reference comes fr
 
 Package changes must be made in the Containerfiles or build scripts and delivered as a new OCI image.
 
-By default, installed systems track the Fedora-versioned workstation image in GHCR:
+By default, installed systems track the Fedora-specific testing channel in GHCR:
 
 ```bash
-LOS_WORKSTATION_TARGET_IMAGE=ghcr.io/luminusos/luminusos-workstation:44
+LOS_WORKSTATION_TARGET_IMAGE=ghcr.io/luminusos/luminusos-workstation:testing-44
 ```
 
 Local installer tests may override `LOS_WORKSTATION_TARGET_IMAGE`, but release builds should leave it on the registry-published reference so installed systems use `bootc upgrade` from the Luminus OS OCI registry.
@@ -631,7 +642,7 @@ When changing this repository, keep these points aligned:
 
 - `Justfile`, `README.md`, `ARCHITECTURE.md`, and `AGENTS.md` must agree on active commands and supported editions.
 - `disk.yaml` must keep root/home/var Btrfs with `/boot` ext4 (image-builder compatibility) and describe the same storage layout as the Sirius repart templates; image-builder takes the filesystem from `disk.yaml`, not from `--bootc-default-fs`.
-- Any live-only file added under `editions/workstation/files/` must be installed only by `Containerfile.installer` so it stays out of the workstation payload.
+- Live-only files belong under `editions/workstation/files/installer/`; the normal workstation Containerfile may consume only `files/system/` and shared branding assets.
 - Changes to `live-installer` must consider the Wayland session file, GNOME session file, GNOME Shell mode JSON, systemd user drop-in, and Aurora Shell metadata.
 - If the install flow changes, update `/etc/sirius/distro.toml` / `sirius.toml` and this document.
 
@@ -675,5 +686,5 @@ test ! -e /etc/sirius/distro.toml
 - The live ISO itself is not a bootc deployment; `bootc status` is expected after installation.
 - Sirius is installed only in the ISO live root, not in the installed workstation payload.
 - The `live-installer` session depends on a custom GNOME Shell mode; extensions used there must declare support for that mode.
-- Installs need roughly 6 GB of RAM: the live session runs from memory and `bootc install` stages the payload in the live tmpfs `/var/tmp`.
+- Sirius requires at least 2 GiB usable RAM for the live session. Local QEMU defaults to 4 GiB and CI allocates 6 GiB for reliable smoke tests; the OCI payload itself streams to disk without a large `/var/tmp` staging copy.
 - The direct qcow2 test path does not exercise the Sirius UI.

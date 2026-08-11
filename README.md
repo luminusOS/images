@@ -1,5 +1,5 @@
 <div align="center">
-  <img src="editions/workstation/files/usr/share/sirius/logo.png" width="160" />
+  <img src="editions/workstation/assets/logo.png" width="160" />
 </div>
 
 # Luminus OS
@@ -9,7 +9,7 @@ An immutable operating system built on [Fedora bootc](https://containers.github.
 ## Editions
 
 | Edition | Description | Output |
-|---------|-------------|--------|
+| --- | --- | --- |
 | **core** | Minimal base for downstream Luminus images | `luminusos:<tag>` container image |
 | **workstation** | GNOME desktop for PCs and notebooks | Container image, installable ISO (Sirius), qcow2 |
 
@@ -27,17 +27,19 @@ See [CONTRIBUTING.md](CONTRIBUTING.md) for prerequisites, faster iteration flags
 
 ## Versioning
 
-Releases follow the Fedora base version plus a build date:
+Testing releases follow the channel, Fedora base version, and build date:
 
 ```
-{FEDORA_VERSION}.{YYYYMMDD}   →   44.20260322
+testing-{FEDORA_VERSION}.{YYYYMMDD}   →   testing-44.20260322
 ```
 
-Container images use the Fedora version as a floating tag:
+Container images publish both channel-wide and Fedora-specific floating tags:
 
 ```
-ghcr.io/luminusos/luminusos:44
-ghcr.io/luminusos/luminusos-workstation:44
+ghcr.io/luminusos/luminusos:testing
+ghcr.io/luminusos/luminusos:testing-44
+ghcr.io/luminusos/luminusos-workstation:testing
+ghcr.io/luminusos/luminusos-workstation:testing-44
 ```
 
 ## Rebasing to Luminus OS
@@ -45,16 +47,16 @@ ghcr.io/luminusos/luminusos-workstation:44
 Rebase an existing bootc-capable Fedora Atomic system:
 
 ```bash
-bootc switch ghcr.io/luminusos/luminusos-workstation:44
+bootc switch ghcr.io/luminusos/luminusos-workstation:testing-44
 ```
 
 ## CI & Releases
 
 | Workflow | Trigger | What it does |
-|----------|---------|--------------|
+| --- | --- | --- |
 | `ci` | Push to `main` | Lint, unit/config tests, core smoke build |
-| `build-containers` | Push/PR on `main` and `f*` | Builds `core` and `workstation` containers → GHCR |
-| `publish` | Manual | Builds containers, packages ISO + qcow2, boot smoke test, GitHub Release |
+| `build-containers` | Push/PR on `main` and `f*` | Builds testing `core` and `workstation` containers → GHCR |
+| `publish` | Manual | Builds containers, packages and boot-tests ISO/qcow2, then publishes a dated testing pre-release |
 
 ISO and qcow2 downloads are hosted on [SourceForge](https://sourceforge.net/projects/luminusos/files/) (mirrored worldwide); GitHub Releases carry the notes with direct links and a SHA256 table per edition.
 

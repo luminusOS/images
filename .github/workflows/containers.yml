@@ -1,0 +1,274 @@
+name: Reusable Container Build
+
+on:
+  workflow_call:
+    inputs:
+      fedora_version:
+        required: false
+        type: string
+        default: ""
+      version_tag:
+        required: false
+        type: string
+        default: ""
+      sirius_version:
+        required: false
+        type: string
+        default: ""
+      skip_flatpaks:
+        required: false
+        type: string
+        default: "0"
+      build_installer:
+        required: false
+        type: boolean
+        default: false
+      publish:
+        required: false
+        type: boolean
+        default: false
+      channel_policy:
+        required: false
+        type: string
+        default: auto
+      builder_mode:
+        required: false
+        type: string
+        default: registry
+    outputs:
+      fedora_version:
+        value: ${{ jobs.build.outputs.fedora_version }}
+      version_tag:
+        value: ${{ jobs.build.outputs.version_tag }}
+      branch_tag:
+        value: ${{ jobs.build.outputs.branch_tag }}
+      channel_tag:
+        value: ${{ jobs.build.outputs.channel_tag }}
+      image_namespace:
+        value: ${{ jobs.build.outputs.image_namespace }}
+      release_tag:
+        value: ${{ jobs.build.outputs.version_tag }}
+      core_image:
+        value: ${{ jobs.build.outputs.core_image }}
+      workstation_image:
+        value: ${{ jobs.build.outputs.workstation_image }}
+      workstation_iso_image:
+        value: ${{ jobs.build.outputs.workstation_iso_image }}
+
+jobs:
+  build:
+    name: Build core and workstation
+    runs-on: ubuntu-latest
+    timeout-minutes: 180
+    permissions:
+      contents: read
+      packages: write
+    outputs:
+      fedora_version: ${{ steps.version.outputs.fedora_version }}
+      version_tag: ${{ steps.version.outputs.version_tag }}
+      branch_tag: ${{ steps.version.outputs.branch_tag }}
+      channel_tag: ${{ steps.version.outputs.channel_tag }}
+      image_namespace: ${{ steps.version.outputs.image_namespace }}
+      core_image: ${{ steps.version.outputs.core_image }}
+      workstation_image: ${{ steps.version.outputs.workstation_image }}
+      workstation_iso_image: ${{ steps.version.outputs.workstation_iso_image }}
+    env:
+      REGISTRY: ghcr.io
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Resolve versions and image references
+        id: version
+        shell: bash
+        env:
+          INPUT_FEDORA_VERSION: ${{ inputs.fedora_version }}
+          INPUT_VERSION_TAG: ${{ inputs.version_tag }}
+          INPUT_SIRIUS_VERSION: ${{ inputs.sirius_version }}
+          CHANNEL_POLICY: ${{ inputs.channel_policy }}
+          BUILDER_MODE: ${{ inputs.builder_mode }}
+        run: |
+          set -euo pipefail
+          source config/versions.env
+
+          case "${BUILDER_MODE}" in local|registry) ;; *) echo "Unknown builder_mode: ${BUILDER_MODE}" >&2; exit 1 ;; esac
+          case "${CHANNEL_POLICY}" in auto|always|never) ;; *) echo "Unknown channel_policy: ${CHANNEL_POLICY}" >&2; exit 1 ;; esac
+          if [ "${BUILDER_MODE}" = registry ] && [ "${{ inputs.publish }}" != true ]; then
+            echo "registry mode requires publish=true so downstream images can pull their base" >&2
+            exit 1
+          fi
+          if [ "${BUILDER_MODE}" = local ] && [ "${{ inputs.build_installer }}" = true ]; then
+            echo "installer builds require builder_mode=registry" >&2
+            exit 1
+          fi
+
+          if [ -n "${INPUT_FEDORA_VERSION}" ]; then
+            fedora_version="${INPUT_FEDORA_VERSION}"
+          elif [[ "${GITHUB_REF_NAME}" =~ ^f([0-9]+)$ ]]; then
+            fedora_version="${BASH_REMATCH[1]}"
+          else
+            fedora_version="${DEFAULT_FEDORA_VERSION}"
+          fi
+          version_tag="${INPUT_VERSION_TAG:-testing-${fedora_version}.$(date -u +%Y%m%d)}"
+          branch_tag="testing-${fedora_version}"
+          channel_tag=testing
+          image_namespace="$(printf '%s' "${GITHUB_REPOSITORY_OWNER}" | tr '[:upper:]' '[:lower:]')"
+          sirius_version="${INPUT_SIRIUS_VERSION:-${SIRIUS_VERSION}}"
+
+          publish_channel=false
+          case "${CHANNEL_POLICY}" in
+            always) publish_channel=true ;;
+            auto)
+              if [ "${GITHUB_REF_NAME}" = "${PRIMARY_FEDORA_BRANCH}" ] || [ "${GITHUB_REF_NAME}" = main ]; then
+                publish_channel=true
+              fi
+              ;;
+          esac
+
+          core_image="${REGISTRY}/${image_namespace}/luminusos:${version_tag}"
+          workstation_image="${REGISTRY}/${image_namespace}/luminusos-workstation:${version_tag}"
+          workstation_iso_image="${workstation_image}-iso"
+          channel_core_image="${core_image}"
+          channel_workstation_image="${workstation_image}"
+          if [ "${publish_channel}" = true ]; then
+            channel_core_image="${REGISTRY}/${image_namespace}/luminusos:${channel_tag}"
+            channel_workstation_image="${REGISTRY}/${image_namespace}/luminusos-workstation:${channel_tag}"
+          fi
+          core_build_ref="${core_image}"
+          local_core_tag="${core_image}"
+          local_workstation_tag="${workstation_image}"
+          if [ "${BUILDER_MODE}" = local ]; then
+            core_build_ref="localhost/luminusos:${version_tag}"
+            local_core_tag="${core_build_ref}"
+            local_workstation_tag="localhost/luminusos-workstation:${version_tag}"
+          fi
+
+          {
+            echo "fedora_version=${fedora_version}"
+            echo "version_tag=${version_tag}"
+            echo "branch_tag=${branch_tag}"
+            echo "channel_tag=${channel_tag}"
+            echo "image_namespace=${image_namespace}"
+            echo "sirius_version=${sirius_version}"
+            echo "aurora_shell_version=${AURORA_SHELL_VERSION}"
+            echo "aurora_shell_sha256=${AURORA_SHELL_SHA256}"
+            echo "publish_channel=${publish_channel}"
+            echo "core_image=${core_image}"
+            echo "workstation_image=${workstation_image}"
+            echo "workstation_iso_image=${workstation_iso_image}"
+            echo "channel_core_image=${channel_core_image}"
+            echo "channel_workstation_image=${channel_workstation_image}"
+            echo "core_build_ref=${core_build_ref}"
+            echo "local_core_tag=${local_core_tag}"
+            echo "local_workstation_tag=${local_workstation_tag}"
+          } >>"${GITHUB_OUTPUT}"
+
+      - name: Log in to GHCR
+        if: inputs.publish
+        uses: docker/login-action@v4
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v4
+        with:
+          driver: ${{ inputs.builder_mode == 'local' && 'docker' || 'docker-container' }}
+
+      - name: Build core
+        uses: docker/build-push-action@v7
+        with:
+          context: .
+          file: editions/core/Containerfile
+          load: ${{ inputs.builder_mode == 'local' }}
+          push: ${{ inputs.builder_mode == 'registry' && inputs.publish }}
+          build-args: |
+            base=quay.io/fedora/fedora-bootc:${{ steps.version.outputs.fedora_version }}
+            fedora_version=${{ steps.version.outputs.fedora_version }}
+            distro_version=${{ steps.version.outputs.version_tag }}
+            distro_name=LuminusOS
+            distro_pretty_name=Luminus OS
+          tags: |
+            ${{ steps.version.outputs.local_core_tag }}
+            ${{ steps.version.outputs.core_image }}
+            ${{ env.REGISTRY }}/${{ steps.version.outputs.image_namespace }}/luminusos:${{ steps.version.outputs.branch_tag }}
+            ${{ steps.version.outputs.channel_core_image }}
+          cache-from: ${{ inputs.builder_mode == 'registry' && 'type=gha' || '' }}
+          cache-to: ${{ inputs.builder_mode == 'registry' && 'type=gha,mode=max' || '' }}
+
+      - name: Publish core from local builder
+        if: inputs.publish && inputs.builder_mode == 'local'
+        shell: bash
+        run: |
+          set -euo pipefail
+          docker push "${{ steps.version.outputs.core_image }}"
+          docker push "${REGISTRY}/${{ steps.version.outputs.image_namespace }}/luminusos:${{ steps.version.outputs.branch_tag }}"
+          if [ "${{ steps.version.outputs.publish_channel }}" = true ]; then
+            docker push "${REGISTRY}/${{ steps.version.outputs.image_namespace }}/luminusos:${{ steps.version.outputs.channel_tag }}"
+          fi
+
+      - name: Build workstation
+        uses: docker/build-push-action@v7
+        with:
+          context: .
+          file: editions/workstation/Containerfile
+          load: ${{ inputs.builder_mode == 'local' }}
+          push: ${{ inputs.builder_mode == 'registry' && inputs.publish }}
+          build-args: |
+            core_image=${{ steps.version.outputs.core_build_ref }}
+            fedora_version=${{ steps.version.outputs.fedora_version }}
+            image_version=${{ steps.version.outputs.version_tag }}
+            edition_name=Workstation
+            edition_id=workstation
+            skip_flatpaks=${{ inputs.skip_flatpaks }}
+            aurora_shell_version=${{ steps.version.outputs.aurora_shell_version }}
+            aurora_shell_sha256=${{ steps.version.outputs.aurora_shell_sha256 }}
+          tags: |
+            ${{ steps.version.outputs.local_workstation_tag }}
+            ${{ steps.version.outputs.workstation_image }}
+            ${{ env.REGISTRY }}/${{ steps.version.outputs.image_namespace }}/luminusos-workstation:${{ steps.version.outputs.branch_tag }}
+            ${{ steps.version.outputs.channel_workstation_image }}
+          cache-from: ${{ inputs.builder_mode == 'registry' && 'type=gha' || '' }}
+          cache-to: ${{ inputs.builder_mode == 'registry' && 'type=gha,mode=max' || '' }}
+
+      - name: Publish workstation from local builder
+        if: inputs.publish && inputs.builder_mode == 'local'
+        shell: bash
+        run: |
+          set -euo pipefail
+          docker push "${{ steps.version.outputs.workstation_image }}"
+          docker push "${REGISTRY}/${{ steps.version.outputs.image_namespace }}/luminusos-workstation:${{ steps.version.outputs.branch_tag }}"
+          if [ "${{ steps.version.outputs.publish_channel }}" = true ]; then
+            docker push "${REGISTRY}/${{ steps.version.outputs.image_namespace }}/luminusos-workstation:${{ steps.version.outputs.channel_tag }}"
+          fi
+
+      - name: Install skopeo
+        if: inputs.build_installer
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y skopeo
+
+      - name: Export installer payload as OCI layout
+        if: inputs.build_installer
+        run: |
+          mkdir -p .test
+          skopeo copy \
+            "docker://${{ steps.version.outputs.workstation_image }}" \
+            "oci:.test/payload.oci:latest"
+
+      - name: Build workstation ISO live root
+        if: inputs.build_installer
+        uses: docker/build-push-action@v7
+        with:
+          context: .
+          file: editions/workstation/Containerfile.installer
+          push: ${{ inputs.publish }}
+          build-args: |
+            fedora_version=${{ steps.version.outputs.fedora_version }}
+            sirius_version=${{ steps.version.outputs.sirius_version }}
+            image_version=${{ steps.version.outputs.version_tag }}
+            workstation_image=${{ steps.version.outputs.workstation_image }}
+            workstation_target_image=${{ env.REGISTRY }}/${{ steps.version.outputs.image_namespace }}/luminusos-workstation:${{ steps.version.outputs.branch_tag }}
+          tags: ${{ steps.version.outputs.workstation_iso_image }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max

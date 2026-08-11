@@ -1,20 +1,6 @@
 set dotenv-load := true
 
-registry := env("LOS_REGISTRY", "localhost")
-fedora_ver := env("LOS_FEDORA_VERSION", "44")
-build_date := `date +%Y%m%d`
-tag := env("LOS_TAG", fedora_ver + "." + build_date)
-sudo_keepalive := '''
-keep_sudo_alive() {
-  sudo -v
-  while true; do
-    sudo -n true
-    sleep 60
-  done &
-  sudo_keepalive_pid="$!"
-  trap 'kill "${sudo_keepalive_pid}" 2>/dev/null || true' EXIT
-}
-'''
+import 'common.just'
 
 # Package all workstation artifact formats by default.
 default: workstation
@@ -93,26 +79,6 @@ _workstation format:
       ./tools/squash-image.sh "$image_ref"
     fi
 
-    # run_image_builder <image-builder-type> <output-name> <pointer-file> [extra args...]
-    run_image_builder() {
-      local type="$1" output="$2" pointer="$3"
-      shift 3
-
-      sudo image-builder build \
-        --output-dir . \
-        --output-name "$output" \
-        "$@" \
-        "$type"
-
-      local path="$(pwd)/$output"
-      if [ ! -f "$path" ]; then
-        echo "Expected artifact was not created: $path"
-        exit 1
-      fi
-      printf '%s\n' "$path" > "$pointer"
-      echo "Wrote artifact pointer: $pointer -> $path"
-    }
-
     package_iso() {
       build_iso_image
 
@@ -120,16 +86,14 @@ _workstation format:
       # layout (see Containerfile.installer), so no --bootc-installer-payload-ref
       # here: image-builder only needs the live root image.
       echo "Building workstation ISO from $iso_image_ref"
-      run_image_builder bootc-generic-iso \
-        "luminusos-workstation-${package_tag}.iso" .test/last-iso \
-        --bootc-ref "$iso_image_ref"
+      ./tools/package-artifact.sh iso "$iso_image_ref" \
+        "luminusos-workstation-${package_tag}.iso" .test/last-iso
     }
 
     package_qcow2() {
       echo "Building workstation qcow2 from $image_ref"
-      run_image_builder qcow2 \
-        "luminusos-workstation-${package_tag}.qcow2" .test/last-qcow2 \
-        --bootc-ref "$image_ref"
+      ./tools/package-artifact.sh qcow2 "$image_ref" \
+        "luminusos-workstation-${package_tag}.qcow2" .test/last-qcow2
     }
 
     case "{{ format }}" in

@@ -11,7 +11,7 @@ ARG fedora_version=44
 ARG image_version=44
 ARG sirius_version=1.0.3
 ARG workstation_image=localhost/luminusos-workstation:latest
-ARG workstation_target_image=ghcr.io/luminusos/luminusos-workstation:44
+ARG workstation_target_image=ghcr.io/luminusos/luminusos-workstation:testing-44
 ARG aurora_shell_uuid=aurora-shell@luminusos.github.io
 ARG source_url="https://github.com/LuminusOS/images"
 
@@ -39,28 +39,10 @@ RUN --mount=type=cache,target=/var/cache/dnf \
     # installed there; the LuminusOS templates are installed below.
     rm -f /usr/share/sirius/repart.d/*.conf
 
-# Static installer files are copied declaratively from files/. The following
-# RUN blocks only perform transformations or runtime image configuration.
-COPY editions/workstation/files/etc/dconf/db/local.d/00-iso-live-mode /etc/dconf/db/local.d/00-iso-live-mode
-COPY editions/workstation/files/etc/dconf/profile/user /etc/dconf/profile/user
-COPY editions/workstation/files/etc/gdm/custom.conf /etc/gdm/custom.conf
-COPY editions/workstation/files/etc/sirius/distro.toml /etc/sirius/distro.toml
-COPY editions/workstation/files/etc/sirius/hostname /etc/hostname
-COPY editions/workstation/files/etc/sirius/sirius.toml /etc/sirius/sirius.toml
-COPY editions/workstation/files/usr/lib/image-builder/bootc/iso.yaml /usr/lib/image-builder/bootc/iso.yaml
-COPY editions/workstation/files/usr/lib/systemd/user/gnome-session@live-installer.target.d/live-installer.sirius.conf /usr/lib/systemd/user/gnome-session@live-installer.target.d/live-installer.session.conf
-COPY editions/workstation/files/usr/lib/systemd/user/luminusos-sirius.service /usr/lib/systemd/user/luminusos-sirius.service
-COPY editions/workstation/files/usr/share/gnome-session/sessions/live-installer.session /usr/share/gnome-session/sessions/live-installer.session
-COPY editions/workstation/files/usr/share/gnome-shell/modes/live-installer.json /usr/share/gnome-shell/modes/live-installer.json
-COPY editions/workstation/files/usr/share/icons/hicolor/scalable/actions/ /usr/share/icons/hicolor/scalable/actions/
-COPY editions/workstation/files/usr/share/polkit-1/rules.d/50-sirius-live.rules /usr/share/polkit-1/rules.d/50-sirius-live.rules
-COPY editions/workstation/files/usr/share/sirius/logo.png /usr/share/sirius/logo.png
-COPY editions/workstation/files/usr/share/sirius/welcome-banner.png /usr/share/sirius/welcome-banner.png
-COPY editions/workstation/files/usr/share/sirius/repart.d/ /usr/share/sirius/repart.d/
-COPY editions/workstation/files/usr/share/wayland-sessions/live-installer.desktop /usr/share/wayland-sessions/live-installer.desktop
-COPY editions/workstation/files/var/lib/AccountsService/users/liveuser /var/lib/AccountsService/users/liveuser
-COPY editions/workstation/files/boot/efi/EFI/fedora/grub.cfg /boot/efi/EFI/fedora/grub.cfg
-COPY editions/workstation/files/boot/efi/EFI/fedora/grub.cfg /boot/efi/EFI/BOOT/grub.cfg
+# This overlay contains only live-installer state and mirrors its destination
+# paths. The normal workstation payload never consumes it.
+COPY editions/workstation/files/installer/ /
+COPY editions/workstation/assets/logo.png /usr/share/sirius/logo.png
 
 RUN sed -i \
       -e "s|@WORKSTATION_TARGET_IMAGE@|${workstation_target_image}|g" \
@@ -71,6 +53,8 @@ RUN sed -i \
 
 RUN --mount=type=bind,from=ctx-scripts,source=/scripts,target=/scripts \
     mkdir -p /boot/efi /boot/loader/entries && \
+    mkdir -p /boot/efi/EFI/BOOT && \
+    cp /boot/efi/EFI/fedora/grub.cfg /boot/efi/EFI/BOOT/grub.cfg && \
     rm -f /usr/share/applications/liveinst.desktop && \
     mkdir -p /usr/lib/systemd/user/gnome-session@live-installer.target.d \
       /usr/lib/systemd/user/gnome-session@live-installer.target.wants && \

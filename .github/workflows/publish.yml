@@ -1,4 +1,4 @@
-name: Publish
+name: Publish Testing
 
 "on":
   workflow_dispatch:
@@ -9,9 +9,6 @@ name: Publish
       sirius_version:
         description: "Sirius release (RPM version on GitHub releases)"
         default: "1.0.3"
-      release_tag:
-        description: "Release tag (empty = v<fedora>.<date>)"
-        default: ""
       skip_flatpaks:
         description: "Skip Flatpak preinstall (faster test builds)"
         default: "0"
@@ -20,139 +17,26 @@ concurrency:
   group: publish
   cancel-in-progress: false
 
-env:
-  REGISTRY: ghcr.io
-  AURORA_SHELL_VERSION: v50.3
-  AURORA_SHELL_SHA256: 0fcfa7933872184831a80da6521d8535cf4dc1e2f367a45643332cfe7eba111f
-
 jobs:
-  version:
-    name: Resolve version
-    runs-on: ubuntu-latest
-    outputs:
-      fedora_version: ${{ steps.version.outputs.fedora_version }}
-      version_tag: ${{ steps.version.outputs.version_tag }}
-      branch_tag: ${{ steps.version.outputs.branch_tag }}
-      image_namespace: ${{ steps.version.outputs.image_namespace }}
-      release_tag: ${{ steps.version.outputs.release_tag }}
-    steps:
-      - name: Resolve version
-        id: version
-        shell: bash
-        run: |
-          set -euo pipefail
-          FEDORA_VERSION="${{ inputs.fedora_version }}"
-          VERSION_TAG="${FEDORA_VERSION}.$(date -u +%Y%m%d)"
-          RELEASE_TAG="${{ inputs.release_tag }}"
-          if [ -z "${RELEASE_TAG}" ]; then
-            RELEASE_TAG="v${VERSION_TAG}"
-          fi
-          {
-            echo "fedora_version=${FEDORA_VERSION}"
-            echo "version_tag=${VERSION_TAG}"
-            echo "branch_tag=${FEDORA_VERSION}"
-            echo "image_namespace=$(printf '%s' "${GITHUB_REPOSITORY_OWNER}" | tr '[:upper:]' '[:lower:]')"
-            echo "release_tag=${RELEASE_TAG}"
-          } >> "$GITHUB_OUTPUT"
-
   containers:
     name: Build and push containers
-    needs: version
-    runs-on: ubuntu-latest
-    timeout-minutes: 180
     permissions:
       contents: read
       packages: write
-    env:
-      CORE_IMAGE: ghcr.io/${{ needs.version.outputs.image_namespace }}/luminusos:${{ needs.version.outputs.version_tag }}
-      WORKSTATION_IMAGE: ghcr.io/${{ needs.version.outputs.image_namespace }}/luminusos-workstation:${{ needs.version.outputs.version_tag }}
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v7
-
-      - name: Log in to GHCR
-        uses: docker/login-action@v4
-        with:
-          registry: ${{ env.REGISTRY }}
-          username: ${{ github.actor }}
-          password: ${{ secrets.GITHUB_TOKEN }}
-
-      - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v4
-
-      # Each image is pushed to GHCR and the next build pulls it from there:
-      # the buildx container driver cannot see images loaded into the local
-      # docker daemon, so localhost/ base refs do not resolve.
-      - name: Build and push core
-        uses: docker/build-push-action@v7
-        with:
-          context: .
-          file: editions/core/Containerfile
-          push: true
-          build-args: |
-            base=quay.io/fedora/fedora-bootc:${{ needs.version.outputs.fedora_version }}
-            fedora_version=${{ needs.version.outputs.fedora_version }}
-            distro_version=${{ needs.version.outputs.version_tag }}
-            distro_name=LuminusOS
-            distro_pretty_name=Luminus OS
-          tags: ${{ env.CORE_IMAGE }}
-          cache-from: type=gha
-          cache-to: type=gha,mode=max
-
-      - name: Build and push workstation
-        uses: docker/build-push-action@v7
-        with:
-          context: .
-          file: editions/workstation/Containerfile
-          push: true
-          build-args: |
-            core_image=${{ env.CORE_IMAGE }}
-            fedora_version=${{ needs.version.outputs.fedora_version }}
-            image_version=${{ needs.version.outputs.version_tag }}
-            edition_name=Workstation
-            edition_id=workstation
-            skip_flatpaks=${{ inputs.skip_flatpaks }}
-            aurora_shell_version=${{ env.AURORA_SHELL_VERSION }}
-            aurora_shell_sha256=${{ env.AURORA_SHELL_SHA256 }}
-          tags: ${{ env.WORKSTATION_IMAGE }}
-          cache-from: type=gha
-          cache-to: type=gha,mode=max
-
-      # The live root embeds the installer payload as an OCI layout copied
-      # from the build context (see Containerfile.installer); export it from
-      # the payload image pushed above. skopeo reuses the GHCR credentials
-      # written by docker/login-action.
-      - name: Export installer payload as OCI layout
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y skopeo
-          mkdir -p .test
-          rm -rf .test/payload.oci
-          skopeo copy \
-            "docker://${WORKSTATION_IMAGE}" \
-            "oci:.test/payload.oci:latest"
-
-      # The live root's distro.toml must reference the same GHCR ref that
-      # the installed system will track for future `bootc upgrade`.
-      - name: Build and push workstation ISO live root
-        uses: docker/build-push-action@v7
-        with:
-          context: .
-          file: editions/workstation/Containerfile.installer
-          push: true
-          build-args: |
-            fedora_version=${{ needs.version.outputs.fedora_version }}
-            sirius_version=${{ inputs.sirius_version }}
-            image_version=${{ needs.version.outputs.version_tag }}
-            workstation_image=${{ env.WORKSTATION_IMAGE }}
-            workstation_target_image=ghcr.io/${{ needs.version.outputs.image_namespace }}/luminusos-workstation:${{ needs.version.outputs.branch_tag }}
-          tags: ${{ env.WORKSTATION_IMAGE }}-iso
-          cache-from: type=gha
-          cache-to: type=gha,mode=max
+    uses: ./.github/workflows/containers.yml
+    with:
+      fedora_version: ${{ inputs.fedora_version }}
+      sirius_version: ${{ inputs.sirius_version }}
+      skip_flatpaks: ${{ inputs.skip_flatpaks }}
+      build_installer: true
+      publish: true
+      channel_policy: always
+      builder_mode: registry
+    secrets: inherit
 
   iso:
     name: Package ISO
-    needs: [version, containers]
+    needs: [containers]
     runs-on: ubuntu-latest
     timeout-minutes: 180
     permissions:
@@ -175,8 +59,8 @@ jobs:
 
       - name: Build ISO from prebuilt containers
         env:
-          NAMESPACE: ${{ needs.version.outputs.image_namespace }}
-          VERSION_TAG: ${{ needs.version.outputs.version_tag }}
+          NAMESPACE: ${{ needs.containers.outputs.image_namespace }}
+          VERSION_TAG: ${{ needs.containers.outputs.version_tag }}
           GHCR_USER: ${{ github.actor }}
           GHCR_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
@@ -187,7 +71,7 @@ jobs:
             -e WORKSTATION_ISO_IMAGE="ghcr.io/${NAMESPACE}/luminusos-workstation:${VERSION_TAG}-iso" \
             -e OUTPUT_NAME="luminusos-workstation-${VERSION_TAG}.iso" \
             -e GHCR_USER="${GHCR_USER}" -e GHCR_TOKEN="${GHCR_TOKEN}" \
-            "quay.io/fedora/fedora:${{ needs.version.outputs.fedora_version }}" \
+            "quay.io/fedora/fedora:${{ needs.containers.outputs.fedora_version }}" \
             bash .github/scripts/ci-package.sh iso
 
       - name: Upload ISO artifact
@@ -200,7 +84,7 @@ jobs:
 
   qcow2:
     name: Package qcow2
-    needs: [version, containers]
+    needs: [containers]
     runs-on: ubuntu-latest
     timeout-minutes: 180
     permissions:
@@ -223,8 +107,8 @@ jobs:
 
       - name: Build qcow2 from prebuilt containers
         env:
-          NAMESPACE: ${{ needs.version.outputs.image_namespace }}
-          VERSION_TAG: ${{ needs.version.outputs.version_tag }}
+          NAMESPACE: ${{ needs.containers.outputs.image_namespace }}
+          VERSION_TAG: ${{ needs.containers.outputs.version_tag }}
           GHCR_USER: ${{ github.actor }}
           GHCR_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
@@ -235,7 +119,7 @@ jobs:
             -e WORKSTATION_IMAGE="ghcr.io/${NAMESPACE}/luminusos-workstation:${VERSION_TAG}" \
             -e OUTPUT_NAME="luminusos-workstation-${VERSION_TAG}.qcow2" \
             -e GHCR_USER="${GHCR_USER}" -e GHCR_TOKEN="${GHCR_TOKEN}" \
-            "quay.io/fedora/fedora:${{ needs.version.outputs.fedora_version }}" \
+            "quay.io/fedora/fedora:${{ needs.containers.outputs.fedora_version }}" \
             bash .github/scripts/ci-package.sh qcow2
 
       - name: Upload qcow2 artifact
@@ -248,7 +132,7 @@ jobs:
 
   boot-test:
     name: Boot smoke test
-    needs: [version, iso, qcow2]
+    needs: [containers, iso, qcow2]
     runs-on: ubuntu-latest
     timeout-minutes: 90
     steps:
@@ -300,7 +184,7 @@ jobs:
 
   release:
     name: Publish release
-    needs: [version, iso, qcow2, boot-test]
+    needs: [containers, iso, qcow2, boot-test]
     runs-on: ubuntu-latest
     permissions:
       contents: write
@@ -321,11 +205,11 @@ jobs:
           set -euo pipefail
           cd dist
           {
-            echo "LuminusOS ${{ needs.version.outputs.version_tag }}"
+            echo "LuminusOS ${{ needs.containers.outputs.version_tag }}"
             echo
             echo "## Workstation"
             echo
-            printf "Container: \`%s\`\n" "ghcr.io/${{ needs.version.outputs.image_namespace }}/luminusos-workstation:${{ needs.version.outputs.version_tag }}"
+            printf "Container: \`%s\`\n" "ghcr.io/${{ needs.containers.outputs.image_namespace }}/luminusos-workstation:${{ needs.containers.outputs.version_tag }}"
             echo
             echo "### Downloads (mirrored worldwide by SourceForge)"
             echo
@@ -334,7 +218,7 @@ jobs:
             for f in luminusos-workstation-*; do
               size="$(du -h "$f" | cut -f1)"
               sha="$(sha256sum "$f" | cut -d' ' -f1)"
-              echo "| [${f}](https://sourceforge.net/projects/luminusos/files/${{ needs.version.outputs.version_tag }}/${f}/download) | ${size} | \`${sha}\` |"
+              echo "| [${f}](https://sourceforge.net/projects/luminusos/files/${{ needs.containers.outputs.version_tag }}/${f}/download) | ${size} | \`${sha}\` |"
             done
           } > notes.md
 
@@ -350,7 +234,7 @@ jobs:
           install -m 0600 /dev/null ~/.ssh/id_sourceforge
           printf '%s\n' "${SF_SSH_KEY}" > ~/.ssh/id_sourceforge
           ssh-keyscan frs.sourceforge.net >> ~/.ssh/known_hosts 2>/dev/null
-          dest="${SF_USER}@frs.sourceforge.net:/home/frs/project/luminusos/${{ needs.version.outputs.version_tag }}/"
+          dest="${SF_USER}@frs.sourceforge.net:/home/frs/project/luminusos/${{ needs.containers.outputs.version_tag }}/"
           rsync -avP --rsh="ssh -i ~/.ssh/id_sourceforge" dist/ "${dest}"
 
       - name: Create GitHub release
@@ -359,7 +243,8 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          gh release create "${{ needs.version.outputs.release_tag }}" \
-            --title "LuminusOS ${{ needs.version.outputs.version_tag }}" \
+          gh release create "${{ needs.containers.outputs.release_tag }}" \
+            --title "LuminusOS ${{ needs.containers.outputs.version_tag }}: Testing" \
             --notes-file dist/notes.md \
+            --prerelease \
             --target "$GITHUB_SHA"
