@@ -18,6 +18,7 @@ sleep-inactive-battery-type='nothing'
 idle-dim=false
 
 [org/gnome/shell/extensions/aurora-shell]
+module-aurora-menu=false
 module-no-overview=false
 module-pip-on-top=false
 module-theme-changer=false

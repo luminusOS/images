@@ -21,10 +21,12 @@ else
   skip "PyYAML unavailable; CI performs YAML parsing"
 fi
 
-while IFS= read -r -d '' json; do
-  expect "JSON parses: ${json#"${ROOT}/"}" \
-    python3 -c 'import sys, json; json.load(open(sys.argv[1], encoding="utf-8"))' "${json}"
-done < <(find "${INSTALLER_FILES}" -name '*.json' -print0)
+for files_root in "${SYSTEM_FILES}" "${INSTALLER_FILES}"; do
+  while IFS= read -r -d '' json; do
+    expect "JSON parses: ${json#"${ROOT}/"}" \
+      python3 -c 'import sys, json; json.load(open(sys.argv[1], encoding="utf-8"))' "${json}"
+  done < <(find "${files_root}" -name '*.json' -print0)
+done
 
 while IFS= read -r -d '' ini; do
   expect "INI parses: ${ini#"${ROOT}/"}" \
@@ -62,6 +64,29 @@ assert items("skip") == {"software"}
 assert items("existing_user_only") == {"language"}
 assert "keyboard" not in items("skip") | items("existing_user_only")
 ' "${SYSTEM_FILES}/etc/gnome-initial-setup/vendor.conf"
+
+expect "GNOME Initial Setup enables Aurora in a user-derived shell mode" python3 -c '
+import json, sys
+with open(sys.argv[1], encoding="utf-8") as f:
+    mode = json.load(f)
+assert mode["parentMode"] == "user"
+assert "aurora-shell@luminusos.github.io" in mode["enabledExtensions"]
+assert mode["hasOverview"] is False
+assert mode["hasRunDialog"] is False
+' "${SYSTEM_FILES}/usr/share/gnome-shell/modes/initial-setup.json"
+
+expect "live installer disables the Aurora menu" \
+  grep -qx 'module-aurora-menu=false' \
+  "${INSTALLER_FILES}/etc/dconf/db/local.d/00-iso-live-mode"
+expect "GNOME Initial Setup uses its LuminusOS dconf database" \
+  grep -qx 'system-db:luminusos-initial-setup' \
+  "${SYSTEM_FILES}/etc/dconf/profile/gnome-initial-setup"
+expect "GNOME Initial Setup preserves the upstream dconf defaults" \
+  grep -qx 'file-db:/usr/share/gnome-initial-setup/initial-setup-dconf-defaults' \
+  "${SYSTEM_FILES}/etc/dconf/profile/gnome-initial-setup"
+expect "GNOME Initial Setup disables the Aurora menu" \
+  grep -qx 'module-aurora-menu=false' \
+  "${SYSTEM_FILES}/etc/dconf/db/luminusos-initial-setup.d/00-aurora-shell"
 
 repart_dir="${INSTALLER_FILES}/usr/share/sirius/repart.d"
 expect "repart.d ships exactly three definitions" \

@@ -1,6 +1,6 @@
 ARG core_image=localhost/luminusos:latest
 ARG fedora_version=44
-ARG aurora_shell_version=v50.11
+ARG aurora_shell_version=v50.12
 
 FROM scratch AS ctx-scripts
 
@@ -128,7 +128,14 @@ RUN --mount=type=cache,target=/var/cache/dnf \
 # The system overlay mirrors the installed filesystem. Live-installer files
 # live in a separate overlay consumed only by Containerfile.installer.
 COPY editions/workstation/files/system/ /
-COPY editions/workstation/assets/logo.png /usr/share/pixmaps/luminusos-gdm-logo.png
+# GDM renders the login-screen logo at natural size, so keep it small.
+COPY editions/workstation/assets/gdm-logo.png /usr/share/pixmaps/luminusos-gdm-logo.png
+
+# Fedora's gnome-control-center is compiled with DISTRIBUTOR_LOGO pointing at
+# these pixmaps and never consults os-release LOGO, so the About page logo can
+# only be branded by replacing the files (light and dark variants).
+COPY editions/workstation/assets/about-logo-light.png /usr/share/pixmaps/fedora_logo_med.png
+COPY editions/workstation/assets/about-logo-dark.png /usr/share/pixmaps/fedora_whitelogo_med.png
 
 # Flatpaks (invalidated only by shared/flatpaks or skip flag)
 RUN --mount=type=bind,from=ctx-flatpaks,source=/flatpaks,target=/flatpaks,ro \
@@ -162,6 +169,9 @@ LABEL org.opencontainers.image.version="${image_version}"
 # Compile and validate aurora-shell after GNOME Shell is installed.
 RUN test -f /usr/share/gnome-shell/extensions/${aurora_shell_uuid}/metadata.json && \
     test -n "$(find /usr/share/gnome-shell/extensions/${aurora_shell_uuid} -mindepth 1 -maxdepth 1 -print -quit)" && \
+    jq -e --arg uuid "${aurora_shell_uuid}" \
+      '.parentMode == "user" and (.enabledExtensions | index($uuid)) and (.hasOverview == false) and (.hasRunDialog == false)' \
+      /usr/share/gnome-shell/modes/initial-setup.json && \
     if [ -d /usr/share/gnome-shell/extensions/${aurora_shell_uuid}/schemas ]; then \
       glib-compile-schemas /usr/share/gnome-shell/extensions/${aurora_shell_uuid}/schemas; \
     fi && \
@@ -176,9 +186,17 @@ RUN dnf clean all && \
 
 RUN command -v bootc && \
     test -f /usr/share/pixmaps/luminusos-gdm-logo.png && \
+    test -f /usr/share/pixmaps/fedora_logo_med.png && \
+    test -f /usr/share/pixmaps/fedora_whitelogo_med.png && \
     test -f /usr/share/icons/hicolor/scalable/apps/luminusos-logo-icon.svg && \
     grep -q '^LOGO="luminusos-logo-icon"$' /usr/lib/os-release && \
     GSETTINGS_BACKEND=memory gsettings get org.gnome.login-screen logo | grep -q luminusos && \
+    GSETTINGS_BACKEND=memory gsettings --schemadir \
+      /usr/share/gnome-shell/extensions/${aurora_shell_uuid}/schemas \
+      get org.gnome.shell.extensions.aurora-shell aurora-menu-icon | grep -qx "'luminus'" && \
+    DCONF_PROFILE=gnome-initial-setup gsettings --schemadir \
+      /usr/share/gnome-shell/extensions/${aurora_shell_uuid}/schemas \
+      get org.gnome.shell.extensions.aurora-shell module-aurora-menu | grep -qx false && \
     locale -a | grep -qx 'pt_BR.utf8' && \
     test -f /usr/share/locale/pt_BR/LC_MESSAGES/gnome-initial-setup.mo && \
     test -f /etc/gnome-initial-setup/vendor.conf && \

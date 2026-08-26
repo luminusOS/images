@@ -1,0 +1,13 @@
+{
+    "parentMode": "user",
+    "hasWindows": true,
+    "hasOverview": false,
+    "hasRunDialog": false,
+    "showWelcomeDialog": false,
+    "components": ["networkAgent"],
+    "enabledExtensions": ["aurora-shell@luminusos.github.io"],
+    "panel": { "left": [],
+               "center": [],
+               "right": ["a11y", "keyboard", "quickSettings"]
+    }
+}

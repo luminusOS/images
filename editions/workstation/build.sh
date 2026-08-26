@@ -19,13 +19,5 @@ elif command -v gtk-update-icon-cache >/dev/null 2>&1; then
   gtk-update-icon-cache -f -t /usr/share/icons/hicolor
 fi
 
-if [ -f /usr/share/gnome-shell/modes/initial-setup.json ]; then
-  tmp="$(mktemp)"
-  jq '.enabledExtensions = (((.enabledExtensions // []) + ["aurora-shell@luminusos.github.io"]) | unique)' \
-    /usr/share/gnome-shell/modes/initial-setup.json >"${tmp}"
-  install -m 0644 "${tmp}" /usr/share/gnome-shell/modes/initial-setup.json
-  rm -f "${tmp}"
-fi
-
 ln -sf /usr/lib/systemd/system/graphical.target /etc/systemd/system/default.target
 ln -sf /usr/lib/systemd/system/gdm.service /etc/systemd/system/display-manager.service

@@ -116,7 +116,7 @@ flowchart TD
 | `LOS_NAME` | `LuminusOS` | OS name written to os-release. |
 | `LOS_PRETTY_NAME` | `Luminus OS` | Base pretty OS name; active editions append their edition name and `LOS_TAG` for bootloader entries. |
 | `LOS_WORKSTATION_TARGET_IMAGE` | `ghcr.io/luminusos/luminusos-workstation:testing-44` | Installed bootc testing update reference. |
-| `AURORA_SHELL_VERSION` | `v50.11` | Aurora Shell release downloaded during build. |
+| `AURORA_SHELL_VERSION` | `v50.12` | Aurora Shell release downloaded during build. |
 | `LOS_FORCE_CORE` | `0` | Rebuild core even if the local stamp is unchanged. |
 | `LOS_SKIP_FLATPAKS` | `0` | Skip Flatpak installation during workstation build. |
 
@@ -263,12 +263,12 @@ Aurora Shell is installed from the release artifact selected by `AURORA_SHELL_VE
 "session-modes": ["initial-setup", "live-installer", "user"]
 ```
 
-The live installer shell mode inherits from `user` so the normal GNOME Shell extension system is active, then disables overview/run-dialog behavior for the installer session. The packaged GNOME Initial Setup shell mode is patched so Aurora Shell is included in its `enabledExtensions`.
+The live installer and GNOME Initial Setup shell modes inherit from `user` so the normal GNOME Shell extension system is active, then disable overview/run-dialog behavior for their constrained sessions. Both list Aurora Shell in `enabledExtensions`.
 
 | Runtime | Extension state | Module state |
 | --- | --- | --- |
 | Live ISO | Loaded in `live-installer` shell mode so its CSS is applied. | Modules are disabled through the live dconf database. |
-| GNOME Initial Setup | Loaded in `initial-setup` shell mode. | Extension defaults apply. |
+| GNOME Initial Setup | Loaded in `initial-setup` shell mode. | Aurora Menu is disabled through the Initial Setup dconf profile; other extension defaults apply. |
 | Installed system | Loaded in normal `user` mode. | Extension defaults apply. |
 
 Aurora Shell is enabled through GNOME Shell's native extension paths: live and Initial Setup sessions use their shell mode `enabledExtensions`, while normal user sessions use the image's compiled GNOME defaults and dconf defaults. No user service forces the extension on after login, so installed users can later change their extension state normally.

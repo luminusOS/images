@@ -1,0 +1,9 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="364" height="64" viewBox="0 0 364 64">
+  <g transform="scale(0.16)">
+    <g transform="translate(0,400) scale(0.1,-0.1)" fill="#3c82f6">
+      <path d="M1310 2322 l0 -1679 -23 -21 c-39 -36 -93 -53 -175 -53 -175 0 -236 58 -270 251 -12 70 -15 272 -19 1183 l-4 1097 -410 0 -410 0 4 -1067 c3 -749 7 -1099 16 -1173 61 -524 300 -780 788 -845 89 -12 347 -15 1486 -15 l1377 0 0 405 0 405 -645 0 -645 0 0 1595 0 1595 -535 0 -535 0 0 -1678z M2933 3670 c-93 -19 -180 -87 -224 -176 l-24 -49 -3 -463 -3 -463 533 3 533 3 56 26 c76 36 133 90 166 157 l28 57 0 335 c0 320 -1 337 -21 381 -26 56 -76 114 -126 145 -78 49 -123 54 -513 53 -198 -1 -379 -5 -402 -9z"/>
+    </g>
+  </g>
+  <text x="86" y="46" font-family="Bricolage Grotesque 96pt ExtraBold, Bricolage Grotesque" font-size="44"
+        letter-spacing="-0.8" fill="#ffffff">Luminus<tspan fill="#3584e4">OS</tspan></text>
+</svg>
