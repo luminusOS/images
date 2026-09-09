@@ -30,16 +30,16 @@ See [CONTRIBUTING.md](CONTRIBUTING.md) for prerequisites, faster iteration flags
 Testing releases follow the channel, Fedora base version, and build date:
 
 ```
-testing-{FEDORA_VERSION}.{YYYYMMDD}   →   testing-44.20260322
+testing-{FEDORA_VERSION}.{YYYYMMDD}
 ```
 
 Container images publish both channel-wide and Fedora-specific floating tags:
 
 ```
 ghcr.io/luminusos/luminusos:testing
-ghcr.io/luminusos/luminusos:testing-44
+ghcr.io/luminusos/luminusos:testing-{FEDORA_VERSION}
 ghcr.io/luminusos/luminusos-workstation:testing
-ghcr.io/luminusos/luminusos-workstation:testing-44
+ghcr.io/luminusos/luminusos-workstation:testing-{FEDORA_VERSION}
 ```
 
 ## Rebasing to Luminus OS
@@ -47,7 +47,7 @@ ghcr.io/luminusos/luminusos-workstation:testing-44
 Rebase an existing bootc-capable Fedora Atomic system:
 
 ```bash
-bootc switch ghcr.io/luminusos/luminusos-workstation:testing-44
+bootc switch ghcr.io/luminusos/luminusos-workstation:testing
 ```
 
 ## CI & Releases

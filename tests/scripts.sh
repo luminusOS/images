@@ -32,7 +32,9 @@ expect "aurora-session-modes supplies the user default" \
   jq -e '."session-modes" == ["initial-setup","user"]' \
   "${TEST_TMP}/metadata-default.json"
 
-expect_contains "config-value reads the shared Fedora default" "44" \
+# shellcheck disable=SC1091
+source "${ROOT}/config/versions.env"
+expect_contains "config-value reads the shared Fedora default" "${DEFAULT_FEDORA_VERSION}" \
   "${ROOT}/tools/config-value.sh" DEFAULT_FEDORA_VERSION
 expect_failure "config-value rejects unknown keys" \
   "${ROOT}/tools/config-value.sh" NOT_A_SETTING

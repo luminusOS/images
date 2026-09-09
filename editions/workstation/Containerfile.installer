@@ -1,4 +1,4 @@
-ARG fedora_version=44
+ARG fedora_version
 ARG workstation_image=localhost/luminusos-workstation:latest
 
 FROM scratch AS ctx-scripts
@@ -7,11 +7,11 @@ COPY shared/scripts /scripts
 
 FROM ${workstation_image} AS live
 
-ARG fedora_version=44
-ARG image_version=44
-ARG sirius_version=1.0.3
+ARG fedora_version
+ARG image_version
+ARG sirius_version
 ARG workstation_image=localhost/luminusos-workstation:latest
-ARG workstation_target_image=ghcr.io/luminusos/luminusos-workstation:testing-44
+ARG workstation_target_image
 ARG aurora_shell_uuid=aurora-shell@luminusos.github.io
 ARG source_url="https://github.com/LuminusOS/images"
 
@@ -106,8 +106,8 @@ FROM scratch
 COPY --from=live / /
 
 ARG aurora_shell_uuid=aurora-shell@luminusos.github.io
-ARG image_version=44
-ARG sirius_version=1.0.3
+ARG image_version
+ARG sirius_version
 ARG source_url="https://github.com/LuminusOS/images"
 
 LABEL containers.bootc="1" \

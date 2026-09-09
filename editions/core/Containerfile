@@ -1,4 +1,4 @@
-ARG base=quay.io/fedora/fedora-bootc:44
+ARG base
 
 FROM scratch AS ctx-scripts
 
@@ -6,8 +6,8 @@ COPY shared/scripts /scripts
 
 FROM ${base}
 
-ARG fedora_version=44
-ARG distro_version=44
+ARG fedora_version
+ARG distro_version
 ARG distro_name="LuminusOS"
 ARG distro_pretty_name="Luminus OS"
 ARG source_url="https://github.com/LuminusOS/images"

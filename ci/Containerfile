@@ -1,10 +1,11 @@
 # CI toolbox image for lint/test jobs. Rebuilt only when its content hash
 # changes — see tools/ci-image-name.sh and .github/workflows/ci.yml.
-ARG fedora_version=44
+ARG fedora_version
 FROM quay.io/fedora/fedora:${fedora_version}
 
 RUN dnf -y install \
       ShellCheck \
+      curl \
       findutils \
       gawk \
       git \
@@ -12,5 +13,9 @@ RUN dnf -y install \
       just \
       python3 \
       python3-pyyaml \
-      shfmt \
-    && dnf clean all
+    && dnf clean all && \
+    curl -fsSL \
+      https://github.com/mvdan/sh/releases/download/v3.7.0/shfmt_v3.7.0_linux_amd64 \
+      -o /usr/bin/shfmt && \
+    echo "0264c424278b18e22453fe523ec01a19805ce3b8ebf18eaf3aadc1edc23f42e3  /usr/bin/shfmt" | sha256sum -c - && \
+    chmod 0755 /usr/bin/shfmt

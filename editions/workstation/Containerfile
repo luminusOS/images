@@ -1,6 +1,6 @@
 ARG core_image=localhost/luminusos:latest
-ARG fedora_version=44
-ARG aurora_shell_version=v50.12
+ARG fedora_version
+ARG aurora_shell_version
 
 FROM scratch AS ctx-scripts
 
@@ -16,7 +16,7 @@ COPY shared/flatpaks /flatpaks
 
 FROM quay.io/fedora/fedora-bootc:${fedora_version} AS aurora-extension
 
-ARG fedora_version=44
+ARG fedora_version
 ARG aurora_shell_version
 ARG aurora_shell_sha256
 ARG aurora_shell_uuid=aurora-shell@luminusos.github.io
@@ -40,8 +40,8 @@ RUN --mount=type=cache,target=/var/cache/dnf \
 
 FROM ${core_image}
 
-ARG fedora_version=44
-ARG image_version=44
+ARG fedora_version
+ARG image_version
 ARG edition_name="Workstation"
 ARG edition_id="workstation"
 ARG aurora_shell_uuid=aurora-shell@luminusos.github.io
@@ -184,7 +184,8 @@ RUN test -f /usr/share/gnome-shell/extensions/${aurora_shell_uuid}/metadata.json
 RUN dnf clean all && \
     rm -rf /var/cache/dnf /var/cache/libdnf5 /tmp/* /var/log/* /var/tmp/*
 
-RUN command -v bootc && \
+RUN set -eux; \
+    command -v bootc && \
     test -f /usr/share/pixmaps/luminusos-gdm-logo.png && \
     test -f /usr/share/pixmaps/fedora_logo_med.png && \
     test -f /usr/share/pixmaps/fedora_whitelogo_med.png && \

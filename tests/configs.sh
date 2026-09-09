@@ -3,6 +3,9 @@
 SYSTEM_FILES="${ROOT}/editions/workstation/files/system"
 INSTALLER_FILES="${ROOT}/editions/workstation/files/installer"
 
+expect "LuminusOS schema overrides keep final filename precedence" \
+  test -f "${SYSTEM_FILES}/usr/share/glib-2.0/schemas/zz-99-luminusos.gschema.override"
+
 for toml in \
   "${INSTALLER_FILES}/etc/sirius/distro.toml" \
   "${INSTALLER_FILES}/etc/sirius/sirius.toml" \
@@ -101,8 +104,7 @@ expect "image-builder provides root, home and var Btrfs subvolumes" \
   awk '/mountpoint: "\/"/ { root=1 } /mountpoint: "\/home"/ { home=1 } /mountpoint: "\/var"/ { var=1 } END { exit !(root && home && var) }' \
   "${SYSTEM_FILES}/usr/lib/image-builder/bootc/disk.yaml"
 
-expect "Flatpak list is sorted and unique" bash -c \
-  'cmp -s "$1" <(LC_ALL=C sort -u "$1")' _ "${ROOT}/shared/flatpaks"
+expect "Flatpak list is sorted and unique" env LC_ALL=C sort -cu "${ROOT}/shared/flatpaks"
 
 expect "system overlay excludes Sirius configuration" test ! -e "${SYSTEM_FILES}/etc/sirius"
 expect "system overlay excludes liveuser" test ! -e "${SYSTEM_FILES}/var/lib/AccountsService/users/liveuser"
@@ -113,11 +115,9 @@ expect "workstation consumes only the system overlay" \
 expect "installer consumes only the live overlay" \
   grep -Fq 'COPY editions/workstation/files/installer/ /' "${ROOT}/editions/workstation/Containerfile.installer"
 
-# shellcheck disable=SC1091
-source "${ROOT}/config/versions.env"
-expect "core Containerfile default matches shared Fedora version" \
-  grep -qx "ARG fedora_version=${DEFAULT_FEDORA_VERSION}" "${ROOT}/editions/core/Containerfile"
-expect "workstation Containerfile default matches shared Fedora version" \
-  grep -qx "ARG fedora_version=${DEFAULT_FEDORA_VERSION}" "${ROOT}/editions/workstation/Containerfile"
-expect "installer default matches shared Sirius version" \
-  grep -qx "ARG sirius_version=${SIRIUS_VERSION}" "${ROOT}/editions/workstation/Containerfile.installer"
+expect_failure "Containerfiles do not duplicate shared version defaults" \
+  grep -EH '^ARG (fedora_version|aurora_shell_version|sirius_version)=' \
+  "${ROOT}/ci/Containerfile" \
+  "${ROOT}/editions/core/Containerfile" \
+  "${ROOT}/editions/workstation/Containerfile" \
+  "${ROOT}/editions/workstation/Containerfile.installer"

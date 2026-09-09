@@ -24,11 +24,11 @@ expect "automatic builds call the reusable workflow" \
 expect "publish calls the reusable workflow" \
   grep -Fq 'uses: ./.github/workflows/containers.yml' \
   "${ROOT}/.github/workflows/publish.yml"
-expect_contains "publish Fedora input matches shared default" \
-  "default: \"${DEFAULT_FEDORA_VERSION}\"" \
+expect_contains "publish Fedora input delegates to shared default" \
+  'default: ""' \
   grep -A3 'fedora_version:' "${ROOT}/.github/workflows/publish.yml"
-expect_contains "publish Sirius input matches shared default" \
-  "default: \"${SIRIUS_VERSION}\"" \
+expect_contains "publish Sirius input delegates to shared default" \
+  'default: ""' \
   grep -A3 'sirius_version:' "${ROOT}/.github/workflows/publish.yml"
 expect "CI image hash includes shared version defaults" \
   grep -Fq 'config/versions.env' "${ROOT}/tools/ci-image-name.sh"

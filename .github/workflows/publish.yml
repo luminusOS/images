@@ -4,11 +4,11 @@ name: Publish Testing
   workflow_dispatch:
     inputs:
       fedora_version:
-        description: "Fedora version"
-        default: "44"
+        description: "Fedora version (blank uses config/versions.env)"
+        default: ""
       sirius_version:
-        description: "Sirius release (RPM version on GitHub releases)"
-        default: "1.0.3"
+        description: "Sirius release (blank uses config/versions.env)"
+        default: ""
       skip_flatpaks:
         description: "Skip Flatpak preinstall (faster test builds)"
         default: "0"
