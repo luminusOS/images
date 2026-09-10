@@ -44,9 +44,11 @@ jobs:
         id: image
         run: |
           IMAGE="$(bash tools/ci-image-name.sh)"
-          echo "name=$IMAGE" >> "$GITHUB_OUTPUT"
-          echo "fedora_version=$(tools/config-value.sh DEFAULT_FEDORA_VERSION)" >> "$GITHUB_OUTPUT"
-          echo "fedora_bootc_digest=$(tools/config-value.sh FEDORA_BOOTC_DIGEST)" >> "$GITHUB_OUTPUT"
+          {
+            echo "name=$IMAGE"
+            echo "fedora_version=$(tools/config-value.sh DEFAULT_FEDORA_VERSION)"
+            echo "fedora_bootc_digest=$(tools/config-value.sh FEDORA_BOOTC_DIGEST)"
+          } >> "$GITHUB_OUTPUT"
 
           if docker manifest inspect "$IMAGE" >/dev/null 2>&1; then
             echo "exists=true" >> "$GITHUB_OUTPUT"
