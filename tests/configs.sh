@@ -121,3 +121,6 @@ expect_failure "Containerfiles do not duplicate shared version defaults" \
   "${ROOT}/editions/core/Containerfile" \
   "${ROOT}/editions/workstation/Containerfile" \
   "${ROOT}/editions/workstation/Containerfile.installer"
+
+expect "Fedora bootc digest is pinned" \
+  grep -Eq '^FEDORA_BOOTC_DIGEST=sha256:[0-9a-f]{64}$' "${ROOT}/config/versions.env"

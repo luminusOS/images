@@ -27,6 +27,7 @@ jobs:
     outputs:
       name: ${{ steps.image.outputs.name }}
       fedora_version: ${{ steps.image.outputs.fedora_version }}
+      fedora_bootc_digest: ${{ steps.image.outputs.fedora_bootc_digest }}
     steps:
       - uses: actions/checkout@v7
         with:
@@ -45,6 +46,7 @@ jobs:
           IMAGE="$(bash tools/ci-image-name.sh)"
           echo "name=$IMAGE" >> "$GITHUB_OUTPUT"
           echo "fedora_version=$(tools/config-value.sh DEFAULT_FEDORA_VERSION)" >> "$GITHUB_OUTPUT"
+          echo "fedora_bootc_digest=$(tools/config-value.sh FEDORA_BOOTC_DIGEST)" >> "$GITHUB_OUTPUT"
 
           if docker manifest inspect "$IMAGE" >/dev/null 2>&1; then
             echo "exists=true" >> "$GITHUB_OUTPUT"
@@ -144,7 +146,7 @@ jobs:
           file: editions/core/Containerfile
           push: false
           build-args: |
-            base=quay.io/fedora/fedora-bootc:${{ needs.ci-image.outputs.fedora_version }}
+            base=quay.io/fedora/fedora-bootc:${{ needs.ci-image.outputs.fedora_version }}@${{ needs.ci-image.outputs.fedora_bootc_digest }}
             fedora_version=${{ needs.ci-image.outputs.fedora_version }}
             distro_version=${{ needs.ci-image.outputs.fedora_version }}.ci
             distro_name=LuminusOS

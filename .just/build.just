@@ -66,6 +66,7 @@ workstation:
       --tag {{ workstation_image }} \
       --file editions/workstation/Containerfile \
       --build-arg core_image={{ core_image }} \
+      --build-arg fedora_bootc_base={{ base }} \
       --build-arg fedora_version={{ fedora_ver }} \
       --build-arg image_version={{ tag }} \
       --build-arg edition_name="Workstation" \

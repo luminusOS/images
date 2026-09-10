@@ -4,7 +4,7 @@ set -euo pipefail
 
 key="${1:?Usage: config-value.sh KEY}"
 case "${key}" in
-  DEFAULT_FEDORA_VERSION | AURORA_SHELL_VERSION | AURORA_SHELL_SHA256 | SIRIUS_VERSION) ;;
+  DEFAULT_FEDORA_VERSION | FEDORA_BOOTC_DIGEST | AURORA_SHELL_VERSION | AURORA_SHELL_SHA256 | SIRIUS_VERSION) ;;
   *)
     echo "Unknown configuration key: ${key}" >&2
     exit 1

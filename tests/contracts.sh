@@ -21,6 +21,12 @@ expect "publish workflow consumes reusable outputs" \
 expect "automatic builds call the reusable workflow" \
   grep -Fq 'uses: ./.github/workflows/containers.yml' \
   "${ROOT}/.github/workflows/build-containers.yml"
+expect "Fedora bootc updates dispatch the reusable build" \
+  grep -Fq 'gh workflow run build-containers.yml --ref main' \
+  "${ROOT}/.github/workflows/update-fedora.yml"
+expect "Fedora bootc updates track the OCI manifest" \
+  grep -Fq 'quay.io/v2/fedora/fedora-bootc/manifests/${fedora_version}' \
+  "${ROOT}/.github/workflows/update-fedora.yml"
 expect "publish calls the reusable workflow" \
   grep -Fq 'uses: ./.github/workflows/containers.yml' \
   "${ROOT}/.github/workflows/publish.yml"

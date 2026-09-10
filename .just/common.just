@@ -1,10 +1,12 @@
 default_fedora_version := shell('"$1" "$2"', justfile_directory() / "tools/config-value.sh", "DEFAULT_FEDORA_VERSION")
+default_fedora_bootc_digest := shell('"$1" "$2"', justfile_directory() / "tools/config-value.sh", "FEDORA_BOOTC_DIGEST")
 default_aurora_shell_version := shell('"$1" "$2"', justfile_directory() / "tools/config-value.sh", "AURORA_SHELL_VERSION")
 default_aurora_shell_sha256 := shell('"$1" "$2"', justfile_directory() / "tools/config-value.sh", "AURORA_SHELL_SHA256")
 default_sirius_version := shell('"$1" "$2"', justfile_directory() / "tools/config-value.sh", "SIRIUS_VERSION")
 
 fedora_ver := env("LOS_FEDORA_VERSION", default_fedora_version)
-base := env("LOS_BASE", "quay.io/fedora/fedora-bootc:" + fedora_ver)
+fedora_bootc_digest := env("LOS_FEDORA_BOOTC_DIGEST", default_fedora_bootc_digest)
+base := env("LOS_BASE", "quay.io/fedora/fedora-bootc:" + fedora_ver + "@" + fedora_bootc_digest)
 name := env("LOS_NAME", "LuminusOS")
 pretty := env("LOS_PRETTY_NAME", "Luminus OS")
 registry := env("LOS_REGISTRY", "localhost")

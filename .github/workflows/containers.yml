@@ -144,6 +144,7 @@ jobs:
 
           {
             echo "fedora_version=${fedora_version}"
+            echo "fedora_bootc_digest=${FEDORA_BOOTC_DIGEST}"
             echo "version_tag=${version_tag}"
             echo "branch_tag=${branch_tag}"
             echo "channel_tag=${channel_tag}"
@@ -183,7 +184,7 @@ jobs:
           load: ${{ inputs.builder_mode == 'local' }}
           push: ${{ inputs.builder_mode == 'registry' && inputs.publish }}
           build-args: |
-            base=quay.io/fedora/fedora-bootc:${{ steps.version.outputs.fedora_version }}
+            base=quay.io/fedora/fedora-bootc:${{ steps.version.outputs.fedora_version }}@${{ steps.version.outputs.fedora_bootc_digest }}
             fedora_version=${{ steps.version.outputs.fedora_version }}
             distro_version=${{ steps.version.outputs.version_tag }}
             distro_name=LuminusOS
@@ -216,6 +217,7 @@ jobs:
           push: ${{ inputs.builder_mode == 'registry' && inputs.publish }}
           build-args: |
             core_image=${{ steps.version.outputs.core_build_ref }}
+            fedora_bootc_base=quay.io/fedora/fedora-bootc:${{ steps.version.outputs.fedora_version }}@${{ steps.version.outputs.fedora_bootc_digest }}
             fedora_version=${{ steps.version.outputs.fedora_version }}
             image_version=${{ steps.version.outputs.version_tag }}
             edition_name=Workstation

@@ -109,8 +109,9 @@ flowchart TD
 
 | Variable | Default | Purpose |
 | --- | --- | --- |
-| `LOS_BASE` | `quay.io/fedora/fedora-bootc:<fedora>` | Base image for the core edition. |
+| `LOS_BASE` | `quay.io/fedora/fedora-bootc:<fedora>@<digest>` | Pinned base image for the core edition. |
 | `LOS_FEDORA_VERSION` | From `config/versions.env` | Fedora release version used for base images, DNF repos and tags. |
+| `LOS_FEDORA_BOOTC_DIGEST` | From `config/versions.env` | Fedora bootc composition selected within that release. |
 | `LOS_REGISTRY` | `localhost` | Registry prefix for local builds. |
 | `LOS_TAG` | `testing-<fedora>.<date>` | Build tag written to `VERSION`, `BUILD_ID`, `IMAGE_VERSION`, and bootloader entries. |
 | `LOS_NAME` | `LuminusOS` | OS name written to os-release. |
