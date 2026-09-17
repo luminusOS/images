@@ -101,6 +101,7 @@ workstation-iso:
       --file editions/workstation/Containerfile.installer \
       --build-arg fedora_version={{ fedora_ver }} \
       --build-arg sirius_version={{ sirius_version }} \
+      --build-arg sirius_rpm_version={{ sirius_rpm_version }} \
       --build-arg workstation_image={{ workstation_image }} \
       --build-arg workstation_target_image={{ workstation_target_image }} \
       --build-arg image_version={{ tag }} \

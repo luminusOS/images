@@ -3,6 +3,7 @@ default_fedora_bootc_digest := shell('"$1" "$2"', justfile_directory() / "tools/
 default_aurora_shell_version := shell('"$1" "$2"', justfile_directory() / "tools/config-value.sh", "AURORA_SHELL_VERSION")
 default_aurora_shell_sha256 := shell('"$1" "$2"', justfile_directory() / "tools/config-value.sh", "AURORA_SHELL_SHA256")
 default_sirius_version := shell('"$1" "$2"', justfile_directory() / "tools/config-value.sh", "SIRIUS_VERSION")
+default_sirius_rpm_version := shell('"$1" "$2"', justfile_directory() / "tools/config-value.sh", "SIRIUS_RPM_VERSION")
 
 fedora_ver := env("LOS_FEDORA_VERSION", default_fedora_version)
 fedora_bootc_digest := env("LOS_FEDORA_BOOTC_DIGEST", default_fedora_bootc_digest)
@@ -19,6 +20,7 @@ workstation_target_image := env("LOS_WORKSTATION_TARGET_IMAGE", "ghcr.io/luminus
 aurora_shell_version := env("AURORA_SHELL_VERSION", default_aurora_shell_version)
 aurora_shell_sha256 := env("AURORA_SHELL_SHA256", default_aurora_shell_sha256)
 sirius_version := env("SIRIUS_VERSION", default_sirius_version)
+sirius_rpm_version := env("SIRIUS_RPM_VERSION", env("SIRIUS_VERSION", default_sirius_rpm_version))
 force_core := env("LOS_FORCE_CORE", "0")
 skip_flatpaks := env("LOS_SKIP_FLATPAKS", "0")
 qemu_disk_size := env("QEMU_INSTALL_DISK_SIZE", "64G")

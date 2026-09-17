@@ -112,7 +112,13 @@ jobs:
           branch_tag="testing-${fedora_version}"
           channel_tag=testing
           image_namespace="$(printf '%s' "${GITHUB_REPOSITORY_OWNER}" | tr '[:upper:]' '[:lower:]')"
-          sirius_version="${INPUT_SIRIUS_VERSION:-${SIRIUS_VERSION}}"
+          if [ -n "${INPUT_SIRIUS_VERSION}" ]; then
+            sirius_version="${INPUT_SIRIUS_VERSION}"
+            sirius_rpm_version="${INPUT_SIRIUS_VERSION}"
+          else
+            sirius_version="${SIRIUS_VERSION}"
+            sirius_rpm_version="${SIRIUS_RPM_VERSION}"
+          fi
 
           publish_channel=false
           case "${CHANNEL_POLICY}" in
@@ -150,6 +156,7 @@ jobs:
             echo "channel_tag=${channel_tag}"
             echo "image_namespace=${image_namespace}"
             echo "sirius_version=${sirius_version}"
+            echo "sirius_rpm_version=${sirius_rpm_version}"
             echo "aurora_shell_version=${AURORA_SHELL_VERSION}"
             echo "aurora_shell_sha256=${AURORA_SHELL_SHA256}"
             echo "publish_channel=${publish_channel}"
@@ -268,6 +275,7 @@ jobs:
           build-args: |
             fedora_version=${{ steps.version.outputs.fedora_version }}
             sirius_version=${{ steps.version.outputs.sirius_version }}
+            sirius_rpm_version=${{ steps.version.outputs.sirius_rpm_version }}
             image_version=${{ steps.version.outputs.version_tag }}
             workstation_image=${{ steps.version.outputs.workstation_image }}
             workstation_target_image=${{ env.REGISTRY }}/${{ steps.version.outputs.image_namespace }}/luminusos-workstation:${{ steps.version.outputs.branch_tag }}

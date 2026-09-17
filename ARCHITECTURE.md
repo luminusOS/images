@@ -118,6 +118,9 @@ flowchart TD
 | `LOS_PRETTY_NAME` | `Luminus OS` | Base pretty OS name; active editions append their edition name and `LOS_TAG` for bootloader entries. |
 | `LOS_WORKSTATION_TARGET_IMAGE` | `ghcr.io/luminusos/luminusos-workstation:testing-<fedora>` | Installed bootc testing update reference. |
 | `AURORA_SHELL_VERSION` | From `config/versions.env` | Aurora Shell release downloaded during build. |
+| `AURORA_SHELL_SHA256` | From `config/versions.env` | Expected digest for the Aurora Shell release artifact. |
+| `SIRIUS_VERSION` | From `config/versions.env` | Sirius GitHub release downloaded into the live installer. |
+| `SIRIUS_RPM_VERSION` | From `config/versions.env` | Package version encoded in the Sirius release RPM filename and metadata. |
 | `LOS_FORCE_CORE` | `0` | Rebuild core even if the local stamp is unchanged. |
 | `LOS_SKIP_FLATPAKS` | `0` | Skip Flatpak installation during workstation build. |
 

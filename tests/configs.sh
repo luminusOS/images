@@ -124,3 +124,8 @@ expect_failure "Containerfiles do not duplicate shared version defaults" \
 
 expect "Fedora bootc digest is pinned" \
   grep -Eq '^FEDORA_BOOTC_DIGEST=sha256:[0-9a-f]{64}$' "${ROOT}/config/versions.env"
+expect "Aurora Shell artifact digest is pinned" \
+  grep -Eq '^AURORA_SHELL_SHA256=[0-9a-f]{64}$' "${ROOT}/config/versions.env"
+expect "Sirius release and RPM versions are pinned separately" \
+  sh -c 'grep -Eq "^SIRIUS_VERSION=[0-9]+\\.[0-9]+\\.[0-9]+$" "$1" && grep -Eq "^SIRIUS_RPM_VERSION=[0-9]+\\.[0-9]+\\.[0-9]+$" "$1"' \
+  _ "${ROOT}/config/versions.env"

@@ -36,5 +36,8 @@ expect_contains "publish Fedora input delegates to shared default" \
 expect_contains "publish Sirius input delegates to shared default" \
   'default: ""' \
   grep -A3 'sirius_version:' "${ROOT}/.github/workflows/publish.yml"
+expect "custom Sirius release overrides matching RPM version" \
+  grep -Fq 'sirius_rpm_version="${INPUT_SIRIUS_VERSION}"' \
+  "${ROOT}/.github/workflows/containers.yml"
 expect "CI image hash includes shared version defaults" \
   grep -Fq 'config/versions.env' "${ROOT}/tools/ci-image-name.sh"
