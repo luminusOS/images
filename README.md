@@ -62,7 +62,7 @@ bootc switch ghcr.io/luminusos/luminusos-workstation:testing
 | Workflow | Trigger | What it does |
 | --- | --- | --- |
 | `ci` | Push to `main` | Lint, unit/config tests, core smoke build |
-| `build-containers` | Push/PR on `main` and `f*` | Validation build of `core` and `workstation`; publishes nothing |
+| `build-containers` | Push/PR on `main` and `f*`, or manual | Validation build of `core` and `workstation`. A manual run with `publish` checked pushes signed testing containers (no ISO/qcow2) |
 | `publish` | Manual | `testing`: builds, pushes, packages and boot-tests ISO/qcow2, publishes a pre-release. `stable`: promotes an existing testing build, repackages, boot-tests, publishes a release |
 
 ISO and qcow2 downloads are hosted on [SourceForge](https://sourceforge.net/projects/luminusos/files/) (mirrored worldwide); GitHub Releases carry the notes with direct links and a SHA256 table per edition.

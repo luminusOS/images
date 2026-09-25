@@ -11,9 +11,13 @@ on:
         description: "Fedora version to build"
         required: false
         default: ""
+      publish:
+        description: "Push signed testing containers to GHCR (no ISO/qcow2)"
+        type: boolean
+        default: false
 
 concurrency:
-  group: build-containers-${{ github.ref }}
+  group: build-containers-${{ github.ref }}-${{ github.event_name }}
   cancel-in-progress: true
 
 jobs:
@@ -26,6 +30,6 @@ jobs:
     with:
       fedora_version: ${{ inputs.fedora_version || '' }}
       builder_mode: local
-      publish: false
+      publish: ${{ github.event_name == 'workflow_dispatch' && inputs.publish }}
       channel_policy: auto
     secrets: inherit

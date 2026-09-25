@@ -54,8 +54,9 @@ expect "Sirius RPM is verified against a pinned digest" \
 expect "Sirius version override requires a digest" \
   grep -Fq 'sirius_version override requires sirius_sha256' \
   "${ROOT}/.github/workflows/containers.yml"
-expect "automatic container builds never publish" \
-  grep -Fq 'publish: false' "${ROOT}/.github/workflows/build-containers.yml"
+expect "container builds publish only from a manual dispatch" \
+  grep -Fq "publish: \${{ github.event_name == 'workflow_dispatch' && inputs.publish }}" \
+  "${ROOT}/.github/workflows/build-containers.yml"
 expect "stable promotes an existing testing build without rebuilding" \
   sh -c 'grep -Fq "skopeo copy --all --preserve-digests" "$1" && grep -Fq "testing-\${BUILD_VERSION}" "$1"' \
   _ "${ROOT}/.github/workflows/containers.yml"
