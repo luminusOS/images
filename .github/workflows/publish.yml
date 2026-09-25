@@ -44,7 +44,6 @@ jobs:
       skip_flatpaks: ${{ inputs.skip_flatpaks }}
       build_installer: true
       publish: true
-      channel_policy: always
       builder_mode: registry
     secrets: inherit
 

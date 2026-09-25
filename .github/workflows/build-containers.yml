@@ -31,5 +31,4 @@ jobs:
       fedora_version: ${{ inputs.fedora_version || '' }}
       builder_mode: local
       publish: ${{ github.event_name == 'workflow_dispatch' && inputs.publish }}
-      channel_policy: auto
     secrets: inherit

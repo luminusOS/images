@@ -82,3 +82,13 @@ expect "workstation stages updates without rebooting" \
     grep -qx "ExecStart=" "$2" && grep -qx "ExecStart=/usr/bin/bootc upgrade --quiet" "$2" && ! grep -q -- "--apply" "$2"' \
   _ "${ROOT}/editions/workstation/build.sh" \
   "${ROOT}/editions/workstation/files/system/usr/lib/systemd/system/bootc-fetch-apply-updates.service.d/10-luminusos-stage.conf"
+expect "release metadata lists LATEST_RELEASE among SUPPORTED_RELEASES" \
+  bash -c 'source "$1" && [[ " ${SUPPORTED_RELEASES} " == *" ${LATEST_RELEASE} "* ]]' \
+  _ "${ROOT}/config/releases.env"
+expect "builds read release metadata from main" \
+  grep -Fq 'git show FETCH_HEAD:config/releases.env' "${ROOT}/.github/workflows/containers.yml"
+expect "floating tags only follow LATEST_RELEASE" \
+  sh -c '! grep -q channel_policy "$1"/*.yml && grep -Fq "\"\${fedora_version}\" = \"\${LATEST_RELEASE}\"" "$1/containers.yml"' \
+  _ "${ROOT}/.github/workflows"
+expect "stable is refused before the Fedora release is out" \
+  grep -Fq 'docker://quay.io/fedora/fedora-bootc:latest' "${ROOT}/.github/workflows/containers.yml"

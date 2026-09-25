@@ -36,6 +36,8 @@ Every build has a channel-neutral version, `{FEDORA_VERSION}.{YYYYMMDD}`, writte
 
 Tags apply to both `ghcr.io/luminusos/luminusos` and `ghcr.io/luminusos/luminusos-workstation`.
 
+`config/releases.env` on `main` lists the Fedora releases LuminusOS builds (`SUPPORTED_RELEASES`) and the newest one (`LATEST_RELEASE`). Every branch reads it from `main`. Builds of unsupported releases fail. Only `LATEST_RELEASE` moves the floating `testing` and `latest` tags, so they never go back to an older release. Stable promotion is refused until Fedora itself has released that version, i.e. until `quay.io/fedora/fedora-bootc:latest` reaches it.
+
 Published images are signed with cosign and installed systems refuse unsigned updates. Verify manually with:
 
 ```bash

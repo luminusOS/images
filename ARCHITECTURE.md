@@ -630,6 +630,11 @@ Installed systems track the channel named by `UPDATE_CHANNEL` in `config/version
 | `testing` | `ghcr.io/luminusos/luminusos-workstation:testing-<fedora>` |
 | `stable` | `ghcr.io/luminusos/luminusos-workstation:<fedora>` |
 
+Release metadata lives in `config/releases.env` on `main` and is read by every branch (see [docs/release-strategy.md](docs/release-strategy.md)):
+
+- `SUPPORTED_RELEASES`: releases that may be built.
+- `LATEST_RELEASE`: the only release allowed to move the floating `testing` and `latest` tags.
+
 Stable images are promoted from an existing testing build with `skopeo copy --all --preserve-digests`, never rebuilt, so a stable tag always has the same digest as the testing build that was validated.
 
 ### Image signatures

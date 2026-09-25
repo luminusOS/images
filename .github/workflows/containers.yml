@@ -35,10 +35,6 @@ on:
         required: false
         type: boolean
         default: false
-      channel_policy:
-        required: false
-        type: string
-        default: auto
       builder_mode:
         required: false
         type: string
@@ -101,14 +97,12 @@ jobs:
           INPUT_PROMOTE_VERSION: ${{ inputs.promote_version }}
           INPUT_SIRIUS_VERSION: ${{ inputs.sirius_version }}
           INPUT_SIRIUS_SHA256: ${{ inputs.sirius_sha256 }}
-          CHANNEL_POLICY: ${{ inputs.channel_policy }}
           BUILDER_MODE: ${{ inputs.builder_mode }}
         run: |
           set -euo pipefail
           source config/versions.env
 
           case "${BUILDER_MODE}" in local|registry) ;; *) echo "Unknown builder_mode: ${BUILDER_MODE}" >&2; exit 1 ;; esac
-          case "${CHANNEL_POLICY}" in auto|always|never) ;; *) echo "Unknown channel_policy: ${CHANNEL_POLICY}" >&2; exit 1 ;; esac
           case "${CHANNEL}" in testing|stable) ;; *) echo "Unknown channel: ${CHANNEL}" >&2; exit 1 ;; esac
           case "${UPDATE_CHANNEL}" in testing|stable) ;; *) echo "Unknown UPDATE_CHANNEL: ${UPDATE_CHANNEL}" >&2; exit 1 ;; esac
           if [ "${BUILDER_MODE}" = registry ] && [ "${{ inputs.publish }}" != true ]; then
@@ -149,6 +143,13 @@ jobs:
             channel_tag=testing
             release_tag="${version_tag}"
           fi
+          git fetch --quiet --depth=1 origin main
+          # shellcheck disable=SC1090
+          source <(git show FETCH_HEAD:config/releases.env)
+          if [[ " ${SUPPORTED_RELEASES} " != *" ${fedora_version} "* ]]; then
+            echo "Fedora ${fedora_version} is not in SUPPORTED_RELEASES (${SUPPORTED_RELEASES}) on main" >&2
+            exit 1
+          fi
           fedora_bootc_digest=""
           if [ "${CHANNEL}" != stable ]; then
             fedora_bootc_digest="$(tools/fedora-bootc-digest.sh "${fedora_version}")"
@@ -174,16 +175,7 @@ jobs:
           fi
 
           publish_channel=false
-          case "${CHANNEL_POLICY}" in
-            always) publish_channel=true ;;
-            never) ;;
-            auto)
-              if [ "${GITHUB_REF_NAME}" = "f${DEFAULT_FEDORA_VERSION}" ] || [ "${GITHUB_REF_NAME}" = main ]; then
-                publish_channel=true
-              fi
-              ;;
-          esac
-          if [ "${CHANNEL}" = stable ]; then
+          if [ "${fedora_version}" = "${LATEST_RELEASE}" ]; then
             publish_channel=true
           fi
 
@@ -355,11 +347,24 @@ jobs:
           VERSION_TAG: ${{ steps.version.outputs.version_tag }}
           BRANCH_TAG: ${{ steps.version.outputs.branch_tag }}
           CHANNEL_TAG: ${{ steps.version.outputs.channel_tag }}
+          PUBLISH_CHANNEL: ${{ steps.version.outputs.publish_channel }}
+          FEDORA_VERSION: ${{ steps.version.outputs.fedora_version }}
         run: |
           set -euo pipefail
+          # Fedora's own `latest` moves to a release at GA; stable never ships on a prerelease.
+          fedora_ga="$(skopeo inspect --retry-times 3 docker://quay.io/fedora/fedora-bootc:latest |
+            jq -r '.Labels["org.opencontainers.image.version"]')"
+          if [ "${fedora_ga%%.*}" -lt "${FEDORA_VERSION}" ]; then
+            echo "Fedora ${FEDORA_VERSION} is not released yet (fedora-bootc:latest is ${fedora_ga})" >&2
+            exit 1
+          fi
+          tags=("${VERSION_TAG}" "${BRANCH_TAG}")
+          if [ "${PUBLISH_CHANNEL}" = true ]; then
+            tags+=("${CHANNEL_TAG}")
+          fi
           for repo in luminusos luminusos-workstation; do
             src="docker://${REGISTRY}/${NAMESPACE}/${repo}:testing-${BUILD_VERSION}"
-            for tag in "${VERSION_TAG}" "${BRANCH_TAG}" "${CHANNEL_TAG}"; do
+            for tag in "${tags[@]}"; do
               skopeo copy --all --preserve-digests "${src}" "docker://${REGISTRY}/${NAMESPACE}/${repo}:${tag}"
             done
           done
