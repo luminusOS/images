@@ -621,6 +621,8 @@ The installed system is a closed bootc deployment. Its update reference comes fr
 
 Package changes must be made in the Containerfiles or build scripts and delivered as a new OCI image.
 
+Updates are downloaded automatically. `bootc-fetch-apply-updates.timer` (1 hour after boot, then every 8 hours) is enabled, and a drop-in replaces `bootc upgrade --apply` with `bootc upgrade`. The new image is staged and takes effect on the next reboot, so the desktop is never restarted by an update. The service is skipped while any NetworkManager device reports a metered connection.
+
 Installed systems track the channel named by `UPDATE_CHANNEL` in `config/versions.env`, for both local builds and the `publish` workflow. It is `testing` until a stable release exists:
 
 | `UPDATE_CHANNEL` | `target_imgref` |

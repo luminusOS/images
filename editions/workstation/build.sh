@@ -24,3 +24,4 @@ ln -sf /usr/lib/systemd/system/gdm.service /etc/systemd/system/display-manager.s
 
 systemctl disable sshd.service
 firewall-offline-cmd --zone=public --remove-service-from-zone=ssh
+systemctl enable bootc-fetch-apply-updates.timer

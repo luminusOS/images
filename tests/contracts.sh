@@ -77,3 +77,8 @@ expect "published images are signed with a containers/image-compatible cosign" \
 expect "workflow actions are pinned to immutable digests" \
   sh -c '! grep -rhE "^[[:space:]]*(- )?uses: " "$1" | grep -vE "uses: (\./|[^ ]+@[0-9a-f]{40}( |$)|docker://[^ ]+@sha256:[0-9a-f]{64}( |$))"' \
   _ "${ROOT}/.github/workflows"
+expect "workstation stages updates without rebooting" \
+  sh -c 'grep -Fq "systemctl enable bootc-fetch-apply-updates.timer" "$1" &&
+    grep -qx "ExecStart=" "$2" && grep -qx "ExecStart=/usr/bin/bootc upgrade --quiet" "$2" && ! grep -q -- "--apply" "$2"' \
+  _ "${ROOT}/editions/workstation/build.sh" \
+  "${ROOT}/editions/workstation/files/system/usr/lib/systemd/system/bootc-fetch-apply-updates.service.d/10-luminusos-stage.conf"

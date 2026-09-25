@@ -189,6 +189,9 @@ RUN set -eux; \
     command -v bootc && \
     systemctl is-enabled firewalld.service && \
     ! systemctl is-enabled sshd.service && \
+    systemctl is-enabled bootc-fetch-apply-updates.timer && \
+    grep -qx 'ExecStart=/usr/bin/bootc upgrade --quiet' \
+      /usr/lib/systemd/system/bootc-fetch-apply-updates.service.d/10-luminusos-stage.conf && \
     ! firewall-offline-cmd --zone=public --query-service=ssh && \
     jq -e '.transports.docker["ghcr.io/luminusos/luminusos-workstation"][0].type == "sigstoreSigned"' /etc/containers/policy.json && \
     test -s /etc/pki/containers/luminusos.pub && \
