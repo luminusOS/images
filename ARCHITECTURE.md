@@ -99,6 +99,7 @@ flowchart TD
 | Workstation image | `luminusos-workstation:<tag>` |
 | Fedora version | Controlled by `LOS_FEDORA_VERSION`; the default lives only in `config/versions.env`. |
 | Local tag | `testing-<fedora>.<YYYYMMDD>` unless `LOS_TAG` is set. |
+| OS version | `LOS_TAG` without the `testing-` prefix (`<fedora>.<YYYYMMDD>` by default) unless `LOS_VERSION` is set; channel-neutral so promoted stable builds are not labelled testing. |
 | Shared data/config | Stored in `shared/`; current shared inputs are Flatpak refs and bootc-image-builder config. |
 | Workstation overlays | Installed files live under `files/system/`; live-only files live under `files/installer/`. Both mirror `/`. |
 | Desktop build script | `editions/workstation/build.sh`, called from the workstation Containerfile. |
@@ -111,16 +112,18 @@ flowchart TD
 | --- | --- | --- |
 | `LOS_BASE` | `quay.io/fedora/fedora-bootc:<fedora>@<digest>` | Pinned base image for the core edition. |
 | `LOS_FEDORA_VERSION` | From `config/versions.env` | Fedora release version used for base images, DNF repos and tags. |
-| `LOS_FEDORA_BOOTC_DIGEST` | From `config/versions.env` | Fedora bootc composition selected within that release. |
+| `LOS_FEDORA_BOOTC_DIGEST` | From `config/versions.env` | Fedora bootc composition for local builds. Quay garbage-collects superseded digests within a day, so CI and `publish` ignore it and resolve the live digest with `tools/fedora-bootc-digest.sh`, recording it in the release notes. If a local build cannot pull it, set `LOS_FEDORA_BOOTC_DIGEST=$(tools/fedora-bootc-digest.sh 45)`. |
 | `LOS_REGISTRY` | `localhost` | Registry prefix for local builds. |
-| `LOS_TAG` | `testing-<fedora>.<date>` | Build tag written to `VERSION`, `BUILD_ID`, `IMAGE_VERSION`, and bootloader entries. |
+| `LOS_TAG` | `testing-<fedora>.<date>` | Local image tag. |
+| `LOS_VERSION` | `LOS_TAG` without the `testing-` prefix | Version written to `VERSION`, `BUILD_ID`, `IMAGE_VERSION`, and bootloader entries. |
 | `LOS_NAME` | `LuminusOS` | OS name written to os-release. |
-| `LOS_PRETTY_NAME` | `Luminus OS` | Base pretty OS name; active editions append their edition name and `LOS_TAG` for bootloader entries. |
-| `LOS_WORKSTATION_TARGET_IMAGE` | `ghcr.io/luminusos/luminusos-workstation:testing-<fedora>` | Installed bootc testing update reference. |
+| `LOS_PRETTY_NAME` | `Luminus OS` | Base pretty OS name; active editions append their edition name and `LOS_VERSION` for bootloader entries. |
+| `LOS_WORKSTATION_TARGET_IMAGE` | `…:testing-<fedora>`, or `…:<fedora>` when `UPDATE_CHANNEL=stable` | Installed bootc update reference. |
 | `AURORA_SHELL_VERSION` | From `config/versions.env` | Aurora Shell release downloaded during build. |
 | `AURORA_SHELL_SHA256` | From `config/versions.env` | Expected digest for the Aurora Shell release artifact. |
 | `SIRIUS_VERSION` | From `config/versions.env` | Sirius GitHub release downloaded into the live installer. |
 | `SIRIUS_RPM_VERSION` | From `config/versions.env` | Package version encoded in the Sirius release RPM filename and metadata. |
+| `SIRIUS_SHA256` | From `config/versions.env` | SHA256 of the Sirius release RPM; the installer build fails if the download does not match. Update it with `SIRIUS_VERSION`. |
 | `LOS_FORCE_CORE` | `0` | Rebuild core even if the local stamp is unchanged. |
 | `LOS_SKIP_FLATPAKS` | `0` | Skip Flatpak installation during workstation build. |
 
@@ -618,11 +621,24 @@ The installed system is a closed bootc deployment. Its update reference comes fr
 
 Package changes must be made in the Containerfiles or build scripts and delivered as a new OCI image.
 
-By default, installed systems track the Fedora-specific testing channel in GHCR:
+Installed systems track the channel named by `UPDATE_CHANNEL` in `config/versions.env`, for both local builds and the `publish` workflow. It is `testing` until a stable release exists:
 
-```bash
-LOS_WORKSTATION_TARGET_IMAGE=ghcr.io/luminusos/luminusos-workstation:testing-${LOS_FEDORA_VERSION}
-```
+| `UPDATE_CHANNEL` | `target_imgref` |
+| --- | --- |
+| `testing` | `ghcr.io/luminusos/luminusos-workstation:testing-<fedora>` |
+| `stable` | `ghcr.io/luminusos/luminusos-workstation:<fedora>` |
+
+Stable images are promoted from an existing testing build with `skopeo copy --all --preserve-digests`, never rebuilt, so a stable tag always has the same digest as the testing build that was validated.
+
+### Image signatures
+
+`publish` signs `luminusos` and `luminusos-workstation` by digest with cosign, using the `COSIGN_PRIVATE_KEY`/`COSIGN_PASSWORD` repository secrets, and refuses to publish if the key is missing. Cosign stays on v2 because cosign 3 defaults to a bundle format that containers/image cannot read. Stable promotion preserves digests, so the testing signatures also cover the stable tags.
+
+Installed systems ship `/etc/containers/policy.json`, which requires a `sigstoreSigned` signature from `/etc/pki/containers/luminusos.pub` for those two repositories only; every other image keeps the Fedora default. `/etc/containers/registries.d/luminusos.yaml` enables sigstore attachments for them. `bootc upgrade` and `bootc switch` therefore reject unsigned or foreign-signed LuminusOS images.
+
+The Sirius `enforce_sigpolicy` stays `false`: the install source is the unsigned OCI layout embedded in the ISO, and bootc's enforcement also rejects a policy whose default is `insecureAcceptAnything`.
+
+Rotating the key means shipping the new `luminusos.pub` in an image signed with the old key first, then switching the secret.
 
 Local installer tests may override `LOS_WORKSTATION_TARGET_IMAGE`, but release builds should leave it on the registry-published reference so installed systems use `bootc upgrade` from the Luminus OS OCI registry.
 

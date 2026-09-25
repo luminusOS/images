@@ -27,20 +27,27 @@ See [CONTRIBUTING.md](CONTRIBUTING.md) for prerequisites, faster iteration flags
 
 ## Versioning
 
-Testing releases follow the channel, Fedora base version, and build date:
+Every build has a channel-neutral version, `{FEDORA_VERSION}.{YYYYMMDD}`, written to `/usr/lib/os-release`. The channel only appears in image tags:
 
-```
-testing-{FEDORA_VERSION}.{YYYYMMDD}
+| Channel | Dated tag | Fedora tag | Channel tag | GitHub release |
+| --- | --- | --- | --- | --- |
+| testing | `testing-45.20260923` | `testing-45` | `testing` | `testing-45.20260923` (pre-release) |
+| stable | `45.20260923` | `45` | `latest` | `v45.20260923` |
+
+Tags apply to both `ghcr.io/luminusos/luminusos` and `ghcr.io/luminusos/luminusos-workstation`.
+
+Published images are signed with cosign and installed systems refuse unsigned updates. Verify manually with:
+
+```bash
+cosign verify --key editions/workstation/files/system/etc/pki/containers/luminusos.pub ghcr.io/luminusos/luminusos-workstation:testing
 ```
 
-Container images publish both channel-wide and Fedora-specific floating tags:
+### Release pipeline
 
-```
-ghcr.io/luminusos/luminusos:testing
-ghcr.io/luminusos/luminusos:testing-{FEDORA_VERSION}
-ghcr.io/luminusos/luminusos-workstation:testing
-ghcr.io/luminusos/luminusos-workstation:testing-{FEDORA_VERSION}
-```
+1. **Testing**: run the `publish` workflow with `channel=testing`. It builds new images, packages and boot-tests the ISO/qcow2, and publishes a pre-release.
+2. **Stable**: after validating a testing build, run `publish` with `channel=stable` and `promote_version=45.20260923`. Stable never rebuilds; it copies the `testing-45.20260923` images to the stable tags with identical digests, then repackages, boot-tests and publishes a normal release.
+
+Installed systems follow `UPDATE_CHANNEL` in `config/versions.env` (it sets the Sirius `target_imgref`), independent of which channel an ISO was published on. It stays `testing` until the first stable release exists; switch it to `stable` to make new installs track `luminusos-workstation:{FEDORA_VERSION}`.
 
 ## Rebasing to Luminus OS
 
@@ -55,8 +62,8 @@ bootc switch ghcr.io/luminusos/luminusos-workstation:testing
 | Workflow | Trigger | What it does |
 | --- | --- | --- |
 | `ci` | Push to `main` | Lint, unit/config tests, core smoke build |
-| `build-containers` | Push/PR on `main` and `f*` | Builds testing `core` and `workstation` containers → GHCR |
-| `publish` | Manual | Builds containers, packages and boot-tests ISO/qcow2, then publishes a dated testing pre-release |
+| `build-containers` | Push/PR on `main` and `f*` | Validation build of `core` and `workstation`; publishes nothing |
+| `publish` | Manual | `testing`: builds, pushes, packages and boot-tests ISO/qcow2, publishes a pre-release. `stable`: promotes an existing testing build, repackages, boot-tests, publishes a release |
 
 ISO and qcow2 downloads are hosted on [SourceForge](https://sourceforge.net/projects/luminusos/files/) (mirrored worldwide); GitHub Releases carry the notes with direct links and a SHA256 table per edition.
 

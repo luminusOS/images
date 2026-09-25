@@ -187,6 +187,11 @@ RUN dnf clean all && \
 
 RUN set -eux; \
     command -v bootc && \
+    systemctl is-enabled firewalld.service && \
+    ! systemctl is-enabled sshd.service && \
+    ! firewall-offline-cmd --zone=public --query-service=ssh && \
+    jq -e '.transports.docker["ghcr.io/luminusos/luminusos-workstation"][0].type == "sigstoreSigned"' /etc/containers/policy.json && \
+    test -s /etc/pki/containers/luminusos.pub && \
     test -f /usr/share/pixmaps/luminusos-gdm-logo.png && \
     test -f /usr/share/pixmaps/fedora_logo_med.png && \
     test -f /usr/share/pixmaps/fedora_whitelogo_med.png && \

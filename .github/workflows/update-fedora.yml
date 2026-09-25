@@ -17,7 +17,7 @@ jobs:
   update:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
       - name: Update Fedora bootc digest
         shell: bash
@@ -26,13 +26,7 @@ jobs:
 
           fedora_version="$(./tools/config-value.sh DEFAULT_FEDORA_VERSION)"
           current="$(./tools/config-value.sh FEDORA_BOOTC_DIGEST)"
-          latest="$(curl --fail --silent --show-error --head \
-            --header 'Accept: application/vnd.oci.image.index.v1+json' \
-            "https://quay.io/v2/fedora/fedora-bootc/manifests/${fedora_version}" |
-            sed -n 's/^[Dd]ocker-[Cc]ontent-[Dd]igest: *\([^[:space:]]*\).*/\1/p' |
-            tr -d '\r')"
-
-          [[ "$latest" =~ ^sha256:[0-9a-f]{64}$ ]]
+          latest="$(./tools/fedora-bootc-digest.sh "${fedora_version}")"
           if [ "$latest" = "$current" ]; then
             echo "Fedora bootc $fedora_version is already current."
             exit 0

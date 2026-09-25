@@ -24,6 +24,7 @@ RUN --mount=type=bind,from=ctx-scripts,source=/scripts,target=/scripts \
 
 RUN --mount=type=bind,from=ctx-scripts,source=/scripts,target=/scripts \
     bash /scripts/rpmdb-repair.sh && \
+    dnf -y --releasever="${fedora_version}" install firewalld && \
     dnf clean all && \
     rm -rf /var/cache/dnf /var/cache/libdnf5 /tmp/* /var/log/* /var/tmp/*
 
@@ -41,4 +42,5 @@ RUN --mount=type=bind,from=ctx-scripts,source=/scripts,target=/scripts \
 LABEL org.opencontainers.image.version="${distro_version}"
 
 RUN command -v bootc && \
+    systemctl is-enabled firewalld.service && \
     bootc container lint --no-truncate

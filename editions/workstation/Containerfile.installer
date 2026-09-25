@@ -11,6 +11,7 @@ ARG fedora_version
 ARG image_version
 ARG sirius_version
 ARG sirius_rpm_version
+ARG sirius_sha256
 ARG workstation_image=localhost/luminusos-workstation:latest
 ARG workstation_target_image
 ARG aurora_shell_uuid=aurora-shell@luminusos.github.io
@@ -19,6 +20,10 @@ ARG source_url="https://github.com/LuminusOS/images"
 RUN --mount=type=cache,target=/var/cache/dnf \
     --mount=type=bind,from=ctx-scripts,source=/scripts,target=/scripts \
     bash /scripts/rpmdb-repair.sh && \
+    curl -fsSL \
+      "https://github.com/luminusOS/sirius/releases/download/v${sirius_version}/sirius-installer-${sirius_rpm_version}-1.x86_64.rpm" \
+      -o /tmp/sirius-installer.rpm && \
+    echo "${sirius_sha256}  /tmp/sirius-installer.rpm" | sha256sum -c - && \
     dnf -y --releasever="${fedora_version}" install \
       bubblewrap \
       dracut-live \
@@ -32,7 +37,8 @@ RUN --mount=type=cache,target=/var/cache/dnf \
       polkit \
       squashfs-tools \
       xorriso \
-      "https://github.com/luminusOS/sirius/releases/download/v${sirius_version}/sirius-installer-${sirius_rpm_version}-1.x86_64.rpm" && \
+      /tmp/sirius-installer.rpm && \
+    rm -f /tmp/sirius-installer.rpm && \
     dnf clean all && \
     # The Sirius RPM ships generic repart definitions (10-esp.conf,
     # 20-root.conf) that would mix with the LuminusOS 10-root/20-boot/30-esp

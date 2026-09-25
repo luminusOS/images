@@ -1,0 +1,5 @@
+docker:
+  ghcr.io/luminusos/luminusos:
+    use-sigstore-attachments: true
+  ghcr.io/luminusos/luminusos-workstation:
+    use-sigstore-attachments: true

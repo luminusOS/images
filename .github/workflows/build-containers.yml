@@ -1,4 +1,4 @@
-name: Build Testing Containers
+name: Build Containers
 
 on:
   push:
@@ -26,6 +26,6 @@ jobs:
     with:
       fedora_version: ${{ inputs.fedora_version || '' }}
       builder_mode: local
-      publish: ${{ github.event_name != 'pull_request' }}
+      publish: false
       channel_policy: auto
     secrets: inherit

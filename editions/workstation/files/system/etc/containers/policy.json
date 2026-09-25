@@ -1,0 +1,36 @@
+{
+    "default": [
+        {
+            "type": "insecureAcceptAnything"
+        }
+    ],
+    "transports": {
+        "docker": {
+            "ghcr.io/luminusos/luminusos": [
+                {
+                    "type": "sigstoreSigned",
+                    "keyPath": "/etc/pki/containers/luminusos.pub",
+                    "signedIdentity": {
+                        "type": "matchRepository"
+                    }
+                }
+            ],
+            "ghcr.io/luminusos/luminusos-workstation": [
+                {
+                    "type": "sigstoreSigned",
+                    "keyPath": "/etc/pki/containers/luminusos.pub",
+                    "signedIdentity": {
+                        "type": "matchRepository"
+                    }
+                }
+            ]
+        },
+        "docker-daemon": {
+            "": [
+                {
+                    "type": "insecureAcceptAnything"
+                }
+            ]
+        }
+    }
+}

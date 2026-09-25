@@ -21,3 +21,6 @@ fi
 
 ln -sf /usr/lib/systemd/system/graphical.target /etc/systemd/system/default.target
 ln -sf /usr/lib/systemd/system/gdm.service /etc/systemd/system/display-manager.service
+
+systemctl disable sshd.service
+firewall-offline-cmd --zone=public --remove-service-from-zone=ssh

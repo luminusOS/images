@@ -24,9 +24,12 @@ expect "automatic builds call the reusable workflow" \
 expect "Fedora bootc updates dispatch the reusable build" \
   grep -Fq 'gh workflow run build-containers.yml --ref main' \
   "${ROOT}/.github/workflows/update-fedora.yml"
-expect "Fedora bootc updates track the OCI manifest" \
-  grep -Fq 'quay.io/v2/fedora/fedora-bootc/manifests/${fedora_version}' \
-  "${ROOT}/.github/workflows/update-fedora.yml"
+expect "Fedora bootc digest helper tracks the OCI manifest" \
+  grep -Fq 'quay.io/v2/fedora/fedora-bootc/manifests/${version}' \
+  "${ROOT}/tools/fedora-bootc-digest.sh"
+expect "builds resolve the live Fedora bootc digest" \
+  sh -c 'for f in containers.yml ci.yml update-fedora.yml; do grep -Fq "tools/fedora-bootc-digest.sh" "$1/$f" || exit 1; done' \
+  _ "${ROOT}/.github/workflows"
 expect "publish calls the reusable workflow" \
   grep -Fq 'uses: ./.github/workflows/containers.yml' \
   "${ROOT}/.github/workflows/publish.yml"
@@ -41,3 +44,35 @@ expect "custom Sirius release overrides matching RPM version" \
   "${ROOT}/.github/workflows/containers.yml"
 expect "CI image hash includes shared version defaults" \
   grep -Fq 'config/versions.env' "${ROOT}/tools/ci-image-name.sh"
+expect "core installs firewalld" \
+  grep -Fq 'install firewalld' "${ROOT}/editions/core/Containerfile"
+expect "workstation disables sshd and closes its firewall port" \
+  sh -c 'grep -Fq "systemctl disable sshd.service" "$1" && grep -Fq -- "--remove-service-from-zone=ssh" "$1"' \
+  _ "${ROOT}/editions/workstation/build.sh"
+expect "Sirius RPM is verified against a pinned digest" \
+  grep -Fq 'sha256sum -c' "${ROOT}/editions/workstation/Containerfile.installer"
+expect "Sirius version override requires a digest" \
+  grep -Fq 'sirius_version override requires sirius_sha256' \
+  "${ROOT}/.github/workflows/containers.yml"
+expect "automatic container builds never publish" \
+  grep -Fq 'publish: false' "${ROOT}/.github/workflows/build-containers.yml"
+expect "stable promotes an existing testing build without rebuilding" \
+  sh -c 'grep -Fq "skopeo copy --all --preserve-digests" "$1" && grep -Fq "testing-\${BUILD_VERSION}" "$1"' \
+  _ "${ROOT}/.github/workflows/containers.yml"
+expect "installed systems follow UPDATE_CHANNEL" \
+  grep -Fq 'luminusos-workstation:${{ steps.version.outputs.target_tag }}' \
+  "${ROOT}/.github/workflows/containers.yml"
+expect_contains "installed systems follow testing until stable is switched on" \
+  'UPDATE_CHANNEL=testing' cat "${ROOT}/config/versions.env"
+expect "installed systems require signed LuminusOS images" \
+  sh -c 'jq -e "$1" "$2" >/dev/null && test -s "$3"' _ \
+  '.transports.docker | [.["ghcr.io/luminusos/luminusos"][0], .["ghcr.io/luminusos/luminusos-workstation"][0]]
+    | all(.type == "sigstoreSigned" and .keyPath == "/etc/pki/containers/luminusos.pub")' \
+  "${ROOT}/editions/workstation/files/system/etc/containers/policy.json" \
+  "${ROOT}/editions/workstation/files/system/etc/pki/containers/luminusos.pub"
+expect "published images are signed with a containers/image-compatible cosign" \
+  sh -c 'grep -Fq "cosign sign --yes --key env://COSIGN_PRIVATE_KEY" "$1" && grep -Fq "cosign-release: v2." "$1"' \
+  _ "${ROOT}/.github/workflows/containers.yml"
+expect "workflow actions are pinned to immutable digests" \
+  sh -c '! grep -rhE "^[[:space:]]*(- )?uses: " "$1" | grep -vE "uses: (\./|[^ ]+@[0-9a-f]{40}( |$)|docker://[^ ]+@sha256:[0-9a-f]{64}( |$))"' \
+  _ "${ROOT}/.github/workflows"

@@ -5,8 +5,8 @@
 # layer into a large /var/tmp staging area.
 image = "oci:/usr/lib/luminusos/payload.oci:latest"
 target_imgref = "@WORKSTATION_TARGET_IMAGE@"
-# TODO: sign the published images (cosign/sigstore) and flip this to true —
-# today the ghcr.io images are unsigned, so verification has nothing to check.
+# Must stay false: the install source is the unsigned embedded OCI layout.
+# Updates are still verified through /etc/containers/policy.json.
 enforce_sigpolicy = false
 kargs = ["rhgb", "quiet", "splash"]
 args = ["--skip-fetch-check"]

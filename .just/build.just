@@ -12,7 +12,7 @@ _core-stamp:
     #!/usr/bin/env bash
     set -euo pipefail
     {
-      printf '%s\n' "{{ base }}" "{{ fedora_ver }}" "{{ tag }}" "{{ name }}" "{{ pretty }}"
+      printf '%s\n' "{{ base }}" "{{ fedora_ver }}" "{{ tag }}" "{{ version }}" "{{ name }}" "{{ pretty }}"
       find \
         editions/core \
         shared/scripts/dnf-releasever.sh \
@@ -33,7 +33,7 @@ core:
       --file editions/core/Containerfile \
       --build-arg base={{ base }} \
       --build-arg fedora_version={{ fedora_ver }} \
-      --build-arg distro_version={{ tag }} \
+      --build-arg distro_version={{ version }} \
       --build-arg distro_name="{{ name }}" \
       --build-arg distro_pretty_name="{{ pretty }}" \
       .
@@ -68,7 +68,7 @@ workstation:
       --build-arg core_image={{ core_image }} \
       --build-arg fedora_bootc_base={{ base }} \
       --build-arg fedora_version={{ fedora_ver }} \
-      --build-arg image_version={{ tag }} \
+      --build-arg image_version={{ version }} \
       --build-arg edition_name="Workstation" \
       --build-arg edition_id="workstation" \
       --build-arg aurora_shell_version={{ aurora_shell_version }} \
@@ -102,8 +102,9 @@ workstation-iso:
       --build-arg fedora_version={{ fedora_ver }} \
       --build-arg sirius_version={{ sirius_version }} \
       --build-arg sirius_rpm_version={{ sirius_rpm_version }} \
+      --build-arg sirius_sha256={{ sirius_sha256 }} \
       --build-arg workstation_image={{ workstation_image }} \
       --build-arg workstation_target_image={{ workstation_target_image }} \
-      --build-arg image_version={{ tag }} \
+      --build-arg image_version={{ version }} \
       .
     echo "No post-build squash needed for {{ workstation_iso_image }}: Containerfile.installer squashes itself into a single layer"
