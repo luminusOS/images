@@ -110,6 +110,11 @@ RUN test -f /usr/share/gnome-shell/extensions/${aurora_shell_uuid}/metadata.json
     test -n "$(find /usr/share/gnome-shell/extensions/${aurora_shell_uuid} -mindepth 1 -maxdepth 1 -print -quit)"
 
 # GNOME desktop environment packages (stable cache — only invalidated by package list changes)
+# The GStreamer plugins let host apps (Sushi previews, apps run from toolbox
+# or as RPMs) play common audio and video: MP4/QuickTime demuxing and
+# scaletempo (good), H.264 through Cisco's openh264 (the library comes from
+# Fedora's fedora-cisco-openh264 repository), and AAC and other codecs
+# through ffmpeg-free (libav). All are Fedora packages.
 RUN --mount=type=cache,target=/var/cache/dnf \
     --mount=type=bind,from=ctx-scripts,source=/scripts,target=/scripts \
     bash /scripts/rpmdb-repair.sh && \
@@ -122,8 +127,14 @@ RUN --mount=type=cache,target=/var/cache/dnf \
       gnome-backgrounds \
       ibus \
       nautilus \
+      oo7-daemon \
+      oo7-portal \
       sushi \
-      gnome-software && \
+      gnome-software \
+      gstreamer1-plugins-good \
+      gstreamer1-plugins-bad-free \
+      gstreamer1-plugin-openh264 \
+      gstreamer1-plugin-libav && \
     dnf clean all
 
 # The system overlay mirrors the installed filesystem. Live-installer files
@@ -187,6 +198,8 @@ RUN dnf clean all && \
 
 RUN set -eux; \
     command -v bootc && \
+    rpm -q gstreamer1-plugins-good gstreamer1-plugins-bad-free \
+      gstreamer1-plugin-openh264 openh264 gstreamer1-plugin-libav && \
     systemctl is-enabled firewalld.service && \
     ! systemctl is-enabled sshd.service && \
     systemctl is-enabled bootc-fetch-apply-updates.timer && \
