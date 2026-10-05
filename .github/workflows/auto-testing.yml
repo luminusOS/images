@@ -111,7 +111,6 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           fetch-depth: 0
-          persist-credentials: false
 
       - name: Build release notes
         shell: bash
@@ -144,6 +143,8 @@ jobs:
         shell: bash
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          # ponytail: temporary, remove once the 403 on release creation is understood.
+          GH_DEBUG: api
           RELEASE_TAG: ${{ needs.containers.outputs.release_tag }}
           FEDORA_VERSION: ${{ needs.containers.outputs.fedora_version }}
         run: |

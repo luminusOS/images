@@ -74,9 +74,9 @@ echo
 echo "### Commits"
 echo
 if [ -n "${prev_tag}" ] && git rev-parse --verify --quiet "refs/tags/${prev_tag}^{commit}" >/dev/null; then
-  commits="$(git log --no-merges --format='%h%x1f%s%x1f%an' "refs/tags/${prev_tag}..HEAD" | commit_rows)"
+  commits="$(git log --no-merges --format='%h%x1f%s%x1f%an' "refs/tags/${prev_tag}..HEAD" | commit_rows || true)"
 else
-  commits="$(git log --no-merges -n 10 --format='%h%x1f%s%x1f%an' | commit_rows)"
+  commits="$(git log --no-merges -n 10 --format='%h%x1f%s%x1f%an' | commit_rows || true)"
 fi
 if [ -n "${commits}" ]; then
   echo "| Hash | Subject | Author |"
