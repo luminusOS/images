@@ -65,9 +65,15 @@ RUN --mount=type=cache,target=/var/cache/dnf \
     dnf clean all && \
     bash /scripts/rpmdb-repair.sh && \
     dnf -y --releasever="${fedora_version}" install \
-      kernel dracut \
-      iwlwifi-mvm-firmware iwlwifi-mld-firmware \
-      iwlbluetooth-firmware \
+      kernel dracut kernel-modules-extra \
+      NetworkManager-wifi wpa_supplicant wireless-regdb \
+      linux-firmware amd-gpu-firmware amd-ucode-firmware atheros-firmware \
+      brcmfmac-firmware cirrus-audio-firmware intel-audio-firmware \
+      intel-gpu-firmware mt7xxx-firmware nvidia-gpu-firmware \
+      nxpwireless-firmware qcom-wwan-firmware realtek-firmware \
+      tiwilink-firmware mediatek-firmware alsa-sof-firmware \
+      iwlwifi-dvm-firmware iwlwifi-mvm-firmware iwlwifi-mld-firmware \
+      iwlegacy-firmware iwlbluetooth-firmware \
       bootupd \
       btrfs-progs \
       grub2 grub2-tools grub2-common grub2-pc-modules \
@@ -204,6 +210,9 @@ RUN set -eux; \
     command -v bootc && \
     rpm -q gstreamer1-plugins-good gstreamer1-plugins-bad-free \
       gstreamer1-plugin-openh264 openh264 gstreamer1-plugin-libav \
+      kernel-modules-extra NetworkManager-wifi wpa_supplicant wireless-regdb \
+      linux-firmware realtek-firmware mt7xxx-firmware atheros-firmware \
+      brcmfmac-firmware alsa-sof-firmware \
       iwlwifi-mvm-firmware iwlwifi-mld-firmware iwlbluetooth-firmware && \
     systemctl is-enabled firewalld.service && \
     ! systemctl is-enabled sshd.service && \
