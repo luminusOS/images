@@ -129,3 +129,10 @@ expect "Aurora Shell artifact digest is pinned" \
 expect "Sirius release and RPM versions are pinned separately" \
   sh -c 'grep -Eq "^SIRIUS_VERSION=[0-9]+\\.[0-9]+\\.[0-9]+$" "$1" && grep -Eq "^SIRIUS_RPM_VERSION=[0-9]+\\.[0-9]+\\.[0-9]+$" "$1"' \
   _ "${ROOT}/config/versions.env"
+
+expect "zswap kargs enable compressed swap" \
+  grep -q 'zswap.enabled=1' "${SYSTEM_FILES}/usr/lib/bootc/kargs.d/20-luminusos-zswap.toml"
+expect "swap file script is executable" \
+  test -x "${SYSTEM_FILES}/usr/libexec/luminusos-swapfile.sh"
+expect "swap file service is enabled by the build" \
+  grep -qx 'systemctl enable luminusos-swapfile.service' "${ROOT}/editions/workstation/build.sh"

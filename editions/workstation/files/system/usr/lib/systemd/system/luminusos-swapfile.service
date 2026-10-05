@@ -1,0 +1,14 @@
+[Unit]
+Description=Create and enable the swap file
+Documentation=file:///usr/lib/sysctl.d/60-luminusos-swap.conf
+RequiresMountsFor=/var
+ConditionVirtualization=!container
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ExecStart=/usr/libexec/luminusos-swapfile.sh
+ExecStop=-/usr/sbin/swapoff /var/swap/swapfile
+
+[Install]
+WantedBy=swap.target

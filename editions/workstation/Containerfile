@@ -217,6 +217,9 @@ RUN set -eux; \
     systemctl is-enabled firewalld.service && \
     ! systemctl is-enabled sshd.service && \
     systemctl is-enabled bootc-fetch-apply-updates.timer && \
+    systemctl is-enabled luminusos-swapfile.service && \
+    grep -q 'zswap.enabled=1' /usr/lib/bootc/kargs.d/20-luminusos-zswap.toml && \
+    test -x /usr/libexec/luminusos-swapfile.sh && \
     grep -qx 'ExecStart=/usr/bin/bootc upgrade --quiet' \
       /usr/lib/systemd/system/bootc-fetch-apply-updates.service.d/10-luminusos-stage.conf && \
     ! firewall-offline-cmd --zone=public --query-service=ssh && \

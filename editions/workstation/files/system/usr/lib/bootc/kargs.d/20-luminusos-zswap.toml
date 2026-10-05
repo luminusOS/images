@@ -1,0 +1,4 @@
+kargs = [
+  "zswap.enabled=1",
+  "zswap.compressor=zstd",
+]
