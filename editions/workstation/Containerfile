@@ -64,6 +64,8 @@ RUN --mount=type=cache,target=/var/cache/dnf \
     bash /scripts/rpmdb-repair.sh && \
     dnf -y --releasever="${fedora_version}" install \
       kernel dracut \
+      iwlwifi-mvm-firmware iwlwifi-mld-firmware \
+      iwlbluetooth-firmware \
       bootupd \
       btrfs-progs \
       grub2 grub2-tools grub2-common grub2-pc-modules \
@@ -199,7 +201,8 @@ RUN dnf clean all && \
 RUN set -eux; \
     command -v bootc && \
     rpm -q gstreamer1-plugins-good gstreamer1-plugins-bad-free \
-      gstreamer1-plugin-openh264 openh264 gstreamer1-plugin-libav && \
+      gstreamer1-plugin-openh264 openh264 gstreamer1-plugin-libav \
+      iwlwifi-mvm-firmware iwlwifi-mld-firmware iwlbluetooth-firmware && \
     systemctl is-enabled firewalld.service && \
     ! systemctl is-enabled sshd.service && \
     systemctl is-enabled bootc-fetch-apply-updates.timer && \
