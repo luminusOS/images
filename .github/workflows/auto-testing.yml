@@ -1,0 +1,153 @@
+name: Auto Testing
+
+# Daily check: when fedora-bootc:<N> has a new digest, publish a signed testing
+# container and a pre-release with generated notes. No ISO or qcow2.
+on:
+  schedule:
+    - cron: "17 10 * * *"
+  workflow_dispatch:
+    inputs:
+      force:
+        description: "Build even if the Fedora base digest is unchanged"
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+
+jobs:
+  check:
+    name: Check Fedora base
+    # Only main may sign and publish to the channel installed systems follow.
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: read
+    outputs:
+      build: ${{ steps.check.outputs.build }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Compare Fedora bootc digest with the latest testing image
+        id: check
+        shell: bash
+        env:
+          FORCE: ${{ inputs.force }}
+          GHCR_USER: ${{ github.actor }}
+          GHCR_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          OWNER: ${{ github.repository_owner }}
+        run: |
+          set -euo pipefail
+          sudo apt-get update
+          sudo apt-get install -y skopeo
+
+          fedora_version="$(tools/config-value.sh DEFAULT_FEDORA_VERSION)"
+          latest="$(tools/fedora-bootc-digest.sh "${fedora_version}")"
+          namespace="$(printf '%s' "${OWNER}" | tr '[:upper:]' '[:lower:]')"
+          image="docker://ghcr.io/${namespace}/luminusos-workstation:testing-${fedora_version}"
+
+          printf '%s' "${GHCR_TOKEN}" | skopeo login ghcr.io -u "${GHCR_USER}" --password-stdin
+
+          # Only a missing tag means "never built"; any other registry error fails the job
+          # instead of silently publishing again.
+          current=""
+          built=""
+          if inspect="$(skopeo inspect --retry-times 3 "${image}" 2>err.txt)"; then
+            current="$(jq -r '.Labels["org.opencontainers.image.base.digest"] // ""' <<<"${inspect}")"
+            built="$(jq -r '.Labels["org.opencontainers.image.version"] // ""' <<<"${inspect}")"
+          elif ! grep -qiE 'manifest unknown|name unknown|not found' err.txt; then
+            cat err.txt >&2
+            exit 1
+          fi
+
+          # A build whose release step failed has no git tag yet; retry it even if the digest matches.
+          released=false
+          if [ -n "${built}" ] && gh api "repos/${GITHUB_REPOSITORY}/git/ref/tags/testing-${built}" >/dev/null 2>&1; then
+            released=true
+          fi
+
+          echo "Fedora ${fedora_version} base: live ${latest}, last built '${current}' (version '${built}', released=${released})"
+          if [ "${FORCE}" = true ] || [ "${latest}" != "${current}" ] || [ "${released}" != true ]; then
+            echo "build=true" >>"${GITHUB_OUTPUT}"
+          else
+            echo "build=false" >>"${GITHUB_OUTPUT}"
+            echo "Fedora base unchanged and release exists; nothing to build."
+          fi
+
+  containers:
+    name: Build and push containers
+    needs: [check]
+    if: needs.check.outputs.build == 'true'
+    concurrency:
+      group: publish
+      cancel-in-progress: false
+    permissions:
+      contents: read
+      packages: write
+    uses: ./.github/workflows/containers.yml
+    with:
+      channel: testing
+      build_sequence: true
+      build_installer: false
+      publish: true
+      builder_mode: registry
+    secrets: inherit
+
+  release:
+    name: Publish pre-release
+    needs: [containers]
+    runs-on: ubuntu-latest
+    concurrency:
+      group: publish
+      cancel-in-progress: false
+    permissions:
+      contents: write
+      packages: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Build release notes
+        shell: bash
+        env:
+          GHCR_USER: ${{ github.actor }}
+          GHCR_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          NEW_IMAGE: ${{ needs.containers.outputs.workstation_image }}
+          NEW_TAG: ${{ needs.containers.outputs.release_tag }}
+          FEDORA_VERSION: ${{ needs.containers.outputs.fedora_version }}
+          NAMESPACE: ${{ needs.containers.outputs.image_namespace }}
+        run: |
+          set -euo pipefail
+          printf '%s' "${GHCR_TOKEN}" | podman login ghcr.io -u "${GHCR_USER}" --password-stdin
+
+          # The new tag does not exist yet, so the newest testing tag is the previous release.
+          prev_tag="$(git tag -l "testing-${FEDORA_VERSION}.*" --sort=-v:refname | head -n1)"
+          prev_image=""
+          if [ -n "${prev_tag}" ]; then
+            prev_image="ghcr.io/${NAMESPACE}/luminusos-workstation:${prev_tag}"
+            if ! podman pull --quiet "${prev_image}" >/dev/null; then
+              echo "Previous image ${prev_image} is gone; notes will not compare packages." >&2
+              prev_image=""
+              prev_tag=""
+            fi
+          fi
+          podman pull --quiet "${NEW_IMAGE}" >/dev/null
+          tools/release-notes.sh "${NEW_IMAGE}" "${NEW_TAG}" "${prev_image}" "${prev_tag}" >notes.md
+
+      - name: Create GitHub pre-release
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          RELEASE_TAG: ${{ needs.containers.outputs.release_tag }}
+          FEDORA_VERSION: ${{ needs.containers.outputs.fedora_version }}
+        run: |
+          set -euo pipefail
+          gh release create "${RELEASE_TAG}" \
+            --notes-file notes.md --target "${GITHUB_SHA}" --prerelease \
+            --title "${RELEASE_TAG}: Testing (F${FEDORA_VERSION}, #${GITHUB_SHA::7})"

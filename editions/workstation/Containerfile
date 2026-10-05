@@ -48,8 +48,10 @@ ARG edition_id="workstation"
 ARG aurora_shell_uuid=aurora-shell@luminusos.github.io
 ARG skip_flatpaks=0
 ARG source_url="https://github.com/LuminusOS/images"
+ARG fedora_bootc_digest=""
 
 LABEL containers.bootc="1" \
+      org.opencontainers.image.base.digest="${fedora_bootc_digest}" \
       org.opencontainers.image.title="LuminusOS Workstation" \
       org.opencontainers.image.description="Luminus OS bootc image with GNOME desktop" \
       org.opencontainers.image.vendor="LuminusOS" \

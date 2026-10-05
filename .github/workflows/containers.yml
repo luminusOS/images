@@ -39,6 +39,11 @@ on:
         required: false
         type: string
         default: registry
+      build_sequence:
+        description: "Testing only: append a per-day sequence (45.20261004.2) so several builds can share a date"
+        required: false
+        type: boolean
+        default: false
     outputs:
       fedora_version:
         value: ${{ jobs.build.outputs.fedora_version }}
@@ -115,8 +120,8 @@ jobs:
           fi
 
           if [ "${CHANNEL}" = stable ]; then
-            if ! [[ "${INPUT_PROMOTE_VERSION}" =~ ^([0-9]+)\.[0-9]{8}$ ]]; then
-              echo "stable requires promote_version like 45.20260923 (an existing testing-<version> build)" >&2
+            if ! [[ "${INPUT_PROMOTE_VERSION}" =~ ^([0-9]+)\.[0-9]{8}(\.[0-9]+)?$ ]]; then
+              echo "stable requires promote_version like 45.20260923 or 45.20260923.2 (an existing testing-<version> build)" >&2
               exit 1
             fi
             if [ "${BUILDER_MODE}" != registry ]; then
@@ -138,6 +143,11 @@ jobs:
               fedora_version="${DEFAULT_FEDORA_VERSION}"
             fi
             build_version="${fedora_version}.$(date -u +%Y%m%d)"
+            if [ "${{ inputs.build_sequence }}" = true ]; then
+              last="$(git ls-remote --tags origin "refs/tags/testing-${build_version}.*" |
+                sed -n 's|.*refs/tags/testing-.*\.\([0-9][0-9]*\)$|\1|p' | sort -n | tail -n1)"
+              build_version="${build_version}.$(( ${last:-0} + 1 ))"
+            fi
             version_tag="testing-${build_version}"
             branch_tag="testing-${fedora_version}"
             channel_tag=testing
@@ -146,6 +156,10 @@ jobs:
           git fetch --quiet --depth=1 origin main
           # shellcheck disable=SC1090
           source <(git show FETCH_HEAD:config/releases.env)
+          if ! [[ "${fedora_version}" =~ ^[0-9]+$ ]]; then
+            echo "Invalid Fedora version: ${fedora_version}" >&2
+            exit 1
+          fi
           if [[ " ${SUPPORTED_RELEASES} " != *" ${fedora_version} "* ]]; then
             echo "Fedora ${fedora_version} is not in SUPPORTED_RELEASES (${SUPPORTED_RELEASES}) on main" >&2
             exit 1
@@ -182,12 +196,6 @@ jobs:
           core_image="${REGISTRY}/${image_namespace}/luminusos:${version_tag}"
           workstation_image="${REGISTRY}/${image_namespace}/luminusos-workstation:${version_tag}"
           workstation_iso_image="${workstation_image}-iso"
-          channel_core_image="${core_image}"
-          channel_workstation_image="${workstation_image}"
-          if [ "${publish_channel}" = true ]; then
-            channel_core_image="${REGISTRY}/${image_namespace}/luminusos:${channel_tag}"
-            channel_workstation_image="${REGISTRY}/${image_namespace}/luminusos-workstation:${channel_tag}"
-          fi
           core_build_ref="${core_image}"
           local_core_tag="${core_image}"
           local_workstation_tag="${workstation_image}"
@@ -216,8 +224,6 @@ jobs:
             echo "core_image=${core_image}"
             echo "workstation_image=${workstation_image}"
             echo "workstation_iso_image=${workstation_iso_image}"
-            echo "channel_core_image=${channel_core_image}"
-            echo "channel_workstation_image=${channel_workstation_image}"
             echo "core_build_ref=${core_build_ref}"
             echo "local_core_tag=${local_core_tag}"
             echo "local_workstation_tag=${local_workstation_tag}"
@@ -253,8 +259,6 @@ jobs:
           tags: |
             ${{ steps.version.outputs.local_core_tag }}
             ${{ steps.version.outputs.core_image }}
-            ${{ env.REGISTRY }}/${{ steps.version.outputs.image_namespace }}/luminusos:${{ steps.version.outputs.branch_tag }}
-            ${{ steps.version.outputs.channel_core_image }}
           cache-from: ${{ inputs.builder_mode == 'registry' && 'type=gha' || '' }}
           cache-to: ${{ inputs.builder_mode == 'registry' && 'type=gha,mode=max' || '' }}
 
@@ -264,10 +268,6 @@ jobs:
         run: |
           set -euo pipefail
           docker push "${{ steps.version.outputs.core_image }}"
-          docker push "${REGISTRY}/${{ steps.version.outputs.image_namespace }}/luminusos:${{ steps.version.outputs.branch_tag }}"
-          if [ "${{ steps.version.outputs.publish_channel }}" = true ]; then
-            docker push "${REGISTRY}/${{ steps.version.outputs.image_namespace }}/luminusos:${{ steps.version.outputs.channel_tag }}"
-          fi
 
       - name: Build workstation
         if: inputs.channel != 'stable'
@@ -281,6 +281,7 @@ jobs:
             core_image=${{ steps.version.outputs.core_build_ref }}
             fedora_bootc_base=quay.io/fedora/fedora-bootc:${{ steps.version.outputs.fedora_version }}@${{ steps.version.outputs.fedora_bootc_digest }}
             fedora_version=${{ steps.version.outputs.fedora_version }}
+            fedora_bootc_digest=${{ steps.version.outputs.fedora_bootc_digest }}
             image_version=${{ steps.version.outputs.build_version }}
             edition_name=Workstation
             edition_id=workstation
@@ -290,8 +291,6 @@ jobs:
           tags: |
             ${{ steps.version.outputs.local_workstation_tag }}
             ${{ steps.version.outputs.workstation_image }}
-            ${{ env.REGISTRY }}/${{ steps.version.outputs.image_namespace }}/luminusos-workstation:${{ steps.version.outputs.branch_tag }}
-            ${{ steps.version.outputs.channel_workstation_image }}
           cache-from: ${{ inputs.builder_mode == 'registry' && 'type=gha' || '' }}
           cache-to: ${{ inputs.builder_mode == 'registry' && 'type=gha,mode=max' || '' }}
 
@@ -301,10 +300,6 @@ jobs:
         run: |
           set -euo pipefail
           docker push "${{ steps.version.outputs.workstation_image }}"
-          docker push "${REGISTRY}/${{ steps.version.outputs.image_namespace }}/luminusos-workstation:${{ steps.version.outputs.branch_tag }}"
-          if [ "${{ steps.version.outputs.publish_channel }}" = true ]; then
-            docker push "${REGISTRY}/${{ steps.version.outputs.image_namespace }}/luminusos-workstation:${{ steps.version.outputs.channel_tag }}"
-          fi
 
       - name: Install cosign
         if: inputs.publish && inputs.channel != 'stable'
@@ -333,10 +328,34 @@ jobs:
           done
 
       - name: Install skopeo
-        if: inputs.build_installer || inputs.channel == 'stable'
+        if: inputs.build_installer || inputs.channel == 'stable' || inputs.publish
         run: |
           sudo apt-get update
           sudo apt-get install -y skopeo
+
+      # Installed systems follow the branch and channel tags and reject unsigned
+      # images, so those tags only move after the version tag is signed.
+      - name: Move branch and channel tags to the signed build
+        if: inputs.publish && inputs.channel != 'stable'
+        shell: bash
+        env:
+          NAMESPACE: ${{ steps.version.outputs.image_namespace }}
+          VERSION_TAG: ${{ steps.version.outputs.version_tag }}
+          BRANCH_TAG: ${{ steps.version.outputs.branch_tag }}
+          CHANNEL_TAG: ${{ steps.version.outputs.channel_tag }}
+          PUBLISH_CHANNEL: ${{ steps.version.outputs.publish_channel }}
+        run: |
+          set -euo pipefail
+          tags=("${BRANCH_TAG}")
+          if [ "${PUBLISH_CHANNEL}" = true ]; then
+            tags+=("${CHANNEL_TAG}")
+          fi
+          for repo in luminusos luminusos-workstation; do
+            src="docker://${REGISTRY}/${NAMESPACE}/${repo}:${VERSION_TAG}"
+            for tag in "${tags[@]}"; do
+              skopeo copy --all --preserve-digests "${src}" "docker://${REGISTRY}/${NAMESPACE}/${repo}:${tag}"
+            done
+          done
 
       - name: Promote testing build to stable
         if: inputs.channel == 'stable'

@@ -21,14 +21,21 @@ expect "publish workflow consumes reusable outputs" \
 expect "automatic builds call the reusable workflow" \
   grep -Fq 'uses: ./.github/workflows/containers.yml' \
   "${ROOT}/.github/workflows/build-containers.yml"
-expect "Fedora bootc updates dispatch the reusable build" \
-  grep -Fq 'gh workflow run build-containers.yml --ref main' \
-  "${ROOT}/.github/workflows/update-fedora.yml"
+expect "auto testing publishes through the reusable workflow with per-day sequence" \
+  sh -c 'grep -Fq "uses: ./.github/workflows/containers.yml" "$1" && grep -Fq "build_sequence: true" "$1" && grep -Fq "build_installer: false" "$1"' \
+  _ "${ROOT}/.github/workflows/auto-testing.yml"
+expect "auto testing rebuilds only when the Fedora base digest changed" \
+  sh -c 'grep -Fq "org.opencontainers.image.base.digest" "$1" && grep -Fq "needs.check.outputs.build" "$1"' \
+  _ "${ROOT}/.github/workflows/auto-testing.yml"
+expect "workstation image records its Fedora base digest" \
+  grep -Fq 'org.opencontainers.image.base.digest="${fedora_bootc_digest}"' \
+  "${ROOT}/editions/workstation/Containerfile"
+expect "release notes script is valid Bash" bash -n "${ROOT}/tools/release-notes.sh"
 expect "Fedora bootc digest helper tracks the OCI manifest" \
   grep -Fq 'quay.io/v2/fedora/fedora-bootc/manifests/${version}' \
   "${ROOT}/tools/fedora-bootc-digest.sh"
 expect "builds resolve the live Fedora bootc digest" \
-  sh -c 'for f in containers.yml ci.yml update-fedora.yml; do grep -Fq "tools/fedora-bootc-digest.sh" "$1/$f" || exit 1; done' \
+  sh -c 'for f in containers.yml ci.yml auto-testing.yml; do grep -Fq "tools/fedora-bootc-digest.sh" "$1/$f" || exit 1; done' \
   _ "${ROOT}/.github/workflows"
 expect "publish calls the reusable workflow" \
   grep -Fq 'uses: ./.github/workflows/containers.yml' \
@@ -92,3 +99,8 @@ expect "floating tags only follow LATEST_RELEASE" \
   _ "${ROOT}/.github/workflows"
 expect "stable is refused before the Fedora release is out" \
   grep -Fq 'docker://quay.io/fedora/fedora-bootc:latest' "${ROOT}/.github/workflows/containers.yml"
+expect "branch and channel tags move only after signing" \
+  sh -c 'f="$1"; sign=$(grep -n "Sign core and workstation" "$f" | cut -d: -f1); move=$(grep -n "Move branch and channel tags" "$f" | cut -d: -f1);
+    [ -n "$sign" ] && [ -n "$move" ] && [ "$sign" -lt "$move" ] &&
+    ! grep -q "docker push.*branch_tag\|docker push.*channel_tag" "$f" && ! grep -q "steps.version.outputs.channel_core_image }}\|steps.version.outputs.channel_workstation_image }}" "$f"' \
+  _ "${ROOT}/.github/workflows/containers.yml"

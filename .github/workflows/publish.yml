@@ -9,7 +9,7 @@ name: Publish
         options: [testing, stable]
         default: testing
       promote_version:
-        description: "Stable only: testing build to promote, e.g. 45.20260923"
+        description: "Stable only: testing build to promote, e.g. 45.20260923 or 45.20260923.2"
         default: ""
       fedora_version:
         description: "Fedora version (blank uses config/versions.env)"

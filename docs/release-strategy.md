@@ -5,7 +5,7 @@ Status: **decided, not implemented**. Written 2026-09-25 to decide how LuminusOS
 ## Current state
 
 - One branch (`main`); `DEFAULT_FEDORA_VERSION` in `config/versions.env` selects the Fedora release.
-- Channels: `testing` (`testing-45.X`, `testing-45`, `testing`) and `stable` (`45.X`, `45`, `latest`), published manually through the `publish` workflow. Stable promotes an existing testing build without rebuilding.
+- Channels: `testing` (`testing-45.X`, `testing-45`, `testing`) and `stable` (`45.X`, `45`, `latest`), published manually through the `publish` workflow, plus `testing` containers published daily by `auto-testing.yml` when the Fedora base digest changes (see `docs/images/2026-10-04-auto-testing-releases.md` in the workspace). Stable promotes an existing testing build without rebuilding.
 - Installed systems follow `UPDATE_CHANNEL` (currently `testing`), through a Fedora-pinned tag (`testing-45`).
 - Nothing applies updates automatically: `bootc-fetch-apply-updates.timer` is disabled and nothing replaces it.
 
@@ -89,7 +89,7 @@ Branch workflows read it from `origin/main`.
 2. **Release metadata and guards:** `config/releases.env`, the floating-tag guard and the stable-after-GA guard.
 3. **Scheduled rebuilds:**
    - A weekly workflow on `main` dispatches a signed container publish (no ISO) for every supported branch.
-   - `update-fedora.yml` is removed; the live digest made it obsolete.
+   - `update-fedora.yml` is removed; the live digest made it obsolete (done for `main` by `auto-testing.yml`).
 4. **Branch plumbing:**
    - CI and Dependabot (`target-branch`) cover `f*`, with branch protection for `main` and `f*`.
    - A `docs/release-lifecycle.md` runbook covers branching at GA, backports and EOL.
