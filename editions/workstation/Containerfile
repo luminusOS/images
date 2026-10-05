@@ -1,5 +1,5 @@
 ARG core_image=localhost/luminusos:latest
-ARG fedora_bootc_base
+ARG fedora_bootc_base=quay.io/fedora/fedora-bootc:45
 ARG fedora_version
 ARG aurora_shell_version
 
