@@ -78,6 +78,7 @@ RUN --mount=type=cache,target=/var/cache/dnf \
       NetworkManager-sstp NetworkManager-sstp-gnome \
       NetworkManager-strongswan NetworkManager-strongswan-gnome \
       NetworkManager-vpnc NetworkManager-vpnc-gnome \
+      git \
       linux-firmware amd-gpu-firmware amd-ucode-firmware atheros-firmware \
       brcmfmac-firmware cirrus-audio-firmware intel-audio-firmware \
       intel-gpu-firmware mt7xxx-firmware nvidia-gpu-firmware \
@@ -233,6 +234,7 @@ RUN set -eux; \
       NetworkManager-sstp NetworkManager-sstp-gnome \
       NetworkManager-strongswan NetworkManager-strongswan-gnome \
       NetworkManager-vpnc NetworkManager-vpnc-gnome \
+      git \
       linux-firmware realtek-firmware mt7xxx-firmware atheros-firmware \
       brcmfmac-firmware alsa-sof-firmware \
       iwlwifi-mvm-firmware iwlwifi-mld-firmware iwlbluetooth-firmware && \
