@@ -8,13 +8,9 @@ on:
   workflow_dispatch:
     inputs:
       fedora_version:
-        description: "Fedora version to build"
+        description: "Fedora version to build (validation only, nothing is published)"
         required: false
         default: ""
-      publish:
-        description: "Push signed testing containers to GHCR (no ISO/qcow2)"
-        type: boolean
-        default: false
 
 concurrency:
   group: build-containers-${{ github.ref }}-${{ github.event_name }}
@@ -30,5 +26,5 @@ jobs:
     with:
       fedora_version: ${{ inputs.fedora_version || '' }}
       builder_mode: local
-      publish: ${{ github.event_name == 'workflow_dispatch' && inputs.publish }}
+      publish: false
     secrets: inherit

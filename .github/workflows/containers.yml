@@ -110,6 +110,10 @@ jobs:
           case "${BUILDER_MODE}" in local|registry) ;; *) echo "Unknown builder_mode: ${BUILDER_MODE}" >&2; exit 1 ;; esac
           case "${CHANNEL}" in testing|stable) ;; *) echo "Unknown channel: ${CHANNEL}" >&2; exit 1 ;; esac
           case "${UPDATE_CHANNEL}" in testing|stable) ;; *) echo "Unknown UPDATE_CHANNEL: ${UPDATE_CHANNEL}" >&2; exit 1 ;; esac
+          if [ "${BUILDER_MODE}" = local ] && [ "${{ inputs.publish }}" = true ]; then
+            echo "publishing requires builder_mode=registry" >&2
+            exit 1
+          fi
           if [ "${BUILDER_MODE}" = registry ] && [ "${{ inputs.publish }}" != true ]; then
             echo "registry mode requires publish=true so downstream images can pull their base" >&2
             exit 1
@@ -174,6 +178,8 @@ jobs:
             target_tag="testing-${fedora_version}"
           fi
           image_namespace="$(printf '%s' "${GITHUB_REPOSITORY_OWNER}" | tr '[:upper:]' '[:lower:]')"
+          # SIRIUS_* come from versions.env, not the sirius_* locals.
+          # shellcheck disable=SC2153
           if [ -n "${INPUT_SIRIUS_VERSION}" ]; then
             if ! [[ "${INPUT_SIRIUS_SHA256}" =~ ^[0-9a-f]{64}$ ]]; then
               echo "sirius_version override requires sirius_sha256 of the release RPM" >&2
@@ -262,13 +268,6 @@ jobs:
           cache-from: ${{ inputs.builder_mode == 'registry' && 'type=gha' || '' }}
           cache-to: ${{ inputs.builder_mode == 'registry' && 'type=gha,mode=max' || '' }}
 
-      - name: Publish core from local builder
-        if: inputs.publish && inputs.builder_mode == 'local' && inputs.channel != 'stable'
-        shell: bash
-        run: |
-          set -euo pipefail
-          docker push "${{ steps.version.outputs.core_image }}"
-
       - name: Build workstation
         if: inputs.channel != 'stable'
         uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
@@ -293,13 +292,6 @@ jobs:
             ${{ steps.version.outputs.workstation_image }}
           cache-from: ${{ inputs.builder_mode == 'registry' && 'type=gha' || '' }}
           cache-to: ${{ inputs.builder_mode == 'registry' && 'type=gha,mode=max' || '' }}
-
-      - name: Publish workstation from local builder
-        if: inputs.publish && inputs.builder_mode == 'local' && inputs.channel != 'stable'
-        shell: bash
-        run: |
-          set -euo pipefail
-          docker push "${{ steps.version.outputs.workstation_image }}"
 
       - name: Install cosign
         if: inputs.publish && inputs.channel != 'stable'

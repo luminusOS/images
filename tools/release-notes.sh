@@ -93,4 +93,6 @@ echo '```'
 echo "sudo bootc switch ${new_image#docker://}"
 echo '```'
 echo
+# backticks are literal markdown
+# shellcheck disable=SC2016
 echo 'Already on this branch? `sudo bootc upgrade` is enough.'

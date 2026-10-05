@@ -636,11 +636,13 @@ Release metadata lives in `config/releases.env` on `main` and is read by every b
 - `SUPPORTED_RELEASES`: releases that may be built.
 - `LATEST_RELEASE`: the only release allowed to move the floating `testing` and `latest` tags.
 
+`auto-testing` runs daily on `main`. It compares the live `fedora-bootc:<fedora>` digest with the `org.opencontainers.image.base.digest` label of the latest `testing-<fedora>` image and rebuilds only when it changed, or when the last build never got its git tag (a failed release step). Its builds are versioned `<fedora>.<YYYYMMDD>.<n>`; `tools/release-notes.sh` compares `rpm -qa` of the previous and new image for the release notes.
+
 Stable images are promoted from an existing testing build with `skopeo copy --all --preserve-digests`, never rebuilt, so a stable tag always has the same digest as the testing build that was validated.
 
 ### Image signatures
 
-`publish` signs `luminusos` and `luminusos-workstation` by digest with cosign, using the `COSIGN_PRIVATE_KEY`/`COSIGN_PASSWORD` repository secrets, and refuses to publish if the key is missing. Cosign stays on v2 because cosign 3 defaults to a bundle format that containers/image cannot read. Stable promotion preserves digests, so the testing signatures also cover the stable tags.
+`publish` and `auto-testing` sign `luminusos` and `luminusos-workstation` by digest with cosign, using the `COSIGN_PRIVATE_KEY`/`COSIGN_PASSWORD` repository secrets, and refuses to publish if the key is missing. Cosign stays on v2 because cosign 3 defaults to a bundle format that containers/image cannot read. A build pushes only its immutable version tag; the branch and channel tags (`testing-<fedora>`, `testing`) move with `skopeo copy --preserve-digests` after signing, so installed systems never follow an unsigned image. Stable promotion preserves digests, so the testing signatures also cover the stable tags.
 
 Installed systems ship `/etc/containers/policy.json`, which requires a `sigstoreSigned` signature from `/etc/pki/containers/luminusos.pub` for those two repositories only; every other image keeps the Fedora default. `/etc/containers/registries.d/luminusos.yaml` enables sigstore attachments for them. `bootc upgrade` and `bootc switch` therefore reject unsigned or foreign-signed LuminusOS images.
 

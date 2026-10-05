@@ -67,3 +67,18 @@ expect_contains "QEMU dry-run uses structured qcow2 arguments" "format=qcow2" \
   env QEMU_BOOT=bios QEMU_DEBUG=0 QEMU_DRY_RUN=1 \
   QEMU_DISK_PATH="${TEST_TMP}/artifacts/newer.qcow2" \
   bash "${ROOT}/tools/qemu.sh" disk
+
+printf 'kernel-core 7.2.7-1\nbootc 1.9-1\nzsh 5.9-1\n' >"${TEST_TMP}/rpms-prev"
+printf 'kernel-core 7.2.8-1\nbootc 1.9-1\nzsh 5.9-2\nfoo 1-1\n' >"${TEST_TMP}/rpms-new"
+printf '#!/bin/sh\ncase "$1" in old) cat "%s";; *) cat "%s";; esac\n' \
+  "${TEST_TMP}/rpms-prev" "${TEST_TMP}/rpms-new" >"${TEST_TMP}/rpm-list"
+chmod +x "${TEST_TMP}/rpm-list"
+release_notes="$(RPM_LIST_CMD="${TEST_TMP}/rpm-list" bash "${ROOT}/tools/release-notes.sh" new testing-45.20261005.1 old testing-45.20261004.2)"
+expect_contains "release notes show a changed major package with its previous version" \
+  '| kernel-core | 7.2.8-1 | 7.2.7-1 |' echo "${release_notes}"
+expect_contains "release notes keep unchanged major packages without a previous version" \
+  '| bootc | 1.9-1 | |' echo "${release_notes}"
+expect_contains "release notes count added and updated packages" \
+  '3 packages were added or updated' echo "${release_notes}"
+expect_contains "release notes end with the rebase command" \
+  'sudo bootc switch new' echo "${release_notes}"

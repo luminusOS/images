@@ -36,7 +36,7 @@ just lint    # shellcheck over every script
 just test    # tests/run.sh: script unit tests + config validation
 ```
 
-`tests/run.sh` tests the `shared/scripts/` helpers and validates the config files shipped in the images: TOML, JSON, systemd units, repart definitions, YAML, overlays, version defaults, and artifact/QEMU resolution. CI also lints the workflows with actionlint and smoke-builds the core image. The Publish workflow boots the finished qcow2 and ISO under QEMU/KVM, then `.github/scripts/boot-test.sh` checks that a graphical screen appeared.
+`tests/run.sh` tests the `shared/scripts/` helpers and validates the config files shipped in the images: TOML, JSON, systemd units, repart definitions, YAML, overlays, version defaults, and artifact/QEMU resolution. CI also lints the workflows with actionlint, and `build-containers` build-checks `core` and `workstation`. The Publish workflow boots the finished qcow2 and ISO under QEMU/KVM, then `.github/scripts/boot-test.sh` checks that a graphical screen appeared.
 
 ## Packaging
 

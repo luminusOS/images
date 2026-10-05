@@ -35,7 +35,7 @@ expect "Fedora bootc digest helper tracks the OCI manifest" \
   grep -Fq 'quay.io/v2/fedora/fedora-bootc/manifests/${version}' \
   "${ROOT}/tools/fedora-bootc-digest.sh"
 expect "builds resolve the live Fedora bootc digest" \
-  sh -c 'for f in containers.yml ci.yml auto-testing.yml; do grep -Fq "tools/fedora-bootc-digest.sh" "$1/$f" || exit 1; done' \
+  sh -c 'for f in containers.yml auto-testing.yml; do grep -Fq "tools/fedora-bootc-digest.sh" "$1/$f" || exit 1; done' \
   _ "${ROOT}/.github/workflows"
 expect "publish calls the reusable workflow" \
   grep -Fq 'uses: ./.github/workflows/containers.yml' \
@@ -61,9 +61,11 @@ expect "Sirius RPM is verified against a pinned digest" \
 expect "Sirius version override requires a digest" \
   grep -Fq 'sirius_version override requires sirius_sha256' \
   "${ROOT}/.github/workflows/containers.yml"
-expect "container builds publish only from a manual dispatch" \
-  grep -Fq "publish: \${{ github.event_name == 'workflow_dispatch' && inputs.publish }}" \
-  "${ROOT}/.github/workflows/build-containers.yml"
+expect "validation builds never publish" \
+  sh -c 'grep -Fq "publish: false" "$1" && ! grep -q "inputs.publish" "$1"' \
+  _ "${ROOT}/.github/workflows/build-containers.yml"
+expect "only the registry builder publishes" \
+  grep -Fq 'publishing requires builder_mode=registry' "${ROOT}/.github/workflows/containers.yml"
 expect "stable promotes an existing testing build without rebuilding" \
   sh -c 'grep -Fq "skopeo copy --all --preserve-digests" "$1" && grep -Fq "testing-\${BUILD_VERSION}" "$1"' \
   _ "${ROOT}/.github/workflows/containers.yml"
