@@ -136,3 +136,5 @@ expect "swap file script is executable" \
   test -x "${SYSTEM_FILES}/usr/libexec/luminusos-swapfile.sh"
 expect "swap file service is enabled by the build" \
   grep -qx 'systemctl enable luminusos-swapfile.service' "${ROOT}/editions/workstation/build.sh"
+expect "swap file service stays out of the tmp.mount ordering cycle" \
+  grep -qx 'DefaultDependencies=no' "${SYSTEM_FILES}/usr/lib/systemd/system/luminusos-swapfile.service"

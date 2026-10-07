@@ -3,6 +3,14 @@ Description=Create and enable the swap file
 Documentation=file:///usr/lib/sysctl.d/60-luminusos-swap.conf
 RequiresMountsFor=/var
 ConditionVirtualization=!container
+# Without this the unit is ordered after basic.target, and since tmp.mount runs
+# after swap.target that closes a cycle with local-fs.target. systemd then drops
+# tmp.mount's start job, tmpfiles runs against the read-only root and never
+# creates /tmp/.X11-unix, so the GDM greeter creates it as gdm-greeter and
+# Xwayland refuses it.
+DefaultDependencies=no
+Before=swap.target shutdown.target
+Conflicts=shutdown.target
 
 [Service]
 Type=oneshot
