@@ -79,7 +79,7 @@ RUN --mount=type=cache,target=/var/cache/dnf \
       NetworkManager-strongswan NetworkManager-strongswan-gnome \
       NetworkManager-vpnc NetworkManager-vpnc-gnome \
       git \
-      pciutils wl-clipboard \
+      pciutils wl-clipboard google-noto-color-emoji-fonts \
       evolution-ews-core gamemode vulkan-tools \
       linux-firmware amd-gpu-firmware amd-ucode-firmware atheros-firmware \
       brcmfmac-firmware cirrus-audio-firmware intel-audio-firmware \
