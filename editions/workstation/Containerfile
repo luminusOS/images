@@ -101,6 +101,8 @@ RUN --mount=type=cache,target=/var/cache/dnf \
       mesa-libGL \
       mesa-libEGL \
       mesa-libgbm \
+      fuse \
+      fuse-libs \
       fuse-overlayfs \
       cryptsetup \
       plymouth \
@@ -159,6 +161,19 @@ RUN --mount=type=cache,target=/var/cache/dnf \
       gstreamer1-plugins-bad-free \
       gstreamer1-plugin-openh264 \
       gstreamer1-plugin-libav && \
+    dnf clean all
+
+# Nautilus thumbnails for AppImages. Not packaged in Fedora, so install the
+# upstream RPM; the pinned digest guards against a replaced release asset.
+RUN --mount=type=cache,target=/var/cache/dnf \
+    --mount=type=bind,from=ctx-scripts,source=/scripts,target=/scripts \
+    bash /scripts/rpmdb-repair.sh && \
+    curl -fsSL \
+      "https://github.com/kem-a/appimage-thumbnailer/releases/download/v4.1.1/appimage-thumbnailer-v4.1.1-1.x86_64.rpm" \
+      -o /tmp/appimage-thumbnailer.rpm && \
+    echo "c249b93ed422be6348c5f162c640ef1cf02f00a26d5afe014c3685122ca7c050  /tmp/appimage-thumbnailer.rpm" | sha256sum -c - && \
+    dnf -y --releasever="${fedora_version}" install /tmp/appimage-thumbnailer.rpm && \
+    rm -f /tmp/appimage-thumbnailer.rpm && \
     dnf clean all
 
 # The system overlay mirrors the installed filesystem. Live-installer files
