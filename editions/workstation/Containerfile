@@ -67,7 +67,6 @@ RUN --mount=type=cache,target=/var/cache/dnf \
     dnf -y --releasever="${fedora_version}" install \
       kernel dracut kernel-modules-extra \
       NetworkManager-wifi wpa_supplicant wireless-regdb \
-      NetworkManager-fortisslvpn NetworkManager-fortisslvpn-gnome \
       NetworkManager-iodine NetworkManager-iodine-gnome \
       NetworkManager-l2tp NetworkManager-l2tp-gnome \
       NetworkManager-libreswan NetworkManager-libreswan-gnome \
@@ -77,7 +76,6 @@ RUN --mount=type=cache,target=/var/cache/dnf \
       NetworkManager-ssh NetworkManager-ssh-gnome \
       NetworkManager-sstp NetworkManager-sstp-gnome \
       NetworkManager-strongswan NetworkManager-strongswan-gnome \
-      NetworkManager-vpnc NetworkManager-vpnc-gnome \
       git \
       pciutils wl-clipboard google-noto-color-emoji-fonts \
       evolution-ews-core gamemode vulkan-tools \
@@ -240,7 +238,6 @@ RUN set -eux; \
     rpm -q gstreamer1-plugins-good gstreamer1-plugins-bad-free \
       gstreamer1-plugin-openh264 openh264 gstreamer1-plugin-libav \
       kernel-modules-extra NetworkManager-wifi wpa_supplicant wireless-regdb \
-      NetworkManager-fortisslvpn NetworkManager-fortisslvpn-gnome \
       NetworkManager-iodine NetworkManager-iodine-gnome \
       NetworkManager-l2tp NetworkManager-l2tp-gnome \
       NetworkManager-libreswan NetworkManager-libreswan-gnome \
@@ -250,7 +247,6 @@ RUN set -eux; \
       NetworkManager-ssh NetworkManager-ssh-gnome \
       NetworkManager-sstp NetworkManager-sstp-gnome \
       NetworkManager-strongswan NetworkManager-strongswan-gnome \
-      NetworkManager-vpnc NetworkManager-vpnc-gnome \
       git \
       evolution-ews-core gamemode vulkan-tools \
       linux-firmware realtek-firmware mt7xxx-firmware atheros-firmware \
