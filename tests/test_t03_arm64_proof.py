@@ -176,6 +176,7 @@ esac
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertIn("qemu-system-aarch64", result.stdout)
         self.assertIn("-machine virt", result.stdout)
+        self.assertIn("-smp 4", result.stdout)
         self.assertIn("AAVMF_CODE.fd", result.stdout)
         self.assertIn("AAVMF_VARS.fd", result.stdout)
         self.assertIn("snapshot=on", result.stdout)

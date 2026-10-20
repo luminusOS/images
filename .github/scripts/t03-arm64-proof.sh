@@ -155,7 +155,7 @@ build_qemu_args() {
   local accelerator="$1" code="$2" vars="$3"
   local cpu=max
   [[ "$accelerator" == kvm ]] && cpu=host
-  qemu_args=(qemu-system-aarch64 -machine virt -cpu "$cpu" -smp 2 -m 4096 -accel "$accelerator")
+  qemu_args=(qemu-system-aarch64 -machine virt -cpu "$cpu" -smp 4 -m 4096 -accel "$accelerator")
   qemu_args+=(-drive "if=pflash,format=raw,readonly=on,file=${code}")
   qemu_args+=(-drive "if=pflash,format=raw,file=${vars}")
   qemu_args+=(-drive "file=${image_path},if=virtio,format=qcow2,snapshot=on")
