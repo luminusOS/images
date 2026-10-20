@@ -265,19 +265,19 @@ case "${1:-run}" in
     if ! "${runner[@]}" run --rm --privileged --security-opt label=type:unconfined_t \
       -v "${runner_dir}:/work" -w /work -e T03_NONCE="$nonce" \
       "$runner_image" bash .github/scripts/t03-arm64-proof.sh --build "$nonce" \
-      2>&1 | LC_ALL=C awk -v log="${artifact_dir}/build.log" '
+      2>&1 | LC_ALL=C awk -v log_path="${artifact_dir}/build.log" '
         {
           print
           line = $0 "\n"
           remaining = 1048576 - total
           if (remaining > 0) {
             if (length(line) > remaining) line = substr(line, 1, remaining)
-            printf "%s", line >> log
+            printf "%s", line >> log_path
             total += length(line)
           }
         }
         END {
-          if (total >= 1048576) print "[build log truncated at 1 MiB]" >> log
+          if (total >= 1048576) print "[build log truncated at 1 MiB]" >> log_path
         }
       '; then
       fail "image build failed; see ${artifact_dir}/build.log"

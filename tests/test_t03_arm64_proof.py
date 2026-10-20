@@ -1,4 +1,5 @@
 import os
+import re
 import subprocess
 import tempfile
 import unittest
@@ -10,6 +11,31 @@ SCRIPT = ROOT / ".github/scripts/t03-arm64-proof.sh"
 
 
 class Arm64ProofTests(unittest.TestCase):
+    def test_build_logger_executes_real_awk_and_caps_the_saved_log(self):
+        source = SCRIPT.read_text()
+        logger = re.search(
+            r"LC_ALL=C awk -v (\w+)=\"\$\{artifact_dir\}/build.log\" '(.*?)'", source, re.S
+        )
+        self.assertIsNotNone(logger)
+        for text in ("building guest\nbuild complete\n", "x" * (1024 * 1024 + 10) + "\n"):
+            with self.subTest(input_bytes=len(text)), tempfile.TemporaryDirectory() as directory:
+                saved_log = Path(directory) / "build.log"
+                saved_log.touch()
+                result = subprocess.run(
+                    ["awk", "-v", f"{logger[1]}={saved_log}", logger[2]],
+                    input=text, text=True, capture_output=True,
+                    env={**os.environ, "LC_ALL": "C"},
+                )
+                self.assertEqual(result.returncode, 0, result.stderr)
+                self.assertEqual(result.stdout, text)
+                if len(text) < 1024 * 1024:
+                    self.assertEqual(saved_log.read_text(), text)
+                else:
+                    saved = saved_log.read_text()
+                    self.assertEqual(saved[:1024 * 1024], text[:1024 * 1024])
+                    self.assertIn("[build log truncated at 1 MiB]", saved)
+                    self.assertLess(len(saved), 1024 * 1024 + 100)
+
     def run_script(self, *args, env=None):
         return subprocess.run(
             ["bash", str(SCRIPT), *args],
