@@ -14,7 +14,8 @@ cleanup_context() {
   rm -f -- "${owned_context}/proof.env" "${owned_context}/Containerfile" \
     "${owned_context}/proof.service" "${owned_context}/proof.sh" \
     "${owned_context}/diagnostics.service" "${owned_context}/diagnostics.sh" \
-    "${owned_context}/90-t03-console.conf" "${owned_context}/disk.yaml"
+    "${owned_context}/90-t03-console.conf" "${owned_context}/hwdb-prepare.sh" \
+    "${owned_context}/disk.yaml"
   rmdir "$owned_context" 2>/dev/null || true
 }
 
@@ -229,10 +230,12 @@ COPY proof.service /etc/systemd/system/t03-arm64-proof.service
 COPY proof.sh /usr/local/libexec/t03-arm64-proof
 COPY diagnostics.service /etc/systemd/system/t03-arm64-diagnostics.service
 COPY diagnostics.sh /usr/local/libexec/t03-arm64-diagnostics
+COPY hwdb-prepare.sh /usr/local/libexec/t03-hwdb-prepare
 COPY 90-t03-console.conf /usr/lib/systemd/journald.conf.d/90-t03-console.conf
 COPY disk.yaml /usr/lib/image-builder/bootc/disk.yaml
 RUN mkdir -p /usr/lib/systemd/journald.conf.d && \
-    chmod 0755 /usr/local/libexec/t03-arm64-proof /usr/local/libexec/t03-arm64-diagnostics && \
+    chmod 0755 /usr/local/libexec/t03-arm64-proof /usr/local/libexec/t03-arm64-diagnostics /usr/local/libexec/t03-hwdb-prepare && \
+    /usr/local/libexec/t03-hwdb-prepare --root / && \
     systemctl enable t03-arm64-proof.service t03-arm64-diagnostics.service
 EOF
   cat >"${context}/proof.service" <<'EOF'
@@ -287,11 +290,117 @@ run_readonly() {
 }
 
 run_readonly 'failed units' systemctl --failed --no-pager
-run_readonly 'filesystem units' systemctl status --no-pager --lines=20 boot.mount boot-efi.mount local-fs.target
+run_readonly 'filesystem, hwdb, and udev unit status' systemctl status --no-pager --lines=12 \
+  boot.mount boot-efi.mount local-fs.target systemd-hwdb-update.service \
+  systemd-udev-trigger.service systemd-udevd.service
+run_readonly 'filesystem, hwdb, and udev unit results' systemctl show --no-pager \
+  -p ActiveState -p SubState -p Result -p ExecMainStatus \
+  boot.mount boot-efi.mount local-fs.target systemd-hwdb-update.service \
+  systemd-udev-trigger.service systemd-udevd.service
 run_readonly 'block devices and filesystems' lsblk --fs
 run_readonly 'filesystem identifiers' blkid -c /dev/null
+run_readonly 'UUID device links' ls -l /dev/disk/by-uuid
+run_readonly 'local hwdb rule directory' ls -la /etc/udev/hwdb.d
+for path in /etc/.updated /usr/lib/udev/hwdb.bin /etc/udev/hwdb.bin; do
+  if [[ -e "$path" || -L "$path" ]]; then
+    run_readonly "hwdb path timestamp ${path}" stat -c '%n size=%s mtime=%y' -- "$path"
+    if [[ -f "$path" ]]; then
+      run_readonly "hwdb path SHA-256 ${path}" sha256sum -- "$path"
+    fi
+  else
+    printf 'T03_DIAGNOSTIC_PATH_MISSING=%s\n' "$path"
+  fi
+done
+run_readonly 'hwdb and udev unit journal' journalctl --no-pager --boot=0 --lines=40 \
+  --unit=systemd-hwdb-update.service --unit=systemd-udev-trigger.service \
+  --unit=systemd-udevd.service
 run_readonly 'boot warnings' journalctl --no-pager --boot=0 --priority=warning --lines=80
 printf 'T03_DIAGNOSTICS_END\n'
+EOF
+  cat >"${context}/hwdb-prepare.sh" <<'EOF'
+#!/usr/bin/bash
+set -euo pipefail
+
+fail() {
+  printf 'T03_HWDB_ERROR=%s\n' "$*" >&2
+  exit 1
+}
+
+[[ $# -eq 2 && "$1" == --root ]] || fail 'usage: t03-hwdb-prepare --root IMAGE_ROOT'
+root="$(realpath -e -- "$2")" || fail 'image root does not exist'
+[[ -d "$root" ]] || fail 'image root is not a directory'
+unit_file="${root}/usr/lib/systemd/system/systemd-hwdb-update.service"
+local_rules="${root}/etc/udev/hwdb.d"
+usr_database="${root}/usr/lib/udev/hwdb.bin"
+etc_database="${root}/etc/udev/hwdb.bin"
+
+report_path() {
+  local label="$1" path="$2" mtime hash size
+  if [[ ! -e "$path" && ! -L "$path" ]]; then
+    printf 'T03_HWDB_%s=missing\n' "$label"
+    return 0
+  fi
+  mtime="$(stat -c '%y' -- "$path" 2>/dev/null || printf unavailable)"
+  size="$(stat -c '%s' -- "$path" 2>/dev/null || printf unavailable)"
+  hash=unavailable
+  if [[ -f "$path" ]]; then
+    hash="$(sha256sum -- "$path" 2>/dev/null | cut -d ' ' -f 1 || printf unavailable)"
+  fi
+  printf 'T03_HWDB_%s=present size=%s mtime=%s sha256=%s\n' "$label" "$size" "$mtime" "$hash"
+}
+
+report_state() {
+  local phase
+  phase="$1"
+  printf 'T03_HWDB_PHASE=%s\n' "$phase"
+  [[ -r "$unit_file" ]] || fail "missing hwdb update unit: ${unit_file}"
+  grep -E '^(ConditionNeedsUpdate|ConditionPathExists|ConditionDirectoryNotEmpty)=' "$unit_file" \
+    || fail 'hwdb update unit has no recorded path conditions'
+  report_path ETC_UPDATED_STAMP "${root}/etc/.updated"
+  report_path USR_DIRECTORY "${root}/usr"
+  report_path USR_DATABASE "$usr_database"
+  report_path ETC_DATABASE "$etc_database"
+  if [[ -d "$local_rules" ]]; then
+    shopt -s nullglob dotglob
+    local entries=("${local_rules}"/*)
+    shopt -u nullglob dotglob
+    printf 'T03_HWDB_ETC_RULE_ENTRY_COUNT=%s\n' "${#entries[@]}"
+    printf 'T03_HWDB_ETC_RULE_ENTRY=%s\n' "${entries[@]:-}"
+  else
+    printf 'T03_HWDB_ETC_RULE_ENTRY_COUNT=0\n'
+  fi
+}
+
+require_no_local_rules() {
+  local entries=()
+  if [[ -L "$local_rules" || ( -e "$local_rules" && ! -d "$local_rules" ) ]]; then
+    fail "local hwdb rules path is not a directory: ${local_rules}"
+  fi
+  if [[ -d "$local_rules" ]]; then
+    shopt -s nullglob dotglob
+    entries=("${local_rules}"/*)
+    shopt -u nullglob dotglob
+  fi
+  ((${#entries[@]} == 0)) || fail "local hwdb rules directory is populated; preserving: ${entries[*]}"
+}
+
+report_state before
+require_no_local_rules
+if systemd-hwdb --root "$root" --usr --strict update; then
+  :
+else
+  status=$?
+  report_state after
+  fail "systemd-hwdb --strict update failed with status ${status}"
+fi
+report_state after
+[[ -s "$usr_database" ]] || fail 'systemd-hwdb produced no non-empty /usr/lib/udev/hwdb.bin'
+require_no_local_rules
+if [[ -e "$etc_database" || -L "$etc_database" ]]; then
+  [[ -f "$etc_database" || -L "$etc_database" ]] || fail 'refusing to remove a non-file /etc/udev/hwdb.bin path'
+  rm -f -- "$etc_database"
+fi
+report_state final
 EOF
   cat >"${context}/90-t03-console.conf" <<'EOF'
 [Journal]

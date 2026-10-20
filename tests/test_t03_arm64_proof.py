@@ -257,6 +257,7 @@ esac
             capture_diagnostics_service = temporary / "diagnostics.service"
             capture_diagnostics_script = temporary / "diagnostics.sh"
             capture_journald_config = temporary / "journald.conf"
+            capture_hwdb_helper = temporary / "hwdb-prepare.sh"
             call_log = temporary / "calls.log"
             self.write_command(fake_bin / "dnf", "exit 0\n")
             self.write_command(fake_bin / "sudo", 'exec "$@"\n')
@@ -273,6 +274,7 @@ case "$1" in
     cp "$5/diagnostics.service" "$T03_CAPTURE_DIAGNOSTICS_SERVICE"
     cp "$5/diagnostics.sh" "$T03_CAPTURE_DIAGNOSTICS_SCRIPT"
     cp "$5/90-t03-console.conf" "$T03_CAPTURE_JOURNALD_CONFIG"
+    cp "$5/hwdb-prepare.sh" "$T03_CAPTURE_HWDB_HELPER"
     cp "$5/Containerfile" "$T03_CAPTURE_CONTAINERFILE"
     cp "$5/disk.yaml" "$T03_CAPTURE_DISK"
     ;;
@@ -307,6 +309,7 @@ printf 'qcow2' >"$outdir/$name"
                     "T03_CAPTURE_DIAGNOSTICS_SERVICE": str(capture_diagnostics_service),
                     "T03_CAPTURE_DIAGNOSTICS_SCRIPT": str(capture_diagnostics_script),
                     "T03_CAPTURE_JOURNALD_CONFIG": str(capture_journald_config),
+                    "T03_CAPTURE_HWDB_HELPER": str(capture_hwdb_helper),
                     "T03_CAPTURE_CONTAINERFILE": str(capture_containerfile),
                     "T03_CAPTURE_DISK": str(capture_disk),
                     "T03_CALL_LOG": str(call_log),
@@ -341,7 +344,10 @@ printf 'qcow2' >"$outdir/$name"
             containerfile = capture_containerfile.read_text()
             self.assertIn("COPY diagnostics.service /etc/systemd/system/t03-arm64-diagnostics.service", containerfile)
             self.assertIn("COPY diagnostics.sh /usr/local/libexec/t03-arm64-diagnostics", containerfile)
+            self.assertIn("COPY hwdb-prepare.sh /usr/local/libexec/t03-hwdb-prepare", containerfile)
             self.assertIn("COPY 90-t03-console.conf /usr/lib/systemd/journald.conf.d/90-t03-console.conf", containerfile)
+            self.assertIn("/usr/local/libexec/t03-hwdb-prepare --root /", containerfile)
+            self.assertTrue(capture_hwdb_helper.is_file())
             journald_config = capture_journald_config.read_text()
             self.assertIn("ForwardToConsole=yes", journald_config)
             self.assertIn("TTYPath=/dev/ttyAMA0", journald_config)
@@ -378,7 +384,7 @@ printf 'qcow2' >"$outdir/$name"
             helper_path.write_text(helper_script)
             helper_path.chmod(0o755)
             calls = directory / "calls.log"
-            for command in ("systemctl", "lsblk", "blkid", "journalctl"):
+            for command in ("systemctl", "lsblk", "blkid", "journalctl", "ls", "stat", "sha256sum"):
                 self.write_command(
                     fake_bin / command,
                     f'''printf '%s %s\\n' "{command}" "$*" >>"$T03_DIAGNOSTIC_CALLS"
@@ -400,9 +406,128 @@ exit 1
             self.assertIn("T03_DIAGNOSTICS_END", output)
             self.assertIn("mock-systemctl", output)
             self.assertIn("blkid -c /dev/null", calls.read_text())
+            self.assertIn("systemd-hwdb-update.service", calls.read_text())
+            self.assertIn("systemd-udev-trigger.service", calls.read_text())
+            self.assertIn("/dev/disk/by-uuid", calls.read_text())
             self.assertIn("journalctl --no-pager --boot=0 --priority=warning --lines=80", calls.read_text())
             self.assertNotIn("--follow", calls.read_text())
             self.assertNotIn("unlock", calls.read_text().lower())
+            invoked_commands = {line.split(maxsplit=1)[0] for line in calls.read_text().splitlines()}
+            self.assertLessEqual(invoked_commands, {"systemctl", "lsblk", "blkid", "journalctl", "ls", "stat", "sha256sum"})
+
+    @staticmethod
+    def hwdb_helper_source():
+        match = re.search(
+            r"cat >\"\$\{context\}/hwdb-prepare\.sh\" <<'EOF'\n(.*?)\nEOF",
+            SCRIPT.read_text(),
+            re.S,
+        )
+        if match is None:
+            raise AssertionError("builder does not generate the hwdb preparation helper")
+        return match[1]
+
+    def run_hwdb_helper(self, directory, *, mode="success", local_rule=False, existing_usr_db=True):
+        root = directory / "image-root"
+        for path in (
+            root / "etc/udev/hwdb.d",
+            root / "usr/lib/udev",
+            root / "usr/lib/systemd/system",
+            directory / "bin",
+        ):
+            path.mkdir(parents=True, exist_ok=True)
+        (root / "etc/.updated").write_text("etc-stamp")
+        (root / "usr/lib/systemd/system/systemd-hwdb-update.service").write_text(
+            "ConditionNeedsUpdate=/etc\n"
+            "ConditionPathExists=|!/usr/lib/udev/hwdb.bin\n"
+            "ConditionPathExists=|/etc/udev/hwdb.bin\n"
+            "ConditionDirectoryNotEmpty=|/etc/udev/hwdb.d/\n"
+        )
+        (root / "etc/udev/hwdb.bin").write_text("old-etc-database")
+        (root / "etc/udev/preserve-me").write_text("preserved")
+        if existing_usr_db:
+            (root / "usr/lib/udev/hwdb.bin").write_text("old-usr-database")
+        if local_rule:
+            (root / "etc/udev/hwdb.d/50-local.hwdb").write_text("preserve this local rule")
+
+        helper = directory / "hwdb-prepare.sh"
+        helper.write_text(self.hwdb_helper_source())
+        helper.chmod(0o755)
+        call_log = directory / "hwdb-calls.log"
+        self.write_command(
+            directory / "bin/systemd-hwdb",
+            '''printf '%s\\n' "$*" >>"$T03_HWDB_CALL_LOG"
+root=
+while (($#)); do
+  case "$1" in
+    --root) root="$2"; shift 2 ;;
+    *) shift ;;
+  esac
+done
+[[ -n "$root" ]] || exit 40
+case "$T03_HWDB_MODE" in
+  error) printf 'mock parser error\\n' >&2; exit 9 ;;
+  missing-output) exit 0 ;;
+esac
+mkdir -p "$root/usr/lib/udev"
+printf 'fresh-generated-database' >"$root/usr/lib/udev/hwdb.bin"
+''',
+        )
+        result = subprocess.run(
+            [str(helper), "--root", str(root)],
+            env={
+                **os.environ,
+                "PATH": f"{directory / 'bin'}:{os.environ['PATH']}",
+                "T03_HWDB_CALL_LOG": str(call_log),
+                "T03_HWDB_MODE": mode,
+            },
+            text=True,
+            capture_output=True,
+        )
+        return root, result, call_log
+
+    def test_hwdb_helper_rebuilds_in_usr_and_removes_only_the_compiled_etc_database(self):
+        with tempfile.TemporaryDirectory() as temp:
+            directory = Path(temp)
+            root, result, call_log = self.run_hwdb_helper(directory)
+
+            self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+            self.assertIn("--root " + str(root) + " --usr --strict update", call_log.read_text())
+            self.assertEqual((root / "usr/lib/udev/hwdb.bin").read_text(), "fresh-generated-database")
+            self.assertFalse((root / "etc/udev/hwdb.bin").exists())
+            self.assertEqual((root / "etc/udev/preserve-me").read_text(), "preserved")
+            self.assertIn("T03_HWDB_PHASE=before", result.stdout)
+            self.assertIn("T03_HWDB_PHASE=after", result.stdout)
+            database_hash = hashlib.sha256((root / "usr/lib/udev/hwdb.bin").read_bytes()).hexdigest()
+            self.assertIn(f"T03_HWDB_USR_DATABASE=present", result.stdout)
+            self.assertIn(f"sha256={database_hash}", result.stdout)
+            self.assertIn("ConditionNeedsUpdate=/etc", result.stdout)
+            self.assertIn("T03_HWDB_ETC_UPDATED_STAMP=present", result.stdout)
+
+    def test_hwdb_helper_fails_closed_without_touching_local_rules_or_compiled_databases(self):
+        with tempfile.TemporaryDirectory() as temp:
+            directory = Path(temp)
+            root, result, call_log = self.run_hwdb_helper(directory, local_rule=True)
+
+            self.assertNotEqual(result.returncode, 0)
+            self.assertIn("local hwdb rules", result.stderr.lower())
+            self.assertFalse(call_log.exists())
+            self.assertEqual((root / "etc/udev/hwdb.d/50-local.hwdb").read_text(), "preserve this local rule")
+            self.assertEqual((root / "etc/udev/hwdb.bin").read_text(), "old-etc-database")
+
+    def test_hwdb_helper_rejects_update_errors_and_missing_output_before_removing_etc_database(self):
+        for mode in ("error", "missing-output"):
+            with self.subTest(mode=mode), tempfile.TemporaryDirectory() as temp:
+                directory = Path(temp)
+                root, result, _call_log = self.run_hwdb_helper(
+                    directory,
+                    mode=mode,
+                    existing_usr_db=(mode == "error"),
+                )
+
+                self.assertNotEqual(result.returncode, 0)
+                self.assertTrue((root / "etc/udev/hwdb.bin").is_file())
+                self.assertIn("T03_HWDB_PHASE=before", result.stdout)
+                self.assertIn("T03_HWDB_PHASE=after", result.stdout)
 
     def test_guest_disk_metadata_is_recorded_before_the_boot_attempt(self):
         function = re.search(r"record_image_metadata\(\) \{\n.*?\n\}", SCRIPT.read_text(), re.S)
