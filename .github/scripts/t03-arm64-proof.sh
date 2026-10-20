@@ -13,7 +13,8 @@ cleanup_context() {
   [[ -n "$owned_context" ]] || return 0
   rm -f -- "${owned_context}/proof.env" "${owned_context}/Containerfile" \
     "${owned_context}/proof.service" "${owned_context}/proof.sh" \
-    "${owned_context}/disk.yaml"
+    "${owned_context}/diagnostics.service" "${owned_context}/diagnostics.sh" \
+    "${owned_context}/90-t03-console.conf" "${owned_context}/disk.yaml"
   rmdir "$owned_context" 2>/dev/null || true
 }
 
@@ -176,6 +177,18 @@ verify_image() {
   qemu-img info --output=json "$image_path" | python3 -c 'import json,sys; image=json.load(sys.stdin); sys.exit(0 if image["format"] == "qcow2" else 1)' || fail 'guest disk is not a valid qcow2 image'
 }
 
+record_image_metadata() {
+  local disk_hash disk_file_bytes disk_allocated_bytes disk_virtual_bytes
+  disk_hash="$(sha256sum "$image_path" | cut -d ' ' -f 1)"
+  disk_file_bytes="$(stat -c %s "$image_path")"
+  disk_allocated_bytes="$(du -B1 "$image_path" | cut -f 1)"
+  disk_virtual_bytes="$(qemu-img info --output=json "$image_path" | python3 -c 'import json,sys; print(json.load(sys.stdin)["virtual-size"])')"
+  printf 'Guest disk SHA-256: %s\n' "$disk_hash" >>"${artifact_dir}/metadata.txt"
+  printf 'Guest disk file size: %s bytes\n' "$disk_file_bytes" >>"${artifact_dir}/metadata.txt"
+  printf 'Guest disk allocated size: %s bytes\n' "$disk_allocated_bytes" >>"${artifact_dir}/metadata.txt"
+  printf 'Guest disk virtual size: %s bytes\n' "$disk_virtual_bytes" >>"${artifact_dir}/metadata.txt"
+}
+
 builder() {
   local nonce="$1" base_ref="$2" context image_ref architecture
   [[ "$nonce" =~ ^[a-zA-Z0-9-]{8,80}$ ]] || fail 'invalid run nonce'
@@ -214,8 +227,13 @@ FROM ${base_ref}
 COPY proof.env /etc/t03-arm64-proof.env
 COPY proof.service /etc/systemd/system/t03-arm64-proof.service
 COPY proof.sh /usr/local/libexec/t03-arm64-proof
+COPY diagnostics.service /etc/systemd/system/t03-arm64-diagnostics.service
+COPY diagnostics.sh /usr/local/libexec/t03-arm64-diagnostics
+COPY 90-t03-console.conf /usr/lib/systemd/journald.conf.d/90-t03-console.conf
 COPY disk.yaml /usr/lib/image-builder/bootc/disk.yaml
-RUN chmod 0755 /usr/local/libexec/t03-arm64-proof && systemctl enable t03-arm64-proof.service
+RUN mkdir -p /usr/lib/systemd/journald.conf.d && \
+    chmod 0755 /usr/local/libexec/t03-arm64-proof /usr/local/libexec/t03-arm64-diagnostics && \
+    systemctl enable t03-arm64-proof.service t03-arm64-diagnostics.service
 EOF
   cat >"${context}/proof.service" <<'EOF'
 [Unit]
@@ -225,11 +243,61 @@ Description=T03 ARM64 boot proof
 Type=oneshot
 EnvironmentFile=/etc/t03-arm64-proof.env
 ExecStart=/usr/local/libexec/t03-arm64-proof
-StandardOutput=null
-StandardError=null
+StandardOutput=journal
+StandardError=journal
 
 [Install]
 WantedBy=multi-user.target
+EOF
+  cat >"${context}/diagnostics.service" <<'EOF'
+[Unit]
+Description=T03 ARM64 emergency diagnostics
+DefaultDependencies=no
+After=systemd-journald.service
+Before=emergency.service
+
+[Service]
+Type=oneshot
+TimeoutStartSec=60
+ExecStart=/usr/local/libexec/t03-arm64-diagnostics
+
+[Install]
+WantedBy=emergency.target
+EOF
+  cat >"${context}/diagnostics.sh" <<'EOF'
+#!/usr/bin/bash
+set -uo pipefail
+exec >/dev/ttyAMA0 2>&1
+printf 'T03_DIAGNOSTICS_BEGIN\n'
+
+run_readonly() {
+  local label="$1" status
+  shift
+  printf '\n--- %s ---\n' "$label"
+  if ! command -v "$1" >/dev/null 2>&1; then
+    printf 'T03_DIAGNOSTIC_COMMAND_UNAVAILABLE=%s\n' "$1"
+    return 0
+  fi
+  if "$@"; then
+    return 0
+  else
+    status=$?
+    printf 'T03_DIAGNOSTIC_COMMAND_FAILED=%s status=%s\n' "$label" "$status"
+  fi
+}
+
+run_readonly 'failed units' systemctl --failed --no-pager
+run_readonly 'filesystem units' systemctl status --no-pager --lines=20 boot.mount boot-efi.mount local-fs.target
+run_readonly 'block devices and filesystems' lsblk --fs
+run_readonly 'filesystem identifiers' blkid -c /dev/null
+run_readonly 'boot warnings' journalctl --no-pager --boot=0 --priority=warning --lines=80
+printf 'T03_DIAGNOSTICS_END\n'
+EOF
+  cat >"${context}/90-t03-console.conf" <<'EOF'
+[Journal]
+ForwardToConsole=yes
+TTYPath=/dev/ttyAMA0
+MaxLevelConsole=info
 EOF
   cat >"${context}/disk.yaml" <<'EOF'
 mount_configuration: units
@@ -409,6 +477,7 @@ case "${1:-run}" in
     fi
     printf 'Build duration: %s seconds\n' "$(( $(date +%s) - build_start ))" >>"${artifact_dir}/metadata.txt"
     verify_image
+    record_image_metadata
 
     cp "$local_vars" "$uefi_vars"
     start_time="$(date +%s)"
@@ -426,14 +495,6 @@ case "${1:-run}" in
       boot_once tcg || fail 'guest boot proof failed with bounded TCG'
     fi
     printf 'Successful accelerator: %s\n' "$accelerator" >>"${artifact_dir}/runner-metadata.txt"
-    disk_hash="$(sha256sum "$image_path" | cut -d ' ' -f 1)"
-    disk_file_bytes="$(stat -c %s "$image_path")"
-    disk_allocated_bytes="$(du -B1 "$image_path" | cut -f 1)"
-    disk_virtual_bytes="$(qemu-img info --output=json "$image_path" | python3 -c 'import json,sys; print(json.load(sys.stdin)["virtual-size"])')"
-    printf 'Guest disk SHA-256: %s\n' "$disk_hash" >>"${artifact_dir}/metadata.txt"
-    printf 'Guest disk file size: %s bytes\n' "$disk_file_bytes" >>"${artifact_dir}/metadata.txt"
-    printf 'Guest disk allocated size: %s bytes\n' "$disk_allocated_bytes" >>"${artifact_dir}/metadata.txt"
-    printf 'Guest disk virtual size: %s bytes\n' "$disk_virtual_bytes" >>"${artifact_dir}/metadata.txt"
     printf 'Boot duration: %s seconds\n' "$(( $(date +%s) - start_time ))" >>"${artifact_dir}/runner-metadata.txt"
     ;;
   *)

@@ -254,6 +254,9 @@ esac
             capture_service = temporary / "proof.service"
             capture_containerfile = temporary / "Containerfile"
             capture_disk = temporary / "disk.yaml"
+            capture_diagnostics_service = temporary / "diagnostics.service"
+            capture_diagnostics_script = temporary / "diagnostics.sh"
+            capture_journald_config = temporary / "journald.conf"
             call_log = temporary / "calls.log"
             self.write_command(fake_bin / "dnf", "exit 0\n")
             self.write_command(fake_bin / "sudo", 'exec "$@"\n')
@@ -267,6 +270,9 @@ case "$1" in
   image) printf 'linux arm64\\n' ;;
   build)
     cp "$5/proof.service" "$T03_CAPTURE_SERVICE"
+    cp "$5/diagnostics.service" "$T03_CAPTURE_DIAGNOSTICS_SERVICE"
+    cp "$5/diagnostics.sh" "$T03_CAPTURE_DIAGNOSTICS_SCRIPT"
+    cp "$5/90-t03-console.conf" "$T03_CAPTURE_JOURNALD_CONFIG"
     cp "$5/Containerfile" "$T03_CAPTURE_CONTAINERFILE"
     cp "$5/disk.yaml" "$T03_CAPTURE_DISK"
     ;;
@@ -298,6 +304,9 @@ printf 'qcow2' >"$outdir/$name"
                     "PATH": f"{fake_bin}:{os.environ['PATH']}",
                     "T03_ARTIFACT_DIR": str(artifact_dir),
                     "T03_CAPTURE_SERVICE": str(capture_service),
+                    "T03_CAPTURE_DIAGNOSTICS_SERVICE": str(capture_diagnostics_service),
+                    "T03_CAPTURE_DIAGNOSTICS_SCRIPT": str(capture_diagnostics_script),
+                    "T03_CAPTURE_JOURNALD_CONFIG": str(capture_journald_config),
                     "T03_CAPTURE_CONTAINERFILE": str(capture_containerfile),
                     "T03_CAPTURE_DISK": str(capture_disk),
                     "T03_CALL_LOG": str(call_log),
@@ -319,6 +328,30 @@ printf 'qcow2' >"$outdir/$name"
             self.assertTrue((artifact_dir / "containers-storage").is_dir())
             self.assertIn("multi-user.target", capture_service.read_text())
             self.assertNotIn("After=multi-user.target", capture_service.read_text())
+            self.assertIn("StandardOutput=journal", capture_service.read_text())
+            self.assertIn("StandardError=journal", capture_service.read_text())
+            diagnostics_service = capture_diagnostics_service.read_text()
+            self.assertIn("DefaultDependencies=no", diagnostics_service)
+            self.assertIn("After=systemd-journald.service", diagnostics_service)
+            self.assertIn("Before=emergency.service", diagnostics_service)
+            self.assertIn("TimeoutStartSec=60", diagnostics_service)
+            self.assertIn("WantedBy=emergency.target", diagnostics_service)
+            self.assertNotIn("RequiresMountsFor=", diagnostics_service)
+            self.assertNotIn("WantedBy=multi-user.target", diagnostics_service)
+            containerfile = capture_containerfile.read_text()
+            self.assertIn("COPY diagnostics.service /etc/systemd/system/t03-arm64-diagnostics.service", containerfile)
+            self.assertIn("COPY diagnostics.sh /usr/local/libexec/t03-arm64-diagnostics", containerfile)
+            self.assertIn("COPY 90-t03-console.conf /usr/lib/systemd/journald.conf.d/90-t03-console.conf", containerfile)
+            journald_config = capture_journald_config.read_text()
+            self.assertIn("ForwardToConsole=yes", journald_config)
+            self.assertIn("TTYPath=/dev/ttyAMA0", journald_config)
+            self.assertIn("MaxLevelConsole=info", journald_config)
+            diagnostics_script = capture_diagnostics_script.read_text()
+            self.assertIn("exec >/dev/ttyAMA0 2>&1", diagnostics_script)
+            self.assertIn("T03_DIAGNOSTICS_BEGIN", diagnostics_script)
+            self.assertIn("T03_DIAGNOSTICS_END", diagnostics_script)
+            self.assertNotIn("T03_BEGIN=", diagnostics_script)
+            self.assertNotIn("T03_PASS=", diagnostics_script)
             self.assertIn("COPY disk.yaml /usr/lib/image-builder/bootc/disk.yaml", capture_containerfile.read_text())
             self.assertIn("mountpoint: /boot/efi", capture_disk.read_text())
             self.assertIn("mountpoint: /", capture_disk.read_text())
@@ -326,6 +359,80 @@ printf 'qcow2' >"$outdir/$name"
             self.assertIn("storage=" + str(artifact_dir / "storage.conf"), call_log.read_text())
             self.assertIn("tmpdir=" + str(artifact_dir / "build-tmp"), call_log.read_text())
             self.assertIn(f"{BOOTC_REPO}@{BOOTC_DIGEST}", call_log.read_text())
+
+    def test_diagnostic_helper_is_read_only_bounded_and_best_effort(self):
+        with tempfile.TemporaryDirectory() as temp:
+            directory = Path(temp)
+            fake_bin = directory / "bin"
+            fake_bin.mkdir()
+            helper = re.search(
+                r"cat >\"\$\{context\}/diagnostics\.sh\" <<'EOF'\n(.*?)\nEOF",
+                SCRIPT.read_text(),
+                re.S,
+            )
+            self.assertIsNotNone(helper)
+            captured_output = directory / "uart.log"
+            helper_script = helper[1].replace("exec >/dev/ttyAMA0 2>&1", f"exec >{captured_output} 2>&1")
+            self.assertNotEqual(helper_script, helper[1])
+            helper_path = directory / "diagnostics.sh"
+            helper_path.write_text(helper_script)
+            helper_path.chmod(0o755)
+            calls = directory / "calls.log"
+            for command in ("systemctl", "lsblk", "blkid", "journalctl"):
+                self.write_command(
+                    fake_bin / command,
+                    f'''printf '%s %s\\n' "{command}" "$*" >>"$T03_DIAGNOSTIC_CALLS"
+printf 'mock-{command}\\n'
+exit 1
+''',
+                )
+
+            result = subprocess.run(
+                [str(helper_path)],
+                env={**os.environ, "PATH": f"{fake_bin}:{os.environ['PATH']}", "T03_DIAGNOSTIC_CALLS": str(calls)},
+                text=True,
+                capture_output=True,
+            )
+
+            self.assertEqual(result.returncode, 0, result.stderr)
+            output = captured_output.read_text()
+            self.assertIn("T03_DIAGNOSTICS_BEGIN", output)
+            self.assertIn("T03_DIAGNOSTICS_END", output)
+            self.assertIn("mock-systemctl", output)
+            self.assertIn("blkid -c /dev/null", calls.read_text())
+            self.assertIn("journalctl --no-pager --boot=0 --priority=warning --lines=80", calls.read_text())
+            self.assertNotIn("--follow", calls.read_text())
+            self.assertNotIn("unlock", calls.read_text().lower())
+
+    def test_guest_disk_metadata_is_recorded_before_the_boot_attempt(self):
+        function = re.search(r"record_image_metadata\(\) \{\n.*?\n\}", SCRIPT.read_text(), re.S)
+        self.assertIsNotNone(function)
+        with tempfile.TemporaryDirectory() as temp:
+            directory = Path(temp)
+            artifact_dir = directory / "evidence"
+            artifact_dir.mkdir()
+            disk = artifact_dir / "fedora45-arm64.qcow2"
+            disk.write_bytes(b"test qcow2 disk")
+            fake_bin = directory / "bin"
+            fake_bin.mkdir()
+            self.write_command(fake_bin / "qemu-img", 'printf \'{"virtual-size":1073741824}\\n\'\n')
+            program = f'image_path="{disk}"; artifact_dir="{artifact_dir}";\n{function[0]}\nrecord_image_metadata'
+            result = subprocess.run(
+                ["bash", "-c", program],
+                env={**os.environ, "PATH": f"{fake_bin}:{os.environ['PATH']}"},
+                text=True,
+                capture_output=True,
+            )
+
+            self.assertEqual(result.returncode, 0, result.stderr)
+            metadata = (artifact_dir / "metadata.txt").read_text()
+            self.assertIn(f"Guest disk SHA-256: {hashlib.sha256(disk.read_bytes()).hexdigest()}", metadata)
+            self.assertIn(f"Guest disk file size: {disk.stat().st_size} bytes", metadata)
+            self.assertIn(f"Guest disk allocated size: {subprocess.check_output(['du', '-B1', str(disk)], text=True).split()[0]} bytes", metadata)
+            self.assertIn("Guest disk virtual size: 1073741824 bytes", metadata)
+
+        run_case = SCRIPT.read_text().split('case "${1:-run}" in', 1)[1]
+        self.assertLess(run_case.index("record_image_metadata"), run_case.index("boot_once kvm"))
 
     def test_builder_mounts_the_image_builder_default_store_on_the_workspace(self):
         source = SCRIPT.read_text()
