@@ -297,7 +297,7 @@ capture_device_snapshot() {
     -p StateChangeTimestampMonotonic -p ActiveEnterTimestampMonotonic \
     -p InactiveEnterTimestampMonotonic "$device_path"
   run_readonly "${label} udev database properties" udevadm info --query=all --name="$device_path"
-  if device_major_minor="$(lsblk --nodeps --noheadings --output MAJ:MIN -- "$device_path" 2>/dev/null)" \
+  if device_major_minor="$(lsblk --raw --nodeps --noheadings --output MAJ:MIN -- "$device_path" 2>/dev/null)" \
     && [[ "$device_major_minor" =~ ^[0-9]+:[0-9]+$ ]]; then
     run_readonly "${label} udev database entry" cat -- "/run/udev/data/b${device_major_minor}"
   else

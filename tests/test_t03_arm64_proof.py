@@ -485,6 +485,7 @@ exit 0
     def test_diagnostic_helper_captures_kernel_device_when_uuid_alias_is_missing(self):
         cases = (
             ("kernel-present", "/dev/disk/by-uuid/test-boot-uuid", "254:3", True),
+            ("padded-major", "/dev/disk/by-uuid/test-boot-uuid", "254:3", True),
             ("invalid-major", "/dev/disk/by-uuid/test-boot-uuid", "", True),
             ("parent-traversal-alias", "/dev/../etc/shadow", "254:3", False),
             ("invalid-character-alias", "/dev/disk/by-uuid/test;bad", "254:3", False),
@@ -521,6 +522,10 @@ exit 1
                     fake_bin / "lsblk",
                     f'''printf 'lsblk %s\\n' "$*" >>"$T03_DIAGNOSTIC_CALLS"
 if [[ "$*" == *MAJ:MIN* && "$*" == */dev/vda3* ]]; then
+  if [[ "{mode}" == padded-major && "$*" != *--raw* ]]; then
+    printf ' 254:3\\n'
+    exit 0
+  fi
   printf '{expected_major_minor or 'invalid'}\\n'
   exit 0
 fi
