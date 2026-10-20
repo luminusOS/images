@@ -1,0 +1,46 @@
+name: T03 ARM64 UEFI proof
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - proof/t03-arm64-uefi
+
+permissions:
+  contents: read
+
+jobs:
+  arm64-proof:
+    if: ${{ github.event.repository.private == false && github.ref == 'refs/heads/proof/t03-arm64-uefi' }}
+    runs-on: ubuntu-24.04-arm
+    timeout-minutes: 60
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Install QEMU, UEFI firmware, and Podman
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y podman qemu-efi-aarch64 qemu-system-arm qemu-utils
+
+      - name: Build Fedora 45 and prove native ARM64 UEFI boot
+        run: sudo bash .github/scripts/t03-arm64-proof.sh
+
+      - name: Upload boot evidence
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: t03-arm64-uefi-proof
+          path: |
+            t03-arm64-proof/metadata.txt
+            t03-arm64-proof/runner-metadata.txt
+            t03-arm64-proof/serial.log
+            t03-arm64-proof/qemu.stdout
+            t03-arm64-proof/qemu.stderr
+            t03-arm64-proof/disk-space.txt
+            t03-arm64-proof/build.log
+          if-no-files-found: warn
+          retention-days: 1
+          compression-level: 0
