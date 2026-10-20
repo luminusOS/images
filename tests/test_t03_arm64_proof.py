@@ -259,6 +259,7 @@ esac
             capture_diagnostics_script = temporary / "diagnostics.sh"
             capture_journald_config = temporary / "journald.conf"
             capture_hwdb_helper = temporary / "hwdb-prepare.sh"
+            capture_udev_rule = temporary / "udev-debug.rules"
             call_log = temporary / "calls.log"
             self.write_command(fake_bin / "dnf", "exit 0\n")
             self.write_command(fake_bin / "sudo", 'exec "$@"\n')
@@ -275,6 +276,7 @@ case "$1" in
     cp "$5/diagnostics.service" "$T03_CAPTURE_DIAGNOSTICS_SERVICE"
     cp "$5/diagnostics.sh" "$T03_CAPTURE_DIAGNOSTICS_SCRIPT"
     cp "$5/90-t03-console.conf" "$T03_CAPTURE_JOURNALD_CONFIG"
+    cp "$5/00-t03-vda3-debug.rules" "$T03_CAPTURE_UDEV_RULE"
     cp "$5/hwdb-prepare.sh" "$T03_CAPTURE_HWDB_HELPER"
     cp "$5/Containerfile" "$T03_CAPTURE_CONTAINERFILE"
     cp "$5/disk.yaml" "$T03_CAPTURE_DISK"
@@ -310,6 +312,7 @@ printf 'qcow2' >"$outdir/$name"
                     "T03_CAPTURE_DIAGNOSTICS_SERVICE": str(capture_diagnostics_service),
                     "T03_CAPTURE_DIAGNOSTICS_SCRIPT": str(capture_diagnostics_script),
                     "T03_CAPTURE_JOURNALD_CONFIG": str(capture_journald_config),
+                    "T03_CAPTURE_UDEV_RULE": str(capture_udev_rule),
                     "T03_CAPTURE_HWDB_HELPER": str(capture_hwdb_helper),
                     "T03_CAPTURE_CONTAINERFILE": str(capture_containerfile),
                     "T03_CAPTURE_DISK": str(capture_disk),
@@ -347,7 +350,12 @@ printf 'qcow2' >"$outdir/$name"
             self.assertIn("COPY diagnostics.sh /usr/local/libexec/t03-arm64-diagnostics", containerfile)
             self.assertIn("COPY hwdb-prepare.sh /usr/local/libexec/t03-hwdb-prepare", containerfile)
             self.assertIn("COPY 90-t03-console.conf /usr/lib/systemd/journald.conf.d/90-t03-console.conf", containerfile)
+            self.assertIn("COPY 00-t03-vda3-debug.rules /etc/udev/rules.d/00-t03-vda3-debug.rules", containerfile)
             self.assertIn("/usr/local/libexec/t03-hwdb-prepare --root /", containerfile)
+            self.assertEqual(
+                capture_udev_rule.read_text(),
+                'SUBSYSTEM=="block", KERNEL=="vda3", OPTIONS="log_level=debug"\n',
+            )
             self.assertTrue(capture_hwdb_helper.is_file())
             journald_config = capture_journald_config.read_text()
             self.assertIn("ForwardToConsole=yes", journald_config)
@@ -411,10 +419,25 @@ exit 1
             self.assertIn("blkid -c /dev/null", calls.read_text())
             self.assertIn("systemd-hwdb-update.service", calls.read_text())
             self.assertIn("systemd-udev-trigger.service", calls.read_text())
+            self.assertTrue(calls.read_text().startswith("journalctl --no-pager --boot=0 --output=short-monotonic --unit=systemd-udevd.service"))
+            self.assertIn(
+                "journalctl --no-pager --boot=0 --output=short-monotonic --unit=systemd-udevd.service --grep=vda3|253:3 --lines=+512",
+                calls.read_text(),
+            )
+            self.assertIn(
+                "journalctl --no-pager --boot=0 --output=short-monotonic --lines=+128 --unit=dev-vda3.device",
+                calls.read_text(),
+            )
             self.assertIn("/dev/disk/by-uuid", calls.read_text())
             self.assertIn("journalctl --no-pager --boot=0 --priority=warning --lines=80", calls.read_text())
             self.assertNotIn("--follow", calls.read_text())
             self.assertNotIn("unlock", calls.read_text().lower())
+            self.assertTrue(
+                all(line.startswith("udevadm info --query=all") for line in calls.read_text().splitlines() if line.startswith("udevadm "))
+            )
+            self.assertTrue(
+                all(line.startswith("journalctl --no-pager") for line in calls.read_text().splitlines() if line.startswith("journalctl "))
+            )
             invoked_commands = {line.split(maxsplit=1)[0] for line in calls.read_text().splitlines()}
             self.assertLessEqual(invoked_commands, {"systemctl", "lsblk", "blkid", "journalctl", "ls", "stat", "sha256sum", "udevadm", "cat"})
 

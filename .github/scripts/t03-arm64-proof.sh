@@ -15,7 +15,7 @@ cleanup_context() {
     "${owned_context}/proof.service" "${owned_context}/proof.sh" \
     "${owned_context}/diagnostics.service" "${owned_context}/diagnostics.sh" \
     "${owned_context}/90-t03-console.conf" "${owned_context}/hwdb-prepare.sh" \
-    "${owned_context}/disk.yaml"
+    "${owned_context}/00-t03-vda3-debug.rules" "${owned_context}/disk.yaml"
   rmdir "$owned_context" 2>/dev/null || true
 }
 
@@ -230,6 +230,7 @@ COPY proof.service /etc/systemd/system/t03-arm64-proof.service
 COPY proof.sh /usr/local/libexec/t03-arm64-proof
 COPY diagnostics.service /etc/systemd/system/t03-arm64-diagnostics.service
 COPY diagnostics.sh /usr/local/libexec/t03-arm64-diagnostics
+COPY 00-t03-vda3-debug.rules /etc/udev/rules.d/00-t03-vda3-debug.rules
 COPY hwdb-prepare.sh /usr/local/libexec/t03-hwdb-prepare
 COPY 90-t03-console.conf /usr/lib/systemd/journald.conf.d/90-t03-console.conf
 COPY disk.yaml /usr/lib/image-builder/bootc/disk.yaml
@@ -288,6 +289,12 @@ run_readonly() {
     printf 'T03_DIAGNOSTIC_COMMAND_FAILED=%s status=%s\n' "$label" "$status"
   fi
 }
+
+run_readonly 'vda3 udev coldplug trace' journalctl --no-pager --boot=0 \
+  --output=short-monotonic --unit=systemd-udevd.service \
+  --grep='vda3|253:3' --lines=+512
+run_readonly 'vda3 device unit history' journalctl --no-pager --boot=0 \
+  --output=short-monotonic --lines=+128 --unit=dev-vda3.device
 
 capture_device_snapshot() {
   local device_path="$1" label="$2" device_major_minor
@@ -435,6 +442,9 @@ EOF
 ForwardToConsole=yes
 TTYPath=/dev/ttyAMA0
 MaxLevelConsole=info
+EOF
+  cat >"${context}/00-t03-vda3-debug.rules" <<'EOF'
+SUBSYSTEM=="block", KERNEL=="vda3", OPTIONS="log_level=debug"
 EOF
   cat >"${context}/disk.yaml" <<'EOF'
 mount_configuration: units
