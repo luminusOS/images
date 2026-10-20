@@ -6,8 +6,6 @@ artifact_dir="${T03_ARTIFACT_DIR:-${repo_root}/t03-arm64-proof}"
 artifact_dir="$(realpath -m "$artifact_dir")"
 image_path="${artifact_dir}/fedora45-arm64.qcow2"
 serial_log="${artifact_dir}/serial.log"
-base_ref='quay.io/fedora/fedora-bootc@sha256:3c7cf18e9b1eb23d65cdaec7c5d15e8b4d12849ec20f61dba02ac3e3293f66d1'
-runner_image='quay.io/fedora/fedora@sha256:54fe92a655ebbcec468dc6fa953c0d1d2b474630a72f953702766c8389dd1a15'
 qemu_args=()
 owned_context=''
 
@@ -22,6 +20,119 @@ cleanup_context() {
 fail() {
   printf 'T03 error: %s\n' "$*" >&2
   exit 1
+}
+
+resolve_inputs() {
+  local output="$1" workdir repo kind ref
+  [[ ! -e "$output" && ! -L "$output" ]] || fail "refusing to overwrite existing resolved-input evidence: ${output}"
+  command -v skopeo >/dev/null || fail 'skopeo is required to resolve Fedora 45 inputs'
+  workdir="$(mktemp -d "${TMPDIR:-/tmp}/t03-resolve.XXXXXX")"
+  for kind in bootc builder; do
+    repo="quay.io/fedora/fedora"
+    [[ "$kind" == bootc ]] && repo="quay.io/fedora/fedora-bootc"
+    if ! skopeo inspect --raw --no-creds "docker://${repo}:45" \
+      >"${workdir}/${kind}-manifest.json" 2>"${workdir}/${kind}-inspect.err"; then
+      cat "${workdir}/${kind}-inspect.err" >&2
+      rm -rf -- "$workdir"
+      fail "skopeo could not resolve ${repo}:45"
+    fi
+  done
+  if ! python3 - "$workdir" "$output" <<'PY'
+import datetime
+import hashlib
+import json
+import pathlib
+import re
+import sys
+
+workdir = pathlib.Path(sys.argv[1])
+output = pathlib.Path(sys.argv[2])
+repositories = {"bootc": "quay.io/fedora/fedora-bootc", "builder": "quay.io/fedora/fedora"}
+pattern = re.compile(r"sha256:[a-f0-9]{64}")
+inputs = {}
+for name, repository in repositories.items():
+    raw = (workdir / f"{name}-manifest.json").read_bytes()
+    try:
+        index = json.loads(raw)
+    except (UnicodeDecodeError, json.JSONDecodeError) as error:
+        raise SystemExit(f"invalid {name} Fedora 45 manifest JSON: {error}")
+    manifests = index.get("manifests") if isinstance(index, dict) else None
+    if not isinstance(manifests, list):
+        raise SystemExit(f"{name} Fedora 45 tag did not resolve to a manifest index")
+    matches = [item for item in manifests if isinstance(item, dict)
+               and isinstance(item.get("platform"), dict)
+               and item["platform"].get("os") == "linux"
+               and item["platform"].get("architecture") == "arm64"]
+    if len(matches) != 1:
+        raise SystemExit(f"{name} Fedora 45 index must contain exactly one linux/arm64 manifest")
+    digest = matches[0].get("digest")
+    if not isinstance(digest, str) or not pattern.fullmatch(digest):
+        raise SystemExit(f"{name} Fedora 45 linux/arm64 child has an invalid digest")
+    inputs[name] = {"source": f"{repository}:45", "ref": f"{repository}@{digest}",
+                    "raw_manifest_sha256": "sha256:" + hashlib.sha256(raw).hexdigest()}
+document = {"resolved_at": datetime.datetime.now(datetime.timezone.utc).isoformat(),
+            "platform": {"os": "linux", "architecture": "arm64"}, "inputs": inputs}
+output.write_text(json.dumps(document, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+PY
+  then
+    rm -f -- "$output"
+    rm -rf -- "$workdir"
+    fail 'Fedora 45 manifest resolution failed closed'
+  fi
+
+  for kind in bootc builder; do
+    repo="quay.io/fedora/fedora"
+    [[ "$kind" == bootc ]] && repo="quay.io/fedora/fedora-bootc"
+    ref="$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["inputs"][sys.argv[2]]["ref"])' "$output" "$kind")"
+    if ! skopeo inspect --config --no-creds "docker://${ref}" \
+      >"${workdir}/${kind}-config.json" 2>"${workdir}/${kind}-config.err"; then
+      cat "${workdir}/${kind}-config.err" >&2
+      rm -f -- "$output"
+      rm -rf -- "$workdir"
+      fail "skopeo could not inspect pinned ${kind} config"
+    fi
+    if ! python3 - "${workdir}/${kind}-config.json" "$output" "$kind" "$repo" "$ref" <<'PY'
+import json
+import pathlib
+import re
+import sys
+
+config_path, output_path, name, repository, expected_ref = sys.argv[1:]
+try:
+    config = json.loads(pathlib.Path(config_path).read_text(encoding="utf-8"))
+    path = pathlib.Path(output_path)
+    evidence = json.loads(path.read_text(encoding="utf-8"))
+except (OSError, UnicodeDecodeError, json.JSONDecodeError) as error:
+    raise SystemExit(f"invalid {name} pinned config JSON: {error}")
+if not isinstance(config, dict) or config.get("os") != "linux" or config.get("architecture") != "arm64":
+    raise SystemExit(f"{name} pinned config platform is not linux/arm64")
+if not re.fullmatch(re.escape(repository) + r"@sha256:[a-f0-9]{64}", expected_ref):
+    raise SystemExit(f"{name} pinned ref has an invalid allowlisted digest")
+if evidence["inputs"][name]["ref"] != expected_ref:
+    raise SystemExit(f"{name} pinned ref does not match resolved evidence")
+image_config = config.get("config", {})
+labels = image_config.get("Labels", {}) if isinstance(image_config, dict) else {}
+if not isinstance(labels, dict):
+    labels = {}
+evidence["inputs"][name]["config"] = {
+    "os": config["os"], "architecture": config["architecture"],
+    "version_label": labels.get("version") or labels.get("org.opencontainers.image.version")
+}
+path.write_text(json.dumps(evidence, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+PY
+    then
+      rm -f -- "$output"
+      rm -rf -- "$workdir"
+      fail "pinned ${kind} config validation failed"
+    fi
+    printf 'Resolved Fedora 45 %s: %s\n' "$kind" "$ref"
+  done
+  rm -rf -- "$workdir"
+}
+
+validate_pinned_ref() {
+  local name="$1" ref="$2" repository="$3"
+  [[ "$ref" == "${repository}@"* && "${ref#*@}" =~ ^sha256:[a-f0-9]{64}$ ]] || fail "${name} must be an immutable digest from ${repository}"
 }
 
 verify_proof() {
@@ -66,8 +177,11 @@ verify_image() {
 }
 
 builder() {
-  local nonce="$1" context image_ref architecture
+  local nonce="$1" base_ref="$2" context image_ref architecture
   [[ "$nonce" =~ ^[a-zA-Z0-9-]{8,80}$ ]] || fail 'invalid run nonce'
+  validate_pinned_ref bootc "$base_ref" 'quay.io/fedora/fedora-bootc'
+  source /etc/os-release
+  [[ "${VERSION_ID:-}" == 45 ]] || fail 'Fedora 45 builder container required before installing packages'
   mkdir -p "$artifact_dir"
   [[ ! -e "$image_path" && ! -L "$image_path" ]] || fail "refusing to overwrite an existing guest disk: ${image_path}"
   context="$(mktemp -d "${artifact_dir}/container-context.XXXXXX")"
@@ -219,8 +333,12 @@ case "${1:-run}" in
     verify_proof "$2" "$3"
     ;;
   --build)
-    [[ $# -eq 2 ]] || fail 'usage: --build NONCE'
-    builder "$2"
+    [[ $# -eq 3 ]] || fail 'usage: --build NONCE BOOTC_REF'
+    builder "$2" "$3"
+    ;;
+  --resolve-inputs)
+    [[ $# -eq 2 ]] || fail 'usage: --resolve-inputs OUTPUT_JSON'
+    resolve_inputs "$2"
     ;;
   --verify-image)
     verify_image
@@ -228,14 +346,18 @@ case "${1:-run}" in
   run)
     [[ -z "${T03_ARTIFACT_DIR:-}" ]] || fail 'T03_ARTIFACT_DIR is only supported by offline builder checks'
     [[ "$(uname -m)" == aarch64 ]] || fail "native ARM64 runner required; got $(uname -m)"
+    mkdir -p "$artifact_dir"
+    [[ ! -e "$image_path" && ! -L "$image_path" ]] || fail "refusing to overwrite an existing guest disk: ${image_path}"
+    command -v skopeo >/dev/null || fail 'skopeo is required to resolve Fedora 45 digests'
+    resolve_inputs "${artifact_dir}/resolved-inputs.json"
+    base_ref="$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["inputs"]["bootc"]["ref"])' "${artifact_dir}/resolved-inputs.json")"
+    runner_image="$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["inputs"]["builder"]["ref"])' "${artifact_dir}/resolved-inputs.json")"
     command -v podman >/dev/null || fail 'podman is required'
     command -v qemu-system-aarch64 >/dev/null || fail 'qemu-system-aarch64 is required'
     command -v qemu-img >/dev/null || fail 'qemu-img is required'
     local_code="${QEMU_EFI_CODE:-/usr/share/AAVMF/AAVMF_CODE.fd}"
     local_vars="${QEMU_EFI_VARS:-/usr/share/AAVMF/AAVMF_VARS.fd}"
     [[ -r "$local_code" && -r "$local_vars" ]] || fail 'AArch64 UEFI firmware files are missing'
-    mkdir -p "$artifact_dir"
-    [[ ! -e "$image_path" && ! -L "$image_path" ]] || fail "refusing to overwrite an existing guest disk: ${image_path}"
     owned_image=1
     uefi_vars=""
     cleanup_run() {
@@ -267,7 +389,7 @@ case "${1:-run}" in
     if ! "${runner[@]}" run --rm --privileged --security-opt label=type:unconfined_t \
       -v "${runner_dir}:/work" -w /work -e T03_NONCE="$nonce" \
       -v "${artifact_dir}/containers-storage:/var/lib/containers/storage" \
-      "$runner_image" bash .github/scripts/t03-arm64-proof.sh --build "$nonce" \
+      "$runner_image" bash .github/scripts/t03-arm64-proof.sh --build "$nonce" "$base_ref" \
       2>&1 | LC_ALL=C awk -v log_path="${artifact_dir}/build.log" '
         {
           print
@@ -315,6 +437,6 @@ case "${1:-run}" in
     printf 'Boot duration: %s seconds\n' "$(( $(date +%s) - start_time ))" >>"${artifact_dir}/runner-metadata.txt"
     ;;
   *)
-    fail 'usage: t03-arm64-proof.sh [--print-qemu [kvm|tcg]|--verify-proof LOG NONCE|--build NONCE|--verify-image]'
+    fail 'usage: t03-arm64-proof.sh [--print-qemu [kvm|tcg]|--verify-proof LOG NONCE|--resolve-inputs OUTPUT_JSON|--build NONCE BOOTC_REF|--verify-image]'
     ;;
 esac

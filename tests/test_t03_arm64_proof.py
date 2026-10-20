@@ -3,11 +3,17 @@ import re
 import subprocess
 import tempfile
 import unittest
+import hashlib
+import json
 from pathlib import Path
 
 
 ROOT = Path(__file__).resolve().parents[1]
 SCRIPT = ROOT / ".github/scripts/t03-arm64-proof.sh"
+BOOTC_REPO = "quay.io/fedora/fedora-bootc"
+BUILDER_REPO = "quay.io/fedora/fedora"
+BOOTC_DIGEST = "sha256:" + "1" * 64
+BUILDER_DIGEST = "sha256:" + "2" * 64
 
 
 class Arm64ProofTests(unittest.TestCase):
@@ -46,6 +52,124 @@ class Arm64ProofTests(unittest.TestCase):
             check=False,
         )
 
+    @staticmethod
+    def manifest_index(digest, *, duplicate_arm64=False, include_arm64=True):
+        manifests = [
+            {"digest": "sha256:" + "a" * 64, "platform": {"os": "linux", "architecture": "amd64"}}
+        ]
+        if include_arm64:
+            arm = {"digest": digest, "platform": {"os": "linux", "architecture": "arm64"}}
+            manifests.append(arm)
+            if duplicate_arm64:
+                manifests.append(arm.copy())
+        return {"schemaVersion": 2, "mediaType": "application/vnd.oci.image.index.v1+json", "manifests": manifests}
+
+    def install_fake_skopeo(
+        self,
+        fake_bin,
+        directory,
+        *,
+        bootc_index=None,
+        builder_index=None,
+        bootc_config=None,
+        builder_config=None,
+        fail_ref="",
+    ):
+        bootc_index = bootc_index or self.manifest_index(BOOTC_DIGEST)
+        builder_index = builder_index or self.manifest_index(BUILDER_DIGEST)
+        bootc_config = bootc_config or {
+            "architecture": "arm64",
+            "os": "linux",
+            "config": {"Labels": {"version": "45.20261020.1"}},
+        }
+        builder_config = builder_config or {
+            "architecture": "arm64",
+            "os": "linux",
+            "config": {"Labels": {"version": "45"}},
+        }
+        fixtures = {
+            "bootc-index.json": bootc_index,
+            "builder-index.json": builder_index,
+            "bootc-config.json": bootc_config,
+            "builder-config.json": builder_config,
+        }
+        for name, payload in fixtures.items():
+            (directory / name).write_text(json.dumps(payload, separators=(",", ":")))
+        self.write_command(
+            fake_bin / "skopeo",
+            '''printf '%s\\n' "$*" >>"$T03_SKOPEO_LOG"
+ref="${!#}"
+[[ -z "${T03_FAIL_REF:-}" || "$ref" != "$T03_FAIL_REF" ]] || exit 31
+case "$ref" in
+  docker://quay.io/fedora/fedora-bootc:45) cat "$T03_BOOTC_INDEX" ;;
+  docker://quay.io/fedora/fedora:45) cat "$T03_BUILDER_INDEX" ;;
+  docker://quay.io/fedora/fedora-bootc@*) cat "$T03_BOOTC_CONFIG" ;;
+  docker://quay.io/fedora/fedora@*) cat "$T03_BUILDER_CONFIG" ;;
+  *) exit 32 ;;
+esac
+''',
+        )
+        return {
+            "PATH": f"{fake_bin}:{os.environ['PATH']}",
+            "T03_SKOPEO_LOG": str(directory / "skopeo.log"),
+            "T03_BOOTC_INDEX": str(directory / "bootc-index.json"),
+            "T03_BUILDER_INDEX": str(directory / "builder-index.json"),
+            "T03_BOOTC_CONFIG": str(directory / "bootc-config.json"),
+            "T03_BUILDER_CONFIG": str(directory / "builder-config.json"),
+            "T03_FAIL_REF": fail_ref,
+        }
+
+    def test_resolver_pins_one_arm64_child_per_fedora45_tag(self):
+        with tempfile.TemporaryDirectory() as temp:
+            directory = Path(temp)
+            fake_bin = directory / "bin"
+            fake_bin.mkdir()
+            env = self.install_fake_skopeo(fake_bin, directory)
+            output = directory / "resolved-inputs.json"
+            result = self.run_script("--resolve-inputs", str(output), env=env)
+
+            self.assertEqual(result.returncode, 0, result.stderr)
+            data = json.loads(output.read_text())
+            self.assertEqual(data["platform"], {"os": "linux", "architecture": "arm64"})
+            self.assertEqual(data["inputs"]["bootc"]["ref"], f"{BOOTC_REPO}@{BOOTC_DIGEST}")
+            self.assertEqual(data["inputs"]["builder"]["ref"], f"{BUILDER_REPO}@{BUILDER_DIGEST}")
+            self.assertEqual(data["inputs"]["bootc"]["config"]["version_label"], "45.20261020.1")
+            self.assertEqual(
+                data["inputs"]["bootc"]["raw_manifest_sha256"],
+                "sha256:" + hashlib.sha256((directory / "bootc-index.json").read_bytes()).hexdigest(),
+            )
+            calls = (directory / "skopeo.log").read_text().splitlines()
+            self.assertEqual(sum(f"docker://{BOOTC_REPO}:45" in call for call in calls), 1)
+            self.assertEqual(sum(f"docker://{BUILDER_REPO}:45" in call for call in calls), 1)
+            self.assertEqual(sum(f"docker://{BOOTC_REPO}@{BOOTC_DIGEST}" in call for call in calls), 1)
+            self.assertEqual(sum(f"docker://{BUILDER_REPO}@{BUILDER_DIGEST}" in call for call in calls), 1)
+            self.assertTrue(all("--no-creds" in call for call in calls))
+            self.assertIn(BOOTC_DIGEST, result.stdout)
+            self.assertIn(BUILDER_DIGEST, result.stdout)
+
+    def test_resolver_fails_closed_for_bad_indexes_configs_and_registry_errors(self):
+        cases = (
+            ("missing arm64", {"bootc_index": self.manifest_index(BOOTC_DIGEST, include_arm64=False)}, {}, "exactly one"),
+            ("duplicate arm64", {"bootc_index": self.manifest_index(BOOTC_DIGEST, duplicate_arm64=True)}, {}, "exactly one"),
+            ("bad child digest", {"bootc_index": self.manifest_index("sha256:bad")}, {}, "digest"),
+            ("wrong config architecture", {}, {"bootc_config": {"architecture": "amd64", "os": "linux"}}, "config platform"),
+            ("wrong config OS", {}, {"bootc_config": {"architecture": "arm64", "os": "windows"}}, "config platform"),
+            ("wrong builder config architecture", {}, {"builder_config": {"architecture": "amd64", "os": "linux"}}, "config platform"),
+            ("tag manifest unavailable", {}, {"fail_ref": f"docker://{BOOTC_REPO}:45"}, "skopeo"),
+        )
+        for name, index_options, other_options, expected_error in cases:
+            with self.subTest(name=name), tempfile.TemporaryDirectory() as temp:
+                directory = Path(temp)
+                fake_bin = directory / "bin"
+                fake_bin.mkdir()
+                env = self.install_fake_skopeo(fake_bin, directory, **index_options, **other_options)
+                output = directory / "resolved-inputs.json"
+                result = self.run_script("--resolve-inputs", str(output), env=env)
+
+                self.assertNotEqual(result.returncode, 0)
+                self.assertIn(expected_error, result.stderr.lower())
+                self.assertFalse(output.exists())
+
     def test_qemu_plan_uses_aarch64_uefi_and_snapshot_disk(self):
         result = self.run_script("--print-qemu")
 
@@ -74,6 +198,7 @@ class Arm64ProofTests(unittest.TestCase):
 
         self.assertIn("serial.log", upload)
         self.assertIn("metadata.txt", upload)
+        self.assertIn("resolved-inputs.json", upload)
         self.assertNotIn(".qcow2", upload)
         self.assertNotIn(".iso", upload)
         self.assertNotIn(".oci", upload)
@@ -88,6 +213,7 @@ class Arm64ProofTests(unittest.TestCase):
         self.assertNotIn("packages: write", workflow)
         self.assertIn("persist-credentials: false", workflow)
         self.assertIn("upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9", workflow)
+        self.assertIn("skopeo", workflow)
 
     def test_proof_verifier_requires_all_fresh_guest_claims(self):
         nonce = "run-unique-1"
@@ -167,6 +293,7 @@ printf 'qcow2' >"$outdir/$name"
             result = self.run_script(
                 "--build",
                 "run-unique-1",
+                f"{BOOTC_REPO}@{BOOTC_DIGEST}",
                 env={
                     "PATH": f"{fake_bin}:{os.environ['PATH']}",
                     "T03_ARTIFACT_DIR": str(artifact_dir),
@@ -192,15 +319,13 @@ printf 'qcow2' >"$outdir/$name"
             self.assertTrue((artifact_dir / "containers-storage").is_dir())
             self.assertIn("multi-user.target", capture_service.read_text())
             self.assertNotIn("After=multi-user.target", capture_service.read_text())
-            self.assertIn("sha256:3c7cf18e9b1eb23d65cdaec7c5d15e8b4d12849ec20f61dba02ac3e3293f66d1", capture_containerfile.read_text())
             self.assertIn("COPY disk.yaml /usr/lib/image-builder/bootc/disk.yaml", capture_containerfile.read_text())
             self.assertIn("mountpoint: /boot/efi", capture_disk.read_text())
             self.assertIn("mountpoint: /", capture_disk.read_text())
-            self.assertIn("sha256:54fe92a655ebbcec468dc6fa953c0d1d2b474630a72f953702766c8389dd1a15", SCRIPT.read_text())
             self.assertIn("cwd=" + str(artifact_dir), call_log.read_text())
             self.assertIn("storage=" + str(artifact_dir / "storage.conf"), call_log.read_text())
             self.assertIn("tmpdir=" + str(artifact_dir / "build-tmp"), call_log.read_text())
-            self.assertIn("quay.io/fedora/fedora-bootc@sha256:3c7cf18e9b1eb23d65cdaec7c5d15e8b4d12849ec20f61dba02ac3e3293f66d1", call_log.read_text())
+            self.assertIn(f"{BOOTC_REPO}@{BOOTC_DIGEST}", call_log.read_text())
 
     def test_builder_mounts_the_image_builder_default_store_on_the_workspace(self):
         source = SCRIPT.read_text()
@@ -214,11 +339,40 @@ printf 'qcow2' >"$outdir/$name"
             result = self.run_script(
                 "--build",
                 "run-unique-1",
+                f"{BOOTC_REPO}@{BOOTC_DIGEST}",
                 env={"T03_ARTIFACT_DIR": str(artifact_dir)},
             )
 
             self.assertNotEqual(result.returncode, 0)
             self.assertEqual(disk.read_text(), "keep this file")
+
+    def test_pinned_ref_validator_requires_a_literal_repository(self):
+        function = re.search(r"validate_pinned_ref\(\) \{\n.*?\n\}", SCRIPT.read_text(), re.S)
+        self.assertIsNotNone(function)
+        program = 'fail() { printf "%s\\n" "$*" >&2; exit 1; }\n' + function[0]
+        program += '\nvalidate_pinned_ref bootc "$1" "$2"'
+        cases = (
+            (f"{BOOTC_REPO}@{BOOTC_DIGEST}", True),
+            (f"quayXio/fedora/fedora-bootc@{BOOTC_DIGEST}", False),
+            (f"quay.io.evil/fedora/fedora-bootc@{BOOTC_DIGEST}", False),
+            (f"{BOOTC_REPO}:45", False),
+            (f"{BOOTC_REPO}@{BOOTC_DIGEST}extra", False),
+        )
+        for ref, accepted in cases:
+            with self.subTest(ref=ref):
+                result = subprocess.run(
+                    ["bash", "-c", program, "validator-test", ref, BOOTC_REPO],
+                    text=True, capture_output=True,
+                )
+                self.assertEqual(result.returncode == 0, accepted, result.stderr)
+
+    def test_builder_rejects_mutable_or_untrusted_base_refs_before_install(self):
+        for ref in ("quay.io/fedora/fedora-bootc:45", f"example.invalid/image@{BOOTC_DIGEST}"):
+            with self.subTest(ref=ref):
+                result = self.run_script("--build", "run-unique-1", ref)
+                self.assertNotEqual(result.returncode, 0)
+                self.assertIn("immutable digest", result.stderr)
+                self.assertNotIn("dnf", result.stderr)
 
     def test_missing_guest_image_fails_before_boot(self):
         with tempfile.TemporaryDirectory() as artifact_dir:

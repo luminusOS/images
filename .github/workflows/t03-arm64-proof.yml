@@ -20,10 +20,10 @@ jobs:
         with:
           persist-credentials: false
 
-      - name: Install QEMU, UEFI firmware, and Podman
+      - name: Install QEMU, UEFI firmware, Podman, and Skopeo
         run: |
           sudo apt-get update
-          sudo apt-get install -y podman qemu-efi-aarch64 qemu-system-arm qemu-utils
+          sudo apt-get install -y podman qemu-efi-aarch64 qemu-system-arm qemu-utils skopeo
 
       - name: Build Fedora 45 and prove native ARM64 UEFI boot
         run: sudo bash .github/scripts/t03-arm64-proof.sh
@@ -35,6 +35,7 @@ jobs:
           name: t03-arm64-uefi-proof
           path: |
             t03-arm64-proof/metadata.txt
+            t03-arm64-proof/resolved-inputs.json
             t03-arm64-proof/runner-metadata.txt
             t03-arm64-proof/serial.log
             t03-arm64-proof/qemu.stdout
