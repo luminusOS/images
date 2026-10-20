@@ -188,7 +188,8 @@ printf 'qcow2' >"$outdir/$name"
                 call_log.read_text() if call_log.exists() else "no fake command was called",
             )
             self.assertFalse((ROOT / "fedora45-arm64.qcow2").exists())
-            self.assertIn(str(artifact_dir / "containers-storage"), (artifact_dir / "storage.conf").read_text())
+            self.assertIn('graphroot = "/var/lib/containers/storage"', (artifact_dir / "storage.conf").read_text())
+            self.assertTrue((artifact_dir / "containers-storage").is_dir())
             self.assertIn("multi-user.target", capture_service.read_text())
             self.assertNotIn("After=multi-user.target", capture_service.read_text())
             self.assertIn("sha256:3c7cf18e9b1eb23d65cdaec7c5d15e8b4d12849ec20f61dba02ac3e3293f66d1", capture_containerfile.read_text())
@@ -200,6 +201,10 @@ printf 'qcow2' >"$outdir/$name"
             self.assertIn("storage=" + str(artifact_dir / "storage.conf"), call_log.read_text())
             self.assertIn("tmpdir=" + str(artifact_dir / "build-tmp"), call_log.read_text())
             self.assertIn("quay.io/fedora/fedora-bootc@sha256:3c7cf18e9b1eb23d65cdaec7c5d15e8b4d12849ec20f61dba02ac3e3293f66d1", call_log.read_text())
+
+    def test_builder_mounts_the_image_builder_default_store_on_the_workspace(self):
+        source = SCRIPT.read_text()
+        self.assertIn('-v "${artifact_dir}/containers-storage:/var/lib/containers/storage"', source)
 
     def test_builder_refuses_to_overwrite_existing_disk(self):
         with tempfile.TemporaryDirectory() as temp:

@@ -81,7 +81,7 @@ builder() {
   cat >"${artifact_dir}/storage.conf" <<EOF
 [storage]
 driver = "overlay"
-graphroot = "${artifact_dir}/containers-storage"
+graphroot = "/var/lib/containers/storage"
 runroot = "/run/containers/storage"
 EOF
   export CONTAINERS_STORAGE_CONF="${artifact_dir}/storage.conf"
@@ -261,10 +261,12 @@ case "${1:-run}" in
     printf 'Accelerator: %s\n' "$accelerator" >>"${artifact_dir}/runner-metadata.txt"
     printf 'Firmware code: %s\n' "$local_code" >>"${artifact_dir}/runner-metadata.txt"
     df -h "$artifact_dir" >"${artifact_dir}/disk-space.txt"
+    mkdir -p "${artifact_dir}/containers-storage"
     runner=(podman)
     if [[ "$EUID" -ne 0 ]]; then runner=(sudo podman); fi
     if ! "${runner[@]}" run --rm --privileged --security-opt label=type:unconfined_t \
       -v "${runner_dir}:/work" -w /work -e T03_NONCE="$nonce" \
+      -v "${artifact_dir}/containers-storage:/var/lib/containers/storage" \
       "$runner_image" bash .github/scripts/t03-arm64-proof.sh --build "$nonce" \
       2>&1 | LC_ALL=C awk -v log_path="${artifact_dir}/build.log" '
         {
