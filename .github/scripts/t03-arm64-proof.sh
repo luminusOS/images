@@ -76,7 +76,8 @@ builder() {
   image_ref="localhost/t03-fedora45-arm64:${nonce}"
 
   dnf -y install image-builder podman qemu-img
-  mkdir -p "${artifact_dir}/containers-storage" "${artifact_dir}/.osbuild-cache"
+  mkdir -p "${artifact_dir}/containers-storage" "${artifact_dir}/.osbuild-cache" "${artifact_dir}/build-tmp"
+  export TMPDIR="${artifact_dir}/build-tmp"
   cat >"${artifact_dir}/storage.conf" <<EOF
 [storage]
 driver = "overlay"

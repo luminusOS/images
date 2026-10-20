@@ -135,7 +135,8 @@ class Arm64ProofTests(unittest.TestCase):
             self.write_command(fake_bin / "qemu-img", 'printf \'{"format":"qcow2","virtual-size":1073741824}\\n\'\n')
             self.write_command(
                 fake_bin / "podman",
-                '''printf 'storage=%s args=%s\\n' "${CONTAINERS_STORAGE_CONF:-unset}" "$*" >>"$T03_CALL_LOG"
+                '''printf 'storage=%s tmpdir=%s args=%s\\n' "${CONTAINERS_STORAGE_CONF:-unset}" "${TMPDIR:-unset}" "$*" >>"$T03_CALL_LOG"
+[[ "${TMPDIR:-}" == "$T03_EXPECT_TMPDIR" && -d "$TMPDIR" ]] || exit 77
 case "$1" in
   image) printf 'linux arm64\\n' ;;
   build)
@@ -173,6 +174,7 @@ printf 'qcow2' >"$outdir/$name"
                     "T03_CAPTURE_CONTAINERFILE": str(capture_containerfile),
                     "T03_CAPTURE_DISK": str(capture_disk),
                     "T03_CALL_LOG": str(call_log),
+                    "T03_EXPECT_TMPDIR": str(artifact_dir / "build-tmp"),
                 },
             )
 
@@ -196,6 +198,7 @@ printf 'qcow2' >"$outdir/$name"
             self.assertIn("sha256:54fe92a655ebbcec468dc6fa953c0d1d2b474630a72f953702766c8389dd1a15", SCRIPT.read_text())
             self.assertIn("cwd=" + str(artifact_dir), call_log.read_text())
             self.assertIn("storage=" + str(artifact_dir / "storage.conf"), call_log.read_text())
+            self.assertIn("tmpdir=" + str(artifact_dir / "build-tmp"), call_log.read_text())
             self.assertIn("quay.io/fedora/fedora-bootc@sha256:3c7cf18e9b1eb23d65cdaec7c5d15e8b4d12849ec20f61dba02ac3e3293f66d1", call_log.read_text())
 
     def test_builder_refuses_to_overwrite_existing_disk(self):
