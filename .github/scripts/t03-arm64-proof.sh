@@ -289,6 +289,34 @@ run_readonly() {
   fi
 }
 
+capture_device_snapshot() {
+  local device_path="$1" label="$2" device_major_minor
+  run_readonly "${label} unit properties" systemctl show --no-pager \
+    -p ActiveState -p SubState -p Result -p SysFSPath -p Found -p Names -p Following \
+    -p Job -p JobTimeoutUSec -p JobRunningTimeoutUSec \
+    -p StateChangeTimestampMonotonic -p ActiveEnterTimestampMonotonic \
+    -p InactiveEnterTimestampMonotonic "$device_path"
+  run_readonly "${label} udev database properties" udevadm info --query=all --name="$device_path"
+  if device_major_minor="$(lsblk --nodeps --noheadings --output MAJ:MIN -- "$device_path" 2>/dev/null)" \
+    && [[ "$device_major_minor" =~ ^[0-9]+:[0-9]+$ ]]; then
+    run_readonly "${label} udev database entry" cat -- "/run/udev/data/b${device_major_minor}"
+  else
+    printf 'T03_DIAGNOSTIC_DEVICE_MAJOR_MINOR_UNAVAILABLE=%s\n' "$device_path"
+  fi
+}
+
+printf '\n--- boot device resolution ---\n'
+capture_device_snapshot /dev/vda3 'kernel boot device'
+if device_path="$(systemctl show boot.mount --property=What --value 2>/dev/null)" \
+  && [[ "$device_path" == /dev/* && "$device_path" != *..* \
+    && "$device_path" != *[!A-Za-z0-9_./-]* ]]; then
+  if [[ "$device_path" != /dev/vda3 ]]; then
+    capture_device_snapshot "$device_path" 'boot UUID alias'
+  fi
+else
+  printf 'T03_DIAGNOSTIC_COMMAND_FAILED=boot device resolution\n'
+fi
+
 run_readonly 'failed units' systemctl --failed --no-pager
 run_readonly 'filesystem, hwdb, and udev unit status' systemctl status --no-pager --lines=12 \
   boot.mount boot-efi.mount local-fs.target systemd-hwdb-update.service \

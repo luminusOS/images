@@ -385,7 +385,7 @@ printf 'qcow2' >"$outdir/$name"
             helper_path.write_text(helper_script)
             helper_path.chmod(0o755)
             calls = directory / "calls.log"
-            for command in ("systemctl", "lsblk", "blkid", "journalctl", "ls", "stat", "sha256sum"):
+            for command in ("systemctl", "lsblk", "blkid", "journalctl", "ls", "stat", "sha256sum", "udevadm", "cat"):
                 self.write_command(
                     fake_bin / command,
                     f'''printf '%s %s\\n' "{command}" "$*" >>"$T03_DIAGNOSTIC_CALLS"
@@ -405,6 +405,8 @@ exit 1
             output = captured_output.read_text()
             self.assertIn("T03_DIAGNOSTICS_BEGIN", output)
             self.assertIn("T03_DIAGNOSTICS_END", output)
+            self.assertLess(output.index("T03_DIAGNOSTICS_BEGIN"), output.index("--- boot device resolution ---"))
+            self.assertIn("T03_DIAGNOSTIC_COMMAND_FAILED=boot device resolution", output)
             self.assertIn("mock-systemctl", output)
             self.assertIn("blkid -c /dev/null", calls.read_text())
             self.assertIn("systemd-hwdb-update.service", calls.read_text())
@@ -414,7 +416,169 @@ exit 1
             self.assertNotIn("--follow", calls.read_text())
             self.assertNotIn("unlock", calls.read_text().lower())
             invoked_commands = {line.split(maxsplit=1)[0] for line in calls.read_text().splitlines()}
-            self.assertLessEqual(invoked_commands, {"systemctl", "lsblk", "blkid", "journalctl", "ls", "stat", "sha256sum"})
+            self.assertLessEqual(invoked_commands, {"systemctl", "lsblk", "blkid", "journalctl", "ls", "stat", "sha256sum", "udevadm", "cat"})
+
+    def test_diagnostic_helper_captures_boot_device_udev_and_manager_state_first(self):
+        with tempfile.TemporaryDirectory() as temp:
+            directory = Path(temp)
+            fake_bin = directory / "bin"
+            fake_bin.mkdir()
+            helper = re.search(
+                r"cat >\"\$\{context\}/diagnostics\.sh\" <<'EOF'\n(.*?)\nEOF",
+                SCRIPT.read_text(),
+                re.S,
+            )
+            self.assertIsNotNone(helper)
+            captured_output = directory / "uart.log"
+            helper_script = helper[1].replace("exec >/dev/ttyAMA0 2>&1", f"exec >{captured_output} 2>&1")
+            helper_path = directory / "diagnostics.sh"
+            helper_path.write_text(helper_script)
+            helper_path.chmod(0o755)
+            calls = directory / "calls.log"
+            self.write_command(
+                fake_bin / "systemctl",
+                '''printf 'systemctl %s\\n' "$*" >>"$T03_DIAGNOSTIC_CALLS"
+if [[ "$1" == show && "$*" == *boot.mount* && "$*" == *--value* ]]; then
+  printf '/dev/disk/by-uuid/test-boot-uuid\\n'
+  exit 0
+fi
+printf 'mock-systemctl\\n'
+exit 1
+''',
+            )
+            for command in ("lsblk", "udevadm", "cat"):
+                self.write_command(
+                    fake_bin / command,
+                    f'''printf '{command} %s\\n' "$*" >>"$T03_DIAGNOSTIC_CALLS"
+if [[ "{command}" == lsblk && "$*" == *MAJ:MIN* ]]; then
+  printf '254:3\\n'
+  exit 0
+fi
+printf 'mock-{command}\\n'
+exit 0
+''',
+                )
+            for command in ("blkid", "journalctl", "ls", "stat", "sha256sum"):
+                self.write_command(fake_bin / command, f"printf '{command} %s\\n' \"$*\" >>\"$T03_DIAGNOSTIC_CALLS\"\nexit 1\n")
+
+            result = subprocess.run(
+                [str(helper_path)],
+                env={**os.environ, "PATH": f"{fake_bin}:{os.environ['PATH']}", "T03_DIAGNOSTIC_CALLS": str(calls)},
+                text=True,
+                capture_output=True,
+            )
+
+            self.assertEqual(result.returncode, 0, result.stderr)
+            output = captured_output.read_text()
+            invocations = calls.read_text()
+            self.assertIn("mock-udevadm", output)
+            self.assertIn("mock-cat", output)
+            self.assertIn("-p Found -p Names -p Following", invocations)
+            self.assertIn("udevadm info --query=all --name=/dev/disk/by-uuid/test-boot-uuid", invocations)
+            self.assertIn("/run/udev/data/b254:3", invocations)
+            self.assertIn("-p StateChangeTimestampMonotonic", invocations)
+            self.assertIn("-p ActiveEnterTimestampMonotonic", invocations)
+            self.assertIn("-p InactiveEnterTimestampMonotonic", invocations)
+            self.assertLess(output.index("T03_DIAGNOSTICS_BEGIN"), output.index("mock-udevadm"))
+            self.assertLess(output.index("mock-udevadm"), output.index("--- failed units ---"))
+
+    def test_diagnostic_helper_captures_kernel_device_when_uuid_alias_is_missing(self):
+        cases = (
+            ("kernel-present", "/dev/disk/by-uuid/test-boot-uuid", "254:3", True),
+            ("invalid-major", "/dev/disk/by-uuid/test-boot-uuid", "", True),
+            ("parent-traversal-alias", "/dev/../etc/shadow", "254:3", False),
+            ("invalid-character-alias", "/dev/disk/by-uuid/test;bad", "254:3", False),
+        )
+        for mode, alias_path, expected_major_minor, alias_valid in cases:
+            with self.subTest(mode=mode), tempfile.TemporaryDirectory() as temp:
+                directory = Path(temp)
+                fake_bin = directory / "bin"
+                fake_bin.mkdir()
+                helper = re.search(
+                    r"cat >\"\$\{context\}/diagnostics\.sh\" <<'EOF'\n(.*?)\nEOF",
+                    SCRIPT.read_text(),
+                    re.S,
+                )
+                self.assertIsNotNone(helper)
+                captured_output = directory / "uart.log"
+                helper_script = helper[1].replace("exec >/dev/ttyAMA0 2>&1", f"exec >{captured_output} 2>&1")
+                helper_path = directory / "diagnostics.sh"
+                helper_path.write_text(helper_script)
+                helper_path.chmod(0o755)
+                calls = directory / "calls.log"
+                self.write_command(
+                    fake_bin / "systemctl",
+                    '''printf 'systemctl %s\\n' "$*" >>"$T03_DIAGNOSTIC_CALLS"
+if [[ "$1" == show && "$*" == *boot.mount* && "$*" == *--value* ]]; then
+  printf '%s\\n' "$T03_ALIAS_DEVICE_PATH"
+  exit 0
+fi
+printf 'mock-systemctl\\n'
+exit 1
+''',
+                )
+                self.write_command(
+                    fake_bin / "lsblk",
+                    f'''printf 'lsblk %s\\n' "$*" >>"$T03_DIAGNOSTIC_CALLS"
+if [[ "$*" == *MAJ:MIN* && "$*" == */dev/vda3* ]]; then
+  printf '{expected_major_minor or 'invalid'}\\n'
+  exit 0
+fi
+printf 'mock-lsblk\\n'
+exit 1
+''',
+                )
+                self.write_command(
+                    fake_bin / "udevadm",
+                    '''printf 'udevadm %s\\n' "$*" >>"$T03_DIAGNOSTIC_CALLS"
+if [[ "$*" == *--name=/dev/vda3 ]]; then
+  printf 'mock-kernel-udev\\n'
+  exit 0
+fi
+exit 1
+''',
+                )
+                self.write_command(
+                    fake_bin / "cat",
+                    '''printf 'cat %s\\n' "$*" >>"$T03_DIAGNOSTIC_CALLS"
+printf 'mock-kernel-database\\n'
+exit 0
+''',
+                )
+                for command in ("blkid", "journalctl", "ls", "stat", "sha256sum"):
+                    self.write_command(fake_bin / command, f"printf '{command} %s\\n' \"$*\" >>\"$T03_DIAGNOSTIC_CALLS\"\nexit 1\n")
+
+                result = subprocess.run(
+                    [str(helper_path)],
+                    env={
+                        **os.environ,
+                        "PATH": f"{fake_bin}:{os.environ['PATH']}",
+                        "T03_DIAGNOSTIC_CALLS": str(calls),
+                        "T03_ALIAS_DEVICE_PATH": alias_path,
+                    },
+                    text=True,
+                    capture_output=True,
+                )
+
+                self.assertEqual(result.returncode, 0, result.stderr)
+                output = captured_output.read_text()
+                invocations = calls.read_text()
+                self.assertIn("udevadm info --query=all --name=/dev/vda3", invocations)
+                self.assertIn("mock-kernel-udev", output)
+                self.assertIn("-p Found -p Names -p Following", invocations)
+                self.assertIn("T03_DIAGNOSTICS_END", output)
+                if expected_major_minor:
+                    self.assertIn("/run/udev/data/b254:3", invocations)
+                    self.assertIn("mock-kernel-database", output)
+                else:
+                    self.assertIn("T03_DIAGNOSTIC_DEVICE_MAJOR_MINOR_UNAVAILABLE=/dev/vda3", output)
+                    self.assertNotIn("cat -- /run/udev/data/", invocations)
+                if alias_valid:
+                    self.assertIn("T03_DIAGNOSTIC_COMMAND_FAILED=boot UUID alias udev database properties", output)
+                else:
+                    self.assertIn("T03_DIAGNOSTIC_COMMAND_FAILED=boot device resolution", output)
+                    self.assertNotIn(alias_path, invocations)
+                    self.assertNotIn(alias_path, output)
 
     @staticmethod
     def hwdb_helper_source():
