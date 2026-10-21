@@ -224,11 +224,62 @@ esac
                 "T03_ARCH=aarch64\n"
                 "T03_FEDORA_VERSION=45\n"
                 "T03_UEFI=1\n"
+                "T03_DEVICE_TIMEOUT_SECONDS=90\n"
+                "T03_MOUNT_BOOT=mounted\n"
+                "T03_MOUNT_BOOT_DETAILS=/dev/vda3 ext4 /boot\n"
+                "T03_MOUNT_ESP=mounted\n"
+                "T03_MOUNT_ESP_DETAILS=/dev/vda2 vfat /boot/efi\n"
+                "T03_BOOT_COMPLETE=executed\n"
                 f"T03_PASS={nonce}\n"
             )
             serial.flush()
             result = self.run_script("--verify-proof", serial.name, nonce)
 
+        self.assertEqual(result.returncode, 0, result.stderr)
+
+    def test_proof_verifier_rejects_old_or_incomplete_runtime_evidence(self):
+        nonce = "run-unique-1"
+        valid = (
+            f"T03_BEGIN={nonce}\nT03_ARCH=aarch64\nT03_FEDORA_VERSION=45\n"
+            "T03_UEFI=1\nT03_DEVICE_TIMEOUT_SECONDS=90\n"
+            "T03_MOUNT_BOOT=mounted\nT03_MOUNT_BOOT_DETAILS=/dev/vda3 ext4 /boot\n"
+            "T03_MOUNT_ESP=mounted\nT03_MOUNT_ESP_DETAILS=/dev/vda2 vfat /boot/efi\n"
+            "T03_BOOT_COMPLETE=executed\n"
+            f"T03_PASS={nonce}\n"
+        )
+        invalid_logs = (
+            valid.replace("T03_DEVICE_TIMEOUT_SECONDS=90", "T03_DEVICE_TIMEOUT_SECONDS=45"),
+            valid.replace("T03_MOUNT_BOOT=mounted\n", ""),
+            valid.replace("T03_MOUNT_ESP=mounted", "T03_MOUNT_ESP=missing"),
+            valid.replace("T03_MOUNT_BOOT_DETAILS=/dev/vda3 ext4 /boot\n", ""),
+            valid.replace("T03_MOUNT_BOOT_DETAILS=/dev/vda3 ext4 /boot", "T03_MOUNT_BOOT_DETAILS=/dev/vda4 ext4 /boot"),
+            valid.replace("T03_MOUNT_ESP_DETAILS=/dev/vda2 vfat /boot/efi", "T03_MOUNT_ESP_DETAILS=/dev/vda2 ext4 /boot/efi"),
+            valid.replace(
+                "T03_MOUNT_BOOT_DETAILS=/dev/vda3 ext4 /boot\n",
+                "T03_MOUNT_BOOT_DETAILS=/dev/vda3 ext4 /boot\nT03_MOUNT_BOOT_DETAILS=/dev/vda3 ext4 /boot\n",
+            ),
+            valid.replace("T03_BOOT_COMPLETE=executed", "T03_BOOT_COMPLETE=unknown"),
+        )
+        for content in invalid_logs:
+            with self.subTest(content=content), tempfile.NamedTemporaryFile(mode="w") as serial:
+                serial.write(content)
+                serial.flush()
+                result = self.run_script("--verify-proof", serial.name, nonce)
+                self.assertNotEqual(result.returncode, 0)
+
+    def test_proof_verifier_accepts_explicit_ostree_condition_skip(self):
+        nonce = "run-unique-1"
+        with tempfile.NamedTemporaryFile(mode="w") as serial:
+            serial.write(
+                f"T03_BEGIN={nonce}\nT03_ARCH=aarch64\nT03_FEDORA_VERSION=45\n"
+                "T03_UEFI=1\nT03_DEVICE_TIMEOUT_SECONDS=90\n"
+                "T03_MOUNT_BOOT=mounted\nT03_MOUNT_BOOT_DETAILS=/dev/vda3 ext4 /boot\n"
+                "T03_MOUNT_ESP=mounted\nT03_MOUNT_ESP_DETAILS=/dev/vda2 vfat /boot/efi\n"
+                "T03_BOOT_COMPLETE=not-applicable\n"
+                f"T03_PASS={nonce}\n"
+            )
+            serial.flush()
+            result = self.run_script("--verify-proof", serial.name, nonce)
         self.assertEqual(result.returncode, 0, result.stderr)
 
     def test_proof_verifier_accepts_serial_crlf_line_endings(self):
@@ -239,6 +290,12 @@ esac
                 + b"T03_ARCH=aarch64\r\n"
                 + b"T03_FEDORA_VERSION=45\r\n"
                 + b"T03_UEFI=1\r\n"
+                + b"T03_DEVICE_TIMEOUT_SECONDS=90\r\n"
+                + b"T03_MOUNT_BOOT=mounted\r\n"
+                + b"T03_MOUNT_BOOT_DETAILS=/dev/vda3 ext4 /boot\r\n"
+                + b"T03_MOUNT_ESP=mounted\r\n"
+                + b"T03_MOUNT_ESP_DETAILS=/dev/vda2 vfat /boot/efi\r\n"
+                + b"T03_BOOT_COMPLETE=executed\r\n"
                 + f"T03_PASS={nonce}\r\n".encode()
             )
             serial.flush()
@@ -253,6 +310,8 @@ esac
             artifact_dir = temporary / "evidence"
             fake_bin.mkdir()
             capture_service = temporary / "proof.service"
+            capture_proof_script = temporary / "proof.sh"
+            capture_device_timeout_config = temporary / "device-timeout.conf"
             capture_containerfile = temporary / "Containerfile"
             capture_disk = temporary / "disk.yaml"
             capture_diagnostics_service = temporary / "diagnostics.service"
@@ -273,6 +332,8 @@ case "$1" in
   image) printf 'linux arm64\\n' ;;
   build)
     cp "$5/proof.service" "$T03_CAPTURE_SERVICE"
+    cp "$5/proof.sh" "$T03_CAPTURE_PROOF_SCRIPT"
+    cp "$5/90-t03-device-timeout.conf" "$T03_CAPTURE_DEVICE_TIMEOUT_CONFIG"
     cp "$5/diagnostics.service" "$T03_CAPTURE_DIAGNOSTICS_SERVICE"
     cp "$5/diagnostics.sh" "$T03_CAPTURE_DIAGNOSTICS_SCRIPT"
     cp "$5/90-t03-console.conf" "$T03_CAPTURE_JOURNALD_CONFIG"
@@ -309,6 +370,8 @@ printf 'qcow2' >"$outdir/$name"
                     "PATH": f"{fake_bin}:{os.environ['PATH']}",
                     "T03_ARTIFACT_DIR": str(artifact_dir),
                     "T03_CAPTURE_SERVICE": str(capture_service),
+                    "T03_CAPTURE_PROOF_SCRIPT": str(capture_proof_script),
+                    "T03_CAPTURE_DEVICE_TIMEOUT_CONFIG": str(capture_device_timeout_config),
                     "T03_CAPTURE_DIAGNOSTICS_SERVICE": str(capture_diagnostics_service),
                     "T03_CAPTURE_DIAGNOSTICS_SCRIPT": str(capture_diagnostics_script),
                     "T03_CAPTURE_JOURNALD_CONFIG": str(capture_journald_config),
@@ -337,6 +400,27 @@ printf 'qcow2' >"$outdir/$name"
             self.assertNotIn("After=multi-user.target", capture_service.read_text())
             self.assertIn("StandardOutput=journal", capture_service.read_text())
             self.assertIn("StandardError=journal", capture_service.read_text())
+            self.assertIn("Wants=ostree-boot-complete.service", capture_service.read_text())
+            self.assertIn("After=ostree-boot-complete.service", capture_service.read_text())
+            self.assertEqual(
+                capture_device_timeout_config.read_text(),
+                "[Manager]\nDefaultDeviceTimeoutSec=90s\n",
+            )
+            containerfile = capture_containerfile.read_text()
+            self.assertIn(
+                "COPY 90-t03-device-timeout.conf /etc/systemd/system.conf.d/90-t03-device-timeout.conf",
+                containerfile,
+            )
+            proof_script = capture_proof_script.read_text()
+            for marker in (
+                "T03_DEVICE_TIMEOUT_SECONDS=90",
+                "T03_MOUNT_BOOT=mounted",
+                "T03_MOUNT_ESP=mounted",
+                "T03_BOOT_COMPLETE=executed",
+                "T03_BOOT_COMPLETE=not-applicable",
+            ):
+                self.assertIn(marker, proof_script)
+            self.assertLess(proof_script.index("T03_BOOT_COMPLETE="), proof_script.index("T03_PASS="))
             diagnostics_service = capture_diagnostics_service.read_text()
             self.assertIn("DefaultDependencies=no", diagnostics_service)
             self.assertIn("After=systemd-journald.service", diagnostics_service)
@@ -345,7 +429,6 @@ printf 'qcow2' >"$outdir/$name"
             self.assertIn("WantedBy=emergency.target", diagnostics_service)
             self.assertNotIn("RequiresMountsFor=", diagnostics_service)
             self.assertNotIn("WantedBy=multi-user.target", diagnostics_service)
-            containerfile = capture_containerfile.read_text()
             self.assertIn("COPY diagnostics.service /etc/systemd/system/t03-arm64-diagnostics.service", containerfile)
             self.assertIn("COPY diagnostics.sh /usr/local/libexec/t03-arm64-diagnostics", containerfile)
             self.assertIn("COPY hwdb-prepare.sh /usr/local/libexec/t03-hwdb-prepare", containerfile)
@@ -374,6 +457,109 @@ printf 'qcow2' >"$outdir/$name"
             self.assertIn("storage=" + str(artifact_dir / "storage.conf"), call_log.read_text())
             self.assertIn("tmpdir=" + str(artifact_dir / "build-tmp"), call_log.read_text())
             self.assertIn(f"{BOOTC_REPO}@{BOOTC_DIGEST}", call_log.read_text())
+            self.assertIn("Proof device timeout: 90 seconds", (artifact_dir / "metadata.txt").read_text())
+
+    def test_guest_proof_fails_closed_on_timeout_mount_and_ostree_state(self):
+        with tempfile.TemporaryDirectory() as temp:
+            directory = Path(temp)
+            fake_bin = directory / "bin"
+            fake_bin.mkdir()
+            proof = re.search(
+                r'cat >"\$\{context\}/proof\.sh" <<\'EOF\'\n(.*?)\nEOF',
+                SCRIPT.read_text(),
+                re.S,
+            )
+            self.assertIsNotNone(proof)
+            uart = directory / "uart.log"
+            script = proof[1].replace("source /etc/os-release", "VERSION_ID=45")
+            script = script.replace("test -d /sys/firmware/efi", "true")
+            script = script.replace(">/dev/ttyAMA0", '>>"$T03_UART"')
+            proof_path = directory / "proof.sh"
+            proof_path.write_text(script)
+            proof_path.chmod(0o755)
+            self.write_command(fake_bin / "uname", 'printf "aarch64\\n"\n')
+            self.write_command(
+                fake_bin / "busctl",
+                'printf "t %s\\n" "${T03_TIMEOUT_USEC:-90000000}"\n',
+            )
+            self.write_command(
+                fake_bin / "mountpoint",
+                '[[ "${T03_MISSING_MOUNT:-}" != "$2" ]]\n',
+            )
+            self.write_command(
+                fake_bin / "findmnt",
+                '''case "$*" in
+  *" /boot/efi") printf '%s\\n' "${T03_ESP_MOUNT:-/dev/vda2 vfat /boot/efi}" ;;
+  *" /boot") printf '%s\\n' "${T03_BOOT_MOUNT:-/dev/vda3 ext4 /boot}" ;;
+  *) exit 2 ;;
+esac
+''',
+            )
+            self.write_command(
+                fake_bin / "systemctl",
+                '''if [[ "$1" == is-active ]]; then
+  [[ "${T03_INACTIVE_UNIT:-}" != "$3" ]]
+elif [[ "$1" == show ]]; then
+  printf '%s\\n' "${T03_BOOT_PROPERTIES:-LoadState=loaded
+ActiveState=active
+SubState=exited
+Result=success
+ConditionResult=yes}"
+else
+  exit 2
+fi
+''',
+            )
+
+            cases = (
+                ({}, 0, "T03_BOOT_COMPLETE=executed"),
+                ({"T03_BOOT_PROPERTIES": "ConditionResult=yes\nLoadState=loaded\nResult=success\nSubState=exited\nActiveState=active"}, 0, "T03_BOOT_COMPLETE=executed"),
+                ({"T03_BOOT_PROPERTIES": "ConditionResult=no\nLoadState=loaded\nResult=success\nSubState=dead\nActiveState=inactive"}, 0, "T03_BOOT_COMPLETE=not-applicable"),
+                ({"T03_TIMEOUT_USEC": "45000000"}, 1, ""),
+                ({"T03_MISSING_MOUNT": "/boot"}, 1, ""),
+                ({"T03_INACTIVE_UNIT": "boot-efi.mount"}, 1, ""),
+                ({"T03_BOOT_MOUNT": "/dev/vda3 vfat /boot"}, 1, ""),
+                ({"T03_BOOT_MOUNT": "/dev/vda3 ext4 /"}, 1, ""),
+                ({"T03_BOOT_MOUNT": "/dev/vda4 ext4 /boot"}, 1, ""),
+                ({"T03_BOOT_MOUNT": "/dev/vda3 ext4 /boot extra"}, 1, ""),
+                ({"T03_BOOT_MOUNT": "/dev/vda3 ext4 /boot\n/dev/vda4 ext4 /other"}, 1, ""),
+                ({"T03_ESP_MOUNT": "/dev/vda2 ext4 /boot/efi"}, 1, ""),
+                ({"T03_ESP_MOUNT": "/dev/vda2 vfat /boot"}, 1, ""),
+                ({"T03_ESP_MOUNT": "/dev/vda4 vfat /boot/efi"}, 1, ""),
+                ({"T03_BOOT_PROPERTIES": "LoadState=loaded\nActiveState=failed\nSubState=failed\nResult=exit-code\nConditionResult=yes"}, 1, ""),
+                ({"T03_BOOT_PROPERTIES": "LoadState=not-found\nActiveState=inactive\nSubState=dead\nResult=success\nConditionResult=no"}, 1, ""),
+                ({"T03_BOOT_PROPERTIES": "LoadState=loaded\nActiveState=active\nSubState=exited\nResult=success"}, 1, ""),
+                ({"T03_BOOT_PROPERTIES": "LoadState=loaded\nActiveState=active\nSubState=exited\nResult=success\nResult=success\nConditionResult=yes"}, 1, ""),
+                ({"T03_BOOT_PROPERTIES": "LoadState=loaded\nActiveState=active\nSubState=exited\nResult=success\nConditionResult=yes\nUnexpected=value"}, 1, ""),
+            )
+            for extra_env, expected_status, expected_marker in cases:
+                with self.subTest(extra_env=extra_env):
+                    uart.write_text("")
+                    result = subprocess.run(
+                        [str(proof_path)],
+                        env={
+                            **os.environ,
+                            **extra_env,
+                            "PATH": f"{fake_bin}:{os.environ['PATH']}",
+                            "T03_NONCE": "run-unique-1",
+                            "T03_UART": str(uart),
+                        },
+                        text=True,
+                        capture_output=True,
+                    )
+                    output = uart.read_text()
+                    self.assertEqual(result.returncode, expected_status, result.stderr)
+                    if expected_marker:
+                        self.assertIn(expected_marker, output)
+                        self.assertIn("T03_PASS=run-unique-1", output)
+                        self.assertIn("T03_MOUNT_BOOT_DETAILS=/dev/vda3 ext4 /boot", output)
+                        self.assertIn("T03_MOUNT_ESP_DETAILS=/dev/vda2 vfat /boot/efi", output)
+                    else:
+                        self.assertNotIn("T03_PASS=run-unique-1", output)
+                        if "T03_BOOT_MOUNT" in extra_env:
+                            self.assertNotIn("T03_MOUNT_BOOT=mounted", output)
+                        if "T03_ESP_MOUNT" in extra_env:
+                            self.assertNotIn("T03_MOUNT_ESP=mounted", output)
 
     def test_diagnostic_helper_is_read_only_bounded_and_best_effort(self):
         with tempfile.TemporaryDirectory() as temp:

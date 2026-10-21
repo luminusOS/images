@@ -15,7 +15,8 @@ cleanup_context() {
     "${owned_context}/proof.service" "${owned_context}/proof.sh" \
     "${owned_context}/diagnostics.service" "${owned_context}/diagnostics.sh" \
     "${owned_context}/90-t03-console.conf" "${owned_context}/hwdb-prepare.sh" \
-    "${owned_context}/00-t03-vda3-debug.rules" "${owned_context}/disk.yaml"
+    "${owned_context}/00-t03-vda3-debug.rules" \
+    "${owned_context}/90-t03-device-timeout.conf" "${owned_context}/disk.yaml"
   rmdir "$owned_context" 2>/dev/null || true
 }
 
@@ -138,7 +139,7 @@ validate_pinned_ref() {
 }
 
 verify_proof() {
-  local log="$1" nonce="$2" expected
+  local log="$1" nonce="$2" expected detail_key detail_count
   [[ -r "$log" ]] || fail "serial log is missing: ${log}"
   [[ "$nonce" =~ ^[a-zA-Z0-9-]{8,80}$ ]] || fail 'invalid run nonce'
   for expected in \
@@ -146,9 +147,22 @@ verify_proof() {
     'T03_ARCH=aarch64' \
     'T03_FEDORA_VERSION=45' \
     'T03_UEFI=1' \
+    'T03_DEVICE_TIMEOUT_SECONDS=90' \
+    'T03_MOUNT_BOOT=mounted' \
+    'T03_MOUNT_BOOT_DETAILS=/dev/vda3 ext4 /boot' \
+    'T03_MOUNT_ESP=mounted' \
+    'T03_MOUNT_ESP_DETAILS=/dev/vda2 vfat /boot/efi' \
     "T03_PASS=${nonce}"; do
     grep -Fqx -- "$expected" <(tr -d '\r' <"$log") || fail "boot proof is incomplete: ${expected}"
   done
+  for detail_key in T03_MOUNT_BOOT_DETAILS= T03_MOUNT_ESP_DETAILS=; do
+    detail_count="$(grep -Fc -- "$detail_key" <(tr -d '\r' <"$log") || true)"
+    [[ "$detail_count" == 1 ]] || fail "boot proof must contain exactly one ${detail_key} line"
+  done
+  if ! grep -Fqx -- 'T03_BOOT_COMPLETE=executed' <(tr -d '\r' <"$log") \
+    && ! grep -Fqx -- 'T03_BOOT_COMPLETE=not-applicable' <(tr -d '\r' <"$log"); then
+    fail 'boot proof is missing a validated OSTree boot-complete status'
+  fi
 }
 
 build_qemu_args() {
@@ -231,10 +245,12 @@ COPY proof.sh /usr/local/libexec/t03-arm64-proof
 COPY diagnostics.service /etc/systemd/system/t03-arm64-diagnostics.service
 COPY diagnostics.sh /usr/local/libexec/t03-arm64-diagnostics
 COPY 00-t03-vda3-debug.rules /etc/udev/rules.d/00-t03-vda3-debug.rules
+COPY 90-t03-device-timeout.conf /etc/systemd/system.conf.d/90-t03-device-timeout.conf
 COPY hwdb-prepare.sh /usr/local/libexec/t03-hwdb-prepare
 COPY 90-t03-console.conf /usr/lib/systemd/journald.conf.d/90-t03-console.conf
 COPY disk.yaml /usr/lib/image-builder/bootc/disk.yaml
 RUN mkdir -p /usr/lib/systemd/journald.conf.d && \
+    mkdir -p /etc/systemd/system.conf.d && \
     chmod 0755 /usr/local/libexec/t03-arm64-proof /usr/local/libexec/t03-arm64-diagnostics /usr/local/libexec/t03-hwdb-prepare && \
     /usr/local/libexec/t03-hwdb-prepare --root / && \
     systemctl enable t03-arm64-proof.service t03-arm64-diagnostics.service
@@ -242,6 +258,8 @@ EOF
   cat >"${context}/proof.service" <<'EOF'
 [Unit]
 Description=T03 ARM64 boot proof
+Wants=ostree-boot-complete.service
+After=ostree-boot-complete.service
 
 [Service]
 Type=oneshot
@@ -446,6 +464,10 @@ EOF
   cat >"${context}/00-t03-vda3-debug.rules" <<'EOF'
 SUBSYSTEM=="block", KERNEL=="vda3", OPTIONS="log_level=debug"
 EOF
+  cat >"${context}/90-t03-device-timeout.conf" <<'EOF'
+[Manager]
+DefaultDeviceTimeoutSec=90s
+EOF
   cat >"${context}/disk.yaml" <<'EOF'
 mount_configuration: units
 partition_table:
@@ -496,6 +518,85 @@ test "${VERSION_ID}" = 45
 printf 'T03_FEDORA_VERSION=%s\n' "$VERSION_ID" >/dev/ttyAMA0
 test -d /sys/firmware/efi
 printf 'T03_UEFI=1\n' >/dev/ttyAMA0
+device_timeout="$(busctl get-property org.freedesktop.systemd1 \
+  /org/freedesktop/systemd1 org.freedesktop.systemd1.Manager \
+  DefaultDeviceTimeoutUSec)"
+test "$device_timeout" = 't 90000000'
+printf 'T03_DEVICE_TIMEOUT_SECONDS=90\n' >/dev/ttyAMA0
+mountpoint -q /boot
+systemctl is-active --quiet boot.mount
+boot_mount="$(findmnt --noheadings --raw --output SOURCE,FSTYPE,TARGET --mountpoint /boot)"
+test -n "$boot_mount"
+[[ "$boot_mount" != *$'\n'* ]]
+read -r boot_source boot_fstype boot_target boot_extra <<<"$boot_mount"
+[[ "$boot_source" == /dev/vda3 && "$boot_fstype" == ext4 \
+  && "$boot_target" == /boot && -z "${boot_extra:-}" ]]
+printf 'T03_MOUNT_BOOT=mounted\n' >/dev/ttyAMA0
+printf 'T03_MOUNT_BOOT_DETAILS=%s %s %s\n' \
+  "$boot_source" "$boot_fstype" "$boot_target" >/dev/ttyAMA0
+mountpoint -q /boot/efi
+systemctl is-active --quiet boot-efi.mount
+efi_mount="$(findmnt --noheadings --raw --output SOURCE,FSTYPE,TARGET --mountpoint /boot/efi)"
+test -n "$efi_mount"
+[[ "$efi_mount" != *$'\n'* ]]
+read -r efi_source efi_fstype efi_target efi_extra <<<"$efi_mount"
+[[ "$efi_source" == /dev/vda2 && "$efi_fstype" == vfat \
+  && "$efi_target" == /boot/efi && -z "${efi_extra:-}" ]]
+printf 'T03_MOUNT_ESP=mounted\n' >/dev/ttyAMA0
+printf 'T03_MOUNT_ESP_DETAILS=%s %s %s\n' \
+  "$efi_source" "$efi_fstype" "$efi_target" >/dev/ttyAMA0
+boot_complete_state="$(systemctl show --property=LoadState --property=ActiveState \
+  --property=SubState --property=Result --property=ConditionResult \
+  ostree-boot-complete.service)"
+load_state_seen=0
+active_state_seen=0
+sub_state_seen=0
+result_seen=0
+condition_result_seen=0
+while IFS='=' read -r property value; do
+  case "$property" in
+    LoadState)
+      [[ "$load_state_seen" == 0 ]] || exit 1
+      load_state_seen=1
+      load_state="$value"
+      ;;
+    ActiveState)
+      [[ "$active_state_seen" == 0 ]] || exit 1
+      active_state_seen=1
+      active_state="$value"
+      ;;
+    SubState)
+      [[ "$sub_state_seen" == 0 ]] || exit 1
+      sub_state_seen=1
+      sub_state="$value"
+      ;;
+    Result)
+      [[ "$result_seen" == 0 ]] || exit 1
+      result_seen=1
+      result="$value"
+      ;;
+    ConditionResult)
+      [[ "$condition_result_seen" == 0 ]] || exit 1
+      condition_result_seen=1
+      condition_result="$value"
+      ;;
+    *) exit 1 ;;
+  esac
+done <<<"$boot_complete_state"
+[[ "$load_state_seen" == 1 && "$active_state_seen" == 1 \
+  && "$sub_state_seen" == 1 && "$result_seen" == 1 \
+  && "$condition_result_seen" == 1 ]]
+test "$load_state" = loaded
+if [[ "$active_state" == active && "$sub_state" == exited \
+  && "$result" == success && "$condition_result" == yes ]]; then
+  printf 'T03_BOOT_COMPLETE=executed\n' >/dev/ttyAMA0
+elif [[ "$active_state" == inactive && "$sub_state" == dead \
+  && "$result" == success && "$condition_result" == no ]]; then
+  printf 'T03_BOOT_COMPLETE=not-applicable\n' >/dev/ttyAMA0
+else
+  printf 'T03_BOOT_COMPLETE_STATE=%s\n' "$boot_complete_state" >/dev/ttyAMA0
+  exit 1
+fi
 printf 'T03_PASS=%s\n' "$T03_NONCE" >/dev/ttyAMA0
 EOF
 
@@ -511,6 +612,8 @@ EOF
   trap - EXIT
   printf 'Image builder: %s\n' "$(rpm -q image-builder)" >>"${artifact_dir}/metadata.txt"
   printf 'Guest image: %s\n' "$image_path" >>"${artifact_dir}/metadata.txt"
+  printf 'Proof device timeout: 90 seconds (system.conf.d/90-t03-device-timeout.conf)\n' \
+    >>"${artifact_dir}/metadata.txt"
 }
 
 boot_once() {
