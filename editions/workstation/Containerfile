@@ -134,6 +134,9 @@ RUN test -f /usr/share/gnome-shell/extensions/${aurora_shell_uuid}/metadata.json
     test -n "$(find /usr/share/gnome-shell/extensions/${aurora_shell_uuid} -mindepth 1 -maxdepth 1 -print -quit)"
 
 # GNOME desktop environment packages (stable cache — only invalidated by package list changes)
+# Nautilus only recommends its thumbnailers (images, video, documents, books,
+# folders), which install_weak_deps=False would skip, so they are listed
+# explicitly.
 # The GStreamer plugins let host apps (Sushi previews, apps run from toolbox
 # or as RPMs) play common audio and video: MP4/QuickTime demuxing and
 # scaletempo (good), H.264 through Cisco's openh264 (the library comes from
@@ -155,6 +158,11 @@ RUN --mount=type=cache,target=/var/cache/dnf \
       oo7-portal \
       sushi \
       gnome-software \
+      glycin-thumbnailer \
+      gst-thumbnailers \
+      papers-thumbnailer \
+      gnome-epub-thumbnailer \
+      gnome-directory-thumbnailer \
       gstreamer1-plugins-good \
       gstreamer1-plugins-bad-free \
       gstreamer1-plugin-openh264 \
@@ -237,6 +245,8 @@ RUN set -eux; \
     command -v bootc && \
     rpm -q gstreamer1-plugins-good gstreamer1-plugins-bad-free \
       gstreamer1-plugin-openh264 openh264 gstreamer1-plugin-libav \
+      glycin-thumbnailer gst-thumbnailers papers-thumbnailer \
+      gnome-epub-thumbnailer gnome-directory-thumbnailer \
       kernel-modules-extra NetworkManager-wifi wpa_supplicant wireless-regdb \
       NetworkManager-iodine NetworkManager-iodine-gnome \
       NetworkManager-l2tp NetworkManager-l2tp-gnome \
