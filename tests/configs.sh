@@ -142,6 +142,11 @@ expect "interim swap file service and script are gone" \
   _ "${SYSTEM_FILES}"
 expect "the interim fixed swap file is removed on boot" \
   grep -qx 'r! /var/swap/swapfile - - - - -' "${SYSTEM_FILES}/usr/lib/tmpfiles.d/luminusos-swap-migrate.conf"
+expect "memory-pressure kill policy ships with systemd-oomd" \
+  sh -c 'grep -q "^      systemd-oomd-defaults \\\\$" "$1/editions/workstation/Containerfile" && grep -q "ManagedOOMMemoryPressure=kill" "$1/editions/workstation/Containerfile"' \
+  _ "${ROOT}"
+expect "systemd-oomd is enabled by the build" \
+  grep -qx 'systemctl enable systemd-oomd.service' "${ROOT}/editions/workstation/build.sh"
 expect "elastic-swap digest reaches every workstation build" \
   sh -c 'grep -q "elastic_swap_sha256=" "$1/.just/build.just" && grep -q "elastic_swap_sha256=" "$1/.github/workflows/containers.yml" && grep -q "elastic_swap_version=" "$1/.just/build.just" && grep -q "elastic_swap_version=" "$1/.github/workflows/containers.yml"' \
   _ "${ROOT}"
