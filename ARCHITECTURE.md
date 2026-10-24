@@ -121,6 +121,8 @@ flowchart TD
 | `LOS_WORKSTATION_TARGET_IMAGE` | `…:testing-<fedora>`, or `…:<fedora>` when `UPDATE_CHANNEL=stable` | Installed bootc update reference. |
 | `AURORA_SHELL_VERSION` | From `config/versions.env` | Aurora Shell release downloaded during build. |
 | `AURORA_SHELL_SHA256` | From `config/versions.env` | Expected digest for the Aurora Shell release artifact. |
+| `ELASTIC_SWAP_VERSION` | From `config/versions.env` | elastic-swap release whose x86_64 RPM is installed into the workstation image. |
+| `ELASTIC_SWAP_SHA256` | From `config/versions.env` | SHA256 of that RPM for the default Fedora release; the build fails if the download does not match. |
 | `SIRIUS_VERSION` | From `config/versions.env` | Sirius GitHub release downloaded into the live installer. |
 | `SIRIUS_RPM_VERSION` | From `config/versions.env` | Package version encoded in the Sirius release RPM filename and metadata. |
 | `SIRIUS_SHA256` | From `config/versions.env` | SHA256 of the Sirius release RPM; the installer build fails if the download does not match. Update it with `SIRIUS_VERSION`. |

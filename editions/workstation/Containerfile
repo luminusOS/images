@@ -47,6 +47,8 @@ ARG edition_name="Workstation"
 ARG edition_id="workstation"
 ARG aurora_shell_uuid=aurora-shell@luminusos.github.io
 ARG skip_flatpaks=0
+ARG elastic_swap_version
+ARG elastic_swap_sha256
 ARG source_url="https://github.com/LuminusOS/images"
 ARG fedora_bootc_digest=""
 
@@ -182,6 +184,20 @@ RUN --mount=type=cache,target=/var/cache/dnf \
     rm -f /tmp/appimage-thumbnailer.rpm && \
     dnf clean all
 
+# Swap daemon: grows and shrinks swap files in /var/swap behind zswap. It is
+# our own package, published as a release asset; the digest guards against a
+# replaced asset. A mismatch fails the build.
+RUN --mount=type=cache,target=/var/cache/dnf \
+    --mount=type=bind,from=ctx-scripts,source=/scripts,target=/scripts \
+    bash /scripts/rpmdb-repair.sh && \
+    curl -fsSL \
+      "https://github.com/luminusOS/elastic-swap/releases/download/v${elastic_swap_version}/elastic-swap-${elastic_swap_version}-1.fc${fedora_version}.x86_64.rpm" \
+      -o /tmp/elastic-swap.rpm && \
+    echo "${elastic_swap_sha256}  /tmp/elastic-swap.rpm" | sha256sum -c - && \
+    dnf -y --releasever="${fedora_version}" install /tmp/elastic-swap.rpm && \
+    rm -f /tmp/elastic-swap.rpm && \
+    dnf clean all
+
 # The system overlay mirrors the installed filesystem. Live-installer files
 # live in a separate overlay consumed only by Containerfile.installer.
 COPY editions/workstation/files/system/ /
@@ -265,9 +281,15 @@ RUN set -eux; \
     systemctl is-enabled firewalld.service && \
     ! systemctl is-enabled sshd.service && \
     systemctl is-enabled bootc-fetch-apply-updates.timer && \
-    systemctl is-enabled luminusos-swapfile.service && \
+    rpm -q elastic-swap && \
+    test "$(rpm -q --queryformat '%{VERSION}' elastic-swap)" = "${elastic_swap_version}" && \
+    systemctl is-enabled elastic-swap.service && \
+    test ! -e /usr/lib/systemd/system/luminusos-swapfile.service && \
+    test ! -e /usr/libexec/luminusos-swapfile.sh && \
+    grep -qx 'swap_mode=zswap+swapfile' /usr/share/elastic-swap/swap-default.conf && \
+    grep -qx 'vm.page-cluster = 0' /usr/lib/sysctl.d/60-elastic-swap.conf && \
     grep -q 'zswap.enabled=1' /usr/lib/bootc/kargs.d/20-luminusos-zswap.toml && \
-    test -x /usr/libexec/luminusos-swapfile.sh && \
+    grep -qx 'r! /var/swap/swapfile - - - - -' /usr/lib/tmpfiles.d/luminusos-swap-migrate.conf && \
     grep -qx 'ExecStart=/usr/bin/bootc upgrade --quiet' \
       /usr/lib/systemd/system/bootc-fetch-apply-updates.service.d/10-luminusos-stage.conf && \
     ! firewall-offline-cmd --zone=public --query-service=ssh && \

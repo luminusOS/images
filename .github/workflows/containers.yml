@@ -226,6 +226,8 @@ jobs:
             echo "sirius_sha256=${sirius_sha256}"
             echo "aurora_shell_version=${AURORA_SHELL_VERSION}"
             echo "aurora_shell_sha256=${AURORA_SHELL_SHA256}"
+            echo "elastic_swap_version=${ELASTIC_SWAP_VERSION}"
+            echo "elastic_swap_sha256=${ELASTIC_SWAP_SHA256}"
             echo "publish_channel=${publish_channel}"
             echo "core_image=${core_image}"
             echo "workstation_image=${workstation_image}"
@@ -287,6 +289,8 @@ jobs:
             skip_flatpaks=${{ inputs.skip_flatpaks }}
             aurora_shell_version=${{ steps.version.outputs.aurora_shell_version }}
             aurora_shell_sha256=${{ steps.version.outputs.aurora_shell_sha256 }}
+            elastic_swap_version=${{ steps.version.outputs.elastic_swap_version }}
+            elastic_swap_sha256=${{ steps.version.outputs.elastic_swap_sha256 }}
           tags: |
             ${{ steps.version.outputs.local_workstation_tag }}
             ${{ steps.version.outputs.workstation_image }}

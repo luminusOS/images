@@ -132,9 +132,20 @@ expect "Sirius release and RPM versions are pinned separately" \
 
 expect "zswap kargs enable compressed swap" \
   grep -q 'zswap.enabled=1' "${SYSTEM_FILES}/usr/lib/bootc/kargs.d/20-luminusos-zswap.toml"
-expect "swap file script is executable" \
-  test -x "${SYSTEM_FILES}/usr/libexec/luminusos-swapfile.sh"
-expect "swap file service is enabled by the build" \
-  grep -qx 'systemctl enable luminusos-swapfile.service' "${ROOT}/editions/workstation/build.sh"
-expect "swap file service stays out of the tmp.mount ordering cycle" \
-  grep -qx 'DefaultDependencies=no' "${SYSTEM_FILES}/usr/lib/systemd/system/luminusos-swapfile.service"
+expect "elastic-swap release digest is pinned" \
+  sh -c 'grep -Eq "^ELASTIC_SWAP_VERSION=[0-9]+\\.[0-9]+\\.[0-9]+$" "$1" && grep -Eq "^ELASTIC_SWAP_SHA256=[0-9a-f]{64}$" "$1"' \
+  _ "${ROOT}/config/versions.env"
+expect "elastic-swap daemon is enabled by the build" \
+  grep -qx 'systemctl enable elastic-swap.service' "${ROOT}/editions/workstation/build.sh"
+expect "interim swap file service and script are gone" \
+  sh -c 'test ! -e "$1/usr/lib/systemd/system/luminusos-swapfile.service" && test ! -e "$1/usr/libexec/luminusos-swapfile.sh"' \
+  _ "${SYSTEM_FILES}"
+expect "the interim fixed swap file is removed on boot" \
+  grep -qx 'r! /var/swap/swapfile - - - - -' "${SYSTEM_FILES}/usr/lib/tmpfiles.d/luminusos-swap-migrate.conf"
+expect "elastic-swap digest reaches every workstation build" \
+  sh -c 'grep -q "elastic_swap_sha256=" "$1/.just/build.just" && grep -q "elastic_swap_sha256=" "$1/.github/workflows/containers.yml" && grep -q "elastic_swap_version=" "$1/.just/build.just" && grep -q "elastic_swap_version=" "$1/.github/workflows/containers.yml"' \
+  _ "${ROOT}"
+expect "the swap daemon stays off inside containers" \
+  grep -qx 'ConditionVirtualization=!container' "${SYSTEM_FILES}/usr/lib/systemd/system/elastic-swap.service.d/10-luminusos.conf"
+expect "the live ISO does not run the swap daemon" \
+  grep -qx 'ConditionKernelCommandLine=!rd.live.image' "${INSTALLER_FILES}/usr/lib/systemd/system/elastic-swap.service.d/10-live-iso.conf"
