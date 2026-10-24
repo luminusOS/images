@@ -73,6 +73,8 @@ workstation:
       --build-arg edition_id="workstation" \
       --build-arg aurora_shell_version={{ aurora_shell_version }} \
       --build-arg aurora_shell_sha256={{ aurora_shell_sha256 }} \
+      --build-arg elastic_swap_version={{ elastic_swap_version }} \
+      --build-arg elastic_swap_sha256={{ elastic_swap_sha256 }} \
       --build-arg skip_flatpaks={{ skip_flatpaks }} \
       .
     ./tools/squash-image.sh {{ workstation_image }}
