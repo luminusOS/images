@@ -150,7 +150,9 @@ expect "systemd-oomd is enabled by the build" \
 expect "elastic-swap digest reaches every workstation build" \
   sh -c 'grep -q "elastic_swap_sha256=" "$1/.just/build.just" && grep -q "elastic_swap_sha256=" "$1/.github/workflows/containers.yml" && grep -q "elastic_swap_version=" "$1/.just/build.just" && grep -q "elastic_swap_version=" "$1/.github/workflows/containers.yml"' \
   _ "${ROOT}"
-expect "the swap daemon stays off inside containers" \
-  grep -qx 'ConditionVirtualization=!container' "${SYSTEM_FILES}/usr/lib/systemd/system/elastic-swap.service.d/10-luminusos.conf"
-expect "the live ISO does not run the swap daemon" \
-  grep -qx 'ConditionKernelCommandLine=!rd.live.image' "${INSTALLER_FILES}/usr/lib/systemd/system/elastic-swap.service.d/10-live-iso.conf"
+expect "the swap daemon and its prepare step stay off inside containers" \
+  sh -c 'for u in elastic-swap elastic-swap-prepare; do grep -qx "ConditionVirtualization=!container" "$1/usr/lib/systemd/system/$u.service.d/10-luminusos.conf" || exit 1; done' \
+  _ "${SYSTEM_FILES}"
+expect "the live ISO runs neither the swap daemon nor its prepare step" \
+  sh -c 'for u in elastic-swap elastic-swap-prepare; do grep -qx "ConditionKernelCommandLine=!rd.live.image" "$1/usr/lib/systemd/system/$u.service.d/10-live-iso.conf" || exit 1; done' \
+  _ "${INSTALLER_FILES}"

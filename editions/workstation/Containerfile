@@ -289,6 +289,7 @@ RUN set -eux; \
     rpm -q elastic-swap && \
     test "$(rpm -q --queryformat '%{VERSION}' elastic-swap)" = "${elastic_swap_version}" && \
     systemctl is-enabled elastic-swap.service && \
+    test -f /usr/lib/systemd/system/elastic-swap-prepare.service && \
     rpm -q systemd-oomd-defaults && \
     test -x /usr/lib/systemd/systemd-oomd && \
     systemctl is-enabled systemd-oomd.service && \
