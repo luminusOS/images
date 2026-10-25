@@ -135,6 +135,9 @@ expect "zswap kargs enable compressed swap" \
 expect "elastic-swap release digest is pinned" \
   sh -c 'grep -Eq "^ELASTIC_SWAP_VERSION=[0-9]+\\.[0-9]+\\.[0-9]+$" "$1" && grep -Eq "^ELASTIC_SWAP_SHA256=[0-9a-f]{64}$" "$1"' \
   _ "${ROOT}/config/versions.env"
+expect "ddcutil-service COPR RPM digest is pinned" \
+  grep -Eq '^    echo "[0-9a-f]{64}  /tmp/ddcutil-service\.rpm" \| sha256sum -c - && \\$' \
+  "${ROOT}/editions/workstation/Containerfile"
 expect "elastic-swap daemon is enabled by the build" \
   grep -qx 'systemctl enable elastic-swap.service' "${ROOT}/editions/workstation/build.sh"
 expect "interim swap file service and script are gone" \
