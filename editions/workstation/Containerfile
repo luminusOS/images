@@ -203,6 +203,23 @@ RUN --mount=type=cache,target=/var/cache/dnf \
     rm -f /tmp/elastic-swap.rpm && \
     dnf clean all
 
+# D-Bus service for DDC/CI monitor control, used by Aurora Shell's External
+# Display Brightness module. It pulls Fedora's ddcutil, whose udev rule gives
+# the logged-in user access to the I2C buses. ddcutil-service is not packaged in
+# Fedora; until the LuminusOS RPM repository publishes it, this installs the
+# unsigned hopsayer/ddcutil-service COPR build. That COPR prunes old builds, so
+# the pinned digest fails the build when the asset is removed or replaced.
+RUN --mount=type=cache,target=/var/cache/dnf \
+    --mount=type=bind,from=ctx-scripts,source=/scripts,target=/scripts \
+    bash /scripts/rpmdb-repair.sh && \
+    curl -fsSL \
+      "https://download.copr.fedorainfracloud.org/results/hopsayer/ddcutil-service/fedora-${fedora_version}-x86_64/Packages/d/ddcutil-service-1.0.15-0.x86_64.rpm" \
+      -o /tmp/ddcutil-service.rpm && \
+    echo "05518dcadd7e24b31633fa5f4b2e3dbb002813ecad26c41e3cc4cbac3646dcfb  /tmp/ddcutil-service.rpm" | sha256sum -c - && \
+    dnf -y --releasever="${fedora_version}" install /tmp/ddcutil-service.rpm && \
+    rm -f /tmp/ddcutil-service.rpm && \
+    dnf clean all
+
 # The system overlay mirrors the installed filesystem. Live-installer files
 # live in a separate overlay consumed only by Containerfile.installer.
 COPY editions/workstation/files/system/ /
@@ -290,6 +307,11 @@ RUN set -eux; \
     test "$(rpm -q --queryformat '%{VERSION}' elastic-swap)" = "${elastic_swap_version}" && \
     systemctl is-enabled elastic-swap.service && \
     test -f /usr/lib/systemd/system/elastic-swap-prepare.service && \
+    rpm -q ddcutil ddcutil-service && \
+    test -f /usr/share/dbus-1/services/com.ddcutil.DdcutilService.service && \
+    test -f /usr/lib/udev/rules.d/60-ddcutil-i2c.rules && \
+    systemctl --global is-enabled dbus-broker.service && \
+    ! systemctl --global is-enabled dbus-daemon.service && \
     rpm -q systemd-oomd-defaults && \
     test -x /usr/lib/systemd/systemd-oomd && \
     systemctl is-enabled systemd-oomd.service && \
