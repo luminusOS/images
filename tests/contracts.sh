@@ -37,6 +37,8 @@ expect "Fedora bootc digest helper tracks the OCI manifest" \
 expect "builds resolve the live Fedora bootc digest" \
   sh -c 'for f in containers.yml auto-testing.yml; do grep -Fq "tools/fedora-bootc-digest.sh" "$1/$f" || exit 1; done' \
   _ "${ROOT}/.github/workflows"
+expect "publishing runs only from main, where the signing key may be used" \
+  grep -Fq "if: github.ref == 'refs/heads/main'" "${ROOT}/.github/workflows/publish.yml"
 expect "publish calls the reusable workflow" \
   grep -Fq 'uses: ./.github/workflows/containers.yml' \
   "${ROOT}/.github/workflows/publish.yml"

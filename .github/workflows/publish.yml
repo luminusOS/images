@@ -31,6 +31,8 @@ concurrency:
 jobs:
   containers:
     name: Build and push containers
+    # The signing key is available to this workflow, and only main may use it.
+    if: github.ref == 'refs/heads/main'
     permissions:
       contents: read
       packages: write
