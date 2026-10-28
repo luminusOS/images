@@ -317,6 +317,7 @@ RUN set -eux; \
     systemctl is-enabled systemd-oomd.service && \
     grep -qx 'ManagedOOMMemoryPressure=kill' /usr/lib/systemd/system/system.slice.d/10-oomd-per-slice-defaults.conf && \
     grep -qx 'ManagedOOMMemoryPressure=kill' /usr/lib/systemd/user/slice.d/10-oomd-per-slice-defaults.conf && \
+    grep -qx 'ManagedOOMSwap=kill' /usr/lib/systemd/user/app.slice.d/20-luminusos-oomd-swap.conf && \
     test ! -e /usr/lib/systemd/system/luminusos-swapfile.service && \
     test ! -e /usr/libexec/luminusos-swapfile.sh && \
     grep -qx 'swap_mode=zswap+swapfile' /usr/share/elastic-swap/swap-default.conf && \

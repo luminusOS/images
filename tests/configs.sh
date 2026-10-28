@@ -148,6 +148,9 @@ expect "the interim fixed swap file is removed on boot" \
 expect "memory-pressure kill policy ships with systemd-oomd" \
   sh -c 'grep -q "^      systemd-oomd-defaults \\\\$" "$1/editions/workstation/Containerfile" && grep -q "ManagedOOMMemoryPressure=kill" "$1/editions/workstation/Containerfile"' \
   _ "${ROOT}"
+expect "oomd kills the biggest swap user among the applications only" \
+  sh -c 'f="$1/usr/lib/systemd/user/app.slice.d/20-luminusos-oomd-swap.conf"; grep -qx "ManagedOOMSwap=kill" "$f" && ! ls "$1/usr/lib/systemd/user/session.slice.d" "$1/usr/lib/systemd/user/slice.d" 2>/dev/null | grep -q oomd-swap' \
+  _ "${SYSTEM_FILES}"
 expect "systemd-oomd is enabled by the build" \
   grep -qx 'systemctl enable systemd-oomd.service' "${ROOT}/editions/workstation/build.sh"
 expect "elastic-swap digest reaches every workstation build" \
