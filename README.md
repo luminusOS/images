@@ -69,7 +69,9 @@ bootc switch ghcr.io/luminusos/luminusos-workstation:testing
 | `auto-testing` | Daily, or manual | Builds, signs and pushes testing containers (no ISO/qcow2) and publishes a pre-release with generated notes, only when the Fedora base digest changed |
 | `publish` | Manual | `testing`: builds, pushes, packages and boot-tests ISO/qcow2, publishes a pre-release. `stable`: promotes an existing testing build, repackages, boot-tests, publishes a release |
 
-ISO and qcow2 downloads are hosted on [SourceForge](https://sourceforge.net/projects/luminusos/files/) (mirrored worldwide); GitHub Releases carry the notes with direct links and a SHA256 table per edition.
+ISO and qcow2 downloads are hosted at `download.luminusos.org` on Cloudflare R2. Each channel retains its latest published artifact release; previous R2 versions are removed after the new files and metadata are published. SourceForge remains a backup, and GitHub Releases carry download links and SHA256 checksums. Older GitHub release links to R2 expire when that channel is updated.
+
+The publish workflow requires GitHub Actions secrets `R2_ACCESS_KEY_ID` and `R2_SECRET_ACCESS_KEY` for an R2 API token with object read and write access to the `luminus-downloads` bucket. The scheduled container-only releases do not change downloadable artifacts.
 
 ## Documentation
 

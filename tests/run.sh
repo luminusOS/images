@@ -14,6 +14,7 @@ source "${ROOT}/tests/scripts.sh"
 source "${ROOT}/tests/configs.sh"
 # shellcheck disable=SC1091
 source "${ROOT}/tests/contracts.sh"
+expect "R2 publication retains only the latest release per channel" bash "${ROOT}/tests/r2-publish.sh"
 
 echo
 if [ "${fails}" -gt 0 ]; then

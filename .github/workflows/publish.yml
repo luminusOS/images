@@ -230,19 +230,17 @@ jobs:
               printf "Base: \`%s\`\n" "quay.io/fedora/fedora-bootc:${{ needs.containers.outputs.fedora_version }}@${{ needs.containers.outputs.fedora_bootc_digest }}"
             fi
             echo
-            echo "### Downloads (mirrored worldwide by SourceForge)"
+            echo "### Downloads (Cloudflare R2; SourceForge backup)"
             echo
             echo "| File | Size | SHA256 |"
             echo "| --- | --- | --- |"
             for f in luminusos-workstation-*; do
               size="$(du -h "$f" | cut -f1)"
               sha="$(sha256sum "$f" | cut -d' ' -f1)"
-              echo "| [${f}](https://sourceforge.net/projects/luminusos/files/${{ needs.containers.outputs.version_tag }}/${f}/download) | ${size} | \`${sha}\` |"
+              echo "| [${f}](https://download.luminusos.org/${{ inputs.channel }}/${{ needs.containers.outputs.version_tag }}/${f}) | ${size} | \`${sha}\` |"
             done
           } > notes.md
 
-      # Full ISO/qcow2 go to SourceForge FRS (mirrored worldwide, no GitHub
-      # 2 GiB asset cap); the GitHub release carries notes only.
       - name: Upload artifacts to SourceForge
         env:
           SF_USER: ${{ secrets.SF_USER }}
@@ -255,6 +253,18 @@ jobs:
           ssh-keyscan frs.sourceforge.net >> ~/.ssh/known_hosts 2>/dev/null
           dest="${SF_USER}@frs.sourceforge.net:/home/frs/project/luminusos/${{ needs.containers.outputs.version_tag }}/"
           rsync -avP --rsh="ssh -i ~/.ssh/id_sourceforge" dist/ "${dest}"
+
+      - name: Publish and prune R2 downloads
+        env:
+          AWS_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
+          AWS_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
+          AWS_REQUEST_CHECKSUM_CALCULATION: when_required
+          AWS_RESPONSE_CHECKSUM_VALIDATION: when_required
+          R2_BUCKET: luminus-downloads
+          R2_ENDPOINT: https://89e6fc75aed6d04cd84a0c7d11a5594e.r2.cloudflarestorage.com
+          CHANNEL: ${{ inputs.channel }}
+          VERSION_TAG: ${{ needs.containers.outputs.version_tag }}
+        run: bash .github/scripts/publish-r2.sh "$CHANNEL" "$VERSION_TAG" dist
 
       - name: Create GitHub release
         env:
