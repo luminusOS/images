@@ -23,7 +23,12 @@ aws_args=(--endpoint-url "$R2_ENDPOINT" --region auto)
 destination="s3://${R2_BUCKET}/${channel}/${version}"
 for format in iso qcow2; do
   aws s3 cp "$dist/$base.$format" "$destination/$base.$format" "${aws_args[@]}" --no-progress --content-type application/octet-stream
-  curl --fail --silent --show-error --head "https://download.luminusos.org/${channel}/${version}/${base}.${format}" >/dev/null
+  expected="$(sha256sum "$dist/$base.$format" | cut -d' ' -f1)"
+  actual="$(curl --fail --silent --show-error "https://download.luminusos.org/${channel}/${version}/${base}.${format}" | sha256sum | cut -d' ' -f1)"
+  if [[ "$actual" != "$expected" ]]; then
+    echo "Public download checksum mismatch: $base.$format" >&2
+    exit 1
+  fi
 done
 
 manifest="$(mktemp)"
