@@ -18,6 +18,8 @@ expect_contains "core stamp includes shared build helpers" shared/scripts/rpmdb-
 
 expect "publish workflow consumes reusable outputs" \
   sh -c '! grep -q "needs\.version" "$1"' _ "${ROOT}/.github/workflows/publish.yml"
+expect "SourceForge SSH host key is checked against the published fingerprint" \
+  grep -Fq 'SHA256:209BDmH3jsRyO9UeGPPgLWPSegKmYCBIya0nR/AWWCY' "${ROOT}/.github/workflows/publish.yml"
 expect "automatic builds call the reusable workflow" \
   grep -Fq 'uses: ./.github/workflows/containers.yml' \
   "${ROOT}/.github/workflows/build-containers.yml"

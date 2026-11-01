@@ -39,7 +39,17 @@ case "${args[1]}" in
 esac
 EOF
 chmod +x "$tmp/bin/aws"
-printf '#!/usr/bin/env bash\nexit 0\n' >"$tmp/bin/curl"
+cat >"$tmp/bin/curl" <<'EOF'
+#!/usr/bin/env bash
+set -euo pipefail
+url="${!#}"
+if [[ "${FAIL_DOWNLOAD:-0}" == 1 ]]; then exit 22; fi
+if [[ "${CORRUPT_QCOW:-0}" == 1 && "$url" == *.qcow2 ]]; then
+  printf corrupt
+else
+  cat "$STORE/${url#https://download.luminusos.org/}"
+fi
+EOF
 chmod +x "$tmp/bin/curl"
 PATH="$tmp/bin:$PATH" STORE="$tmp/store" R2_BUCKET=bucket R2_ENDPOINT=https://example.invalid \
   bash "$root/.github/scripts/publish-r2.sh" testing testing-45.20261031 "$tmp/dist"
@@ -58,6 +68,16 @@ PY
 mkdir -p "$tmp/store/testing/testing-45.20261030"
 printf old >"$tmp/store/testing/testing-45.20261030/old.iso"
 if PATH="$tmp/bin:$PATH" STORE="$tmp/store" R2_BUCKET=bucket R2_ENDPOINT=https://example.invalid FAIL_QCOW=1 \
+  bash "$root/.github/scripts/publish-r2.sh" testing testing-45.20261031 "$tmp/dist"; then
+  exit 1
+fi
+test -f "$tmp/store/testing/testing-45.20261030/old.iso"
+if PATH="$tmp/bin:$PATH" STORE="$tmp/store" R2_BUCKET=bucket R2_ENDPOINT=https://example.invalid FAIL_DOWNLOAD=1 \
+  bash "$root/.github/scripts/publish-r2.sh" testing testing-45.20261031 "$tmp/dist"; then
+  exit 1
+fi
+test -f "$tmp/store/testing/testing-45.20261030/old.iso"
+if PATH="$tmp/bin:$PATH" STORE="$tmp/store" R2_BUCKET=bucket R2_ENDPOINT=https://example.invalid CORRUPT_QCOW=1 \
   bash "$root/.github/scripts/publish-r2.sh" testing testing-45.20261031 "$tmp/dist"; then
   exit 1
 fi
