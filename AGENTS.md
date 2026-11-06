@@ -24,6 +24,8 @@ Do not add other edition scaffolding unless the package set, target devices, ins
 
 Use `QEMU_RESET_DISK=1 just qemu iso` when the installer test needs a fresh disk.
 
+`QEMU_TPM=1` and `QEMU_SECURE_BOOT=1` independently enable optional local VM features; neither is required by Sirius. They require swtpm or enrolled Secure Boot firmware respectively. Keep the same disk path to preserve per-VM TPM/NVRAM state, and do not reset NVRAM with these options. Requested features must fail explicitly when prerequisites are unavailable. Verify security state inside the guest rather than inferring it from flags.
+
 ## Script Conventions
 
 - Repository-owned automation uses Python scripts with `.py` extensions and explicit `python3` entrypoints.

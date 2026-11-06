@@ -24,4 +24,4 @@ install:
 # Boot the installed QEMU test disk.
 [no-cd]
 run:
-    QEMU_RESET_NVRAM="${QEMU_RESET_NVRAM:-1}" QEMU_DISK_PATH=".test/install-disk.qcow2" python3 ./tools/qemu.py disk
+    if [ "${QEMU_TPM:-0}" = 1 ] || [ "${QEMU_SECURE_BOOT:-0}" = 1 ]; then default_reset=0; else default_reset=1; fi; QEMU_RESET_NVRAM="${QEMU_RESET_NVRAM:-$default_reset}" QEMU_DISK_PATH=".test/install-disk.qcow2" python3 ./tools/qemu.py disk

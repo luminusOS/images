@@ -31,12 +31,12 @@ Builds squash the local core and workstation payload images by default so OCI wh
 Run the same checks CI runs on `main` before pushing:
 
 ```bash
-just check   # verifies bash, jq, just, Python/PyYAML, shellcheck and shfmt
-just lint    # shellcheck over every script
-just test    # tests/run.sh: script unit tests + config validation
+just check   # verifies jq, just, Python/PyYAML and the pinned Ruff version
+just lint    # Ruff lint and formatting checks
+just test    # Python unittest discovery and config validation
 ```
 
-`tests/run.sh` tests the `shared/scripts/` helpers and validates the config files shipped in the images: TOML, JSON, systemd units, repart definitions, YAML, overlays, version defaults, and artifact/QEMU resolution. CI also lints the workflows with actionlint, and `build-containers` build-checks `core` and `workstation`. The Publish workflow boots the finished qcow2 and ISO under QEMU/KVM, then `.github/scripts/boot-test.sh` checks that a graphical screen appeared.
+The Python tests under `tests/` exercise the automation and validate the config files shipped in the images: TOML, JSON, systemd units, repart definitions, YAML, overlays, version defaults, and artifact/QEMU resolution. CI also lints the workflows with actionlint, and `build-containers` build-checks `core` and `workstation`. Packaging validation uses `.github/scripts/boot-test.py` to check for a graphical screen under QEMU/KVM; it does not replace installation and first-boot evidence.
 
 ## Packaging
 
@@ -71,6 +71,23 @@ Install directly to a QEMU disk and boot it:
 just qemu install
 just qemu run
 ```
+
+### Optional TPM 2.0 and Secure Boot
+
+The local QEMU launcher accepts independent `QEMU_TPM=0|1` and `QEMU_SECURE_BOOT=0|1` options, both disabled by default. They do not become installation requirements in Sirius.
+
+```bash
+QEMU_TPM=1 just qemu iso
+QEMU_SECURE_BOOT=1 just qemu iso
+QEMU_TPM=1 QEMU_SECURE_BOOT=1 just qemu iso
+QEMU_TPM=1 QEMU_SECURE_BOOT=1 just qemu run
+```
+
+TPM emulation requires `swtpm` with TPM 2.0 support on the machine running QEMU. Secure Boot requires UEFI and a QEMU firmware descriptor advertising a raw q35 firmware pair with `secure-boot`, `enrolled-keys`, and `requires-smm` features, normally supplied by `edk2-ovmf` or `ovmf`. Missing requested capabilities fail explicitly; the launcher does not silently fall back to an unsecured profile. `QEMU_DRY_RUN=1` prints arguments without creating VM state or starting processes, but still checks requested prerequisites.
+
+TPM and firmware state are private and persistent under `.test/qemu-vms/`, keyed by the canonical disk path. ISO installation and installed boot must use the same disk path to retain their identity. With either option enabled, `just qemu run` preserves NVRAM; nonzero `QEMU_RESET_NVRAM` values and `QEMU_OVMF_VARS` overrides are rejected. Resetting the install disk does not clear TPM or firmware state. Do not delete this state if it protects data or is needed to reproduce a test.
+
+`QEMU_SECURE_BOOT=1` selects enrolled firmware; it does not prove the current contents of persistent NVRAM still enable Secure Boot. Confirm the state inside the guest, for example with `mokutil --sb-state`, and inspect SecureBoot/SetupMode and kernel logs. Confirm TPM version 2.0 and a successful capability query when guest tools are available. Emulated TPM and Secure Boot tests do not establish EAC Linux v2 compliance, measured boot, or attestation accepted by Epic.
 
 ## Automation and Verification
 

@@ -14,6 +14,15 @@ from qemu_common import (
     resolve_artifact,
     resolve_ovmf,
 )
+from qemu_security import (
+    enabled,
+    locked_state,
+    require_swtpm,
+    run,
+    secure_firmware,
+    state_path,
+    tpm_arguments,
+)
 
 ROOT = Path(__file__).resolve().parents[1]
 
@@ -25,14 +34,51 @@ def main():
     test_dir = ROOT / ".test"
     if test_dir.is_symlink():
         raise ValueError("refusing to use symlinked .test directory")
-    test_dir.mkdir(exist_ok=True)
     env = load_environment(ROOT, os.environ)
     dry = env.get("QEMU_DRY_RUN", "0") == "1"
+    tpm = enabled(env, "QEMU_TPM")
+    secure = enabled(env, "QEMU_SECURE_BOOT")
+    if secure and env.get("QEMU_BOOT", "uefi") != "uefi":
+        raise ValueError("Secure Boot requires QEMU_BOOT=uefi")
+    if tpm:
+        require_swtpm(env)
+    if secure:
+        secure_firmware(env)
+    if not dry:
+        test_dir.mkdir(exist_ok=True)
+    if args.mode == "iso":
+        disk = Path(
+            env.get("QEMU_INSTALL_DISK_PATH") or test_dir / "install-disk.qcow2"
+        )
+    else:
+        disk = resolve_artifact(
+            ROOT,
+            env.get("QEMU_DISK_PATH"),
+            test_dir / "last-qcow2",
+            "*.qcow2",
+            test_dir / "disk.qcow2",
+        )
+    lock_state = state_path(test_dir, disk)
+    state = lock_state if tpm or secure else None
+    if state:
+        if env.get("QEMU_OVMF_VARS"):
+            raise ValueError(
+                "QEMU_OVMF_VARS cannot be used with TPM or Secure Boot; VM state is managed per disk"
+            )
+        if env.get("QEMU_RESET_NVRAM", "0") != "0":
+            raise ValueError("QEMU_RESET_NVRAM cannot be used with TPM or Secure Boot")
+    if not dry:
+        with locked_state(lock_state):
+            return launch(args, env, test_dir, dry, tpm, secure, state, disk)
+    return launch(args, env, test_dir, dry, tpm, secure, state, disk)
+
+
+def launch(args, env, test_dir, dry, tpm, secure, state, disk):
     display = env.get("QEMU_DISPLAY") or "auto"
     command = [
         env.get("QEMU_BINARY") or "qemu-kvm",
         "-machine",
-        "type=q35,accel=kvm",
+        "type=q35,accel=kvm,smm=on" if secure else "type=q35,accel=kvm",
         "-cpu",
         "host",
         "-m",
@@ -46,6 +92,8 @@ def main():
         "-device",
         "virtio-net-pci,netdev=net0",
     ]
+    if secure:
+        command.extend(["-global", "driver=cfi.pflash01,property=secure,value=on"])
     bus = env.get("QEMU_DISK_BUS") or "ahci"
     if bus not in ("ahci", "sata", "virtio"):
         raise ValueError(f"Unknown QEMU_DISK_BUS: {bus}")
@@ -69,13 +117,7 @@ def main():
             )
 
     if args.mode == "disk":
-        path = resolve_artifact(
-            ROOT,
-            env.get("QEMU_DISK_PATH"),
-            test_dir / "last-qcow2",
-            "*.qcow2",
-            test_dir / "disk.qcow2",
-        )
+        path = disk
         print(f"Booting disk: {path}", flush=True)
         add_disk(path, "system_disk", 1)
         command.extend(["-boot", "order=c,menu=on"])
@@ -85,9 +127,6 @@ def main():
         )
         print(f"Booting ISO: {path}", flush=True)
         command.extend(["-cdrom", str(path), "-boot", "once=d,order=c,menu=on"])
-        disk = Path(
-            env.get("QEMU_INSTALL_DISK_PATH") or test_dir / "install-disk.qcow2"
-        )
         if disk.is_symlink() and not disk.is_file():
             raise ValueError("refusing broken install disk symlink")
         disk_marker = test_dir / ".install-disk-owned"
@@ -124,8 +163,12 @@ def main():
                 record_owned_file(disk, disk_marker, "luminusos-install-disk")
         add_disk(disk, "install_disk", 2)
     if env.get("QEMU_BOOT", "uefi") == "uefi":
-        code, template = resolve_ovmf(env)
-        variables = Path(env.get("QEMU_OVMF_VARS") or test_dir / "OVMF_VARS.fd")
+        code, template = secure_firmware(env) if secure else resolve_ovmf(env)
+        variables = (
+            state / ("OVMF_VARS.secure.fd" if secure else "OVMF_VARS.fd")
+            if state
+            else Path(env.get("QEMU_OVMF_VARS") or test_dir / "OVMF_VARS.fd")
+        )
         if variables.is_symlink() and not variables.is_file():
             raise ValueError("refusing broken NVRAM symlink")
         vars_marker = test_dir / ".ovmf-vars-owned"
@@ -140,8 +183,15 @@ def main():
             ):
                 raise ValueError("refusing to reset unowned NVRAM")
             variables.unlink()
+        if state and variables.is_symlink():
+            raise ValueError("refusing symlinked VM NVRAM")
         if not variables.is_file() and not dry:
-            shutil.copyfile(template, variables)
+            if state:
+                from qemu_security import copy_vars
+
+                copy_vars(template, variables)
+            else:
+                shutil.copyfile(template, variables)
             if (
                 variables.resolve().parent == test_dir.resolve()
                 and variables.name == "OVMF_VARS.fd"
@@ -173,14 +223,16 @@ def main():
     if env.get("QEMU_NO_REBOOT", "0") != "0":
         command.append("-no-reboot")
     if dry:
+        if tpm:
+            command.extend(tpm_arguments("<private-swtpm-socket>"))
         print(shlex.join(command))
     else:
-        os.execvpe(command[0], command, env)
+        sys.exit(run(command, env, state, tpm))
 
 
 if __name__ == "__main__":
     try:
         main()
-    except (OSError, ValueError) as error:
+    except (OSError, ValueError, InterruptedError) as error:
         print(f"qemu: {error}", file=sys.stderr)
         sys.exit(1)
