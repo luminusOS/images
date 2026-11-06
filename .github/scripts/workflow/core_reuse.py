@@ -74,53 +74,9 @@ def select(ref, fedora, fingerprint, target, force=False):
         return ""
 
 
-def image_id(ref):
-    value = command(
-        ["docker", "image", "inspect", "--format", "{{.Id}}", ref], True
-    ).stdout.strip()
-    if not DIGEST.fullmatch(value):
-        raise ValueError("invalid local image id")
-    return value
-
-
-def save(ref, archive):
-    identity = image_id(ref)
-    command(["docker", "save", "-o", str(archive), ref])
-    with archive.open("rb") as stream:
-        checksum = hashlib.file_digest(stream, "sha256").hexdigest()
-    return identity, checksum
-
-
-def load(ref, archive, checksum, identity):
-    if not re.fullmatch(r"[0-9a-f]{64}", checksum) or not DIGEST.fullmatch(identity):
-        raise ValueError("invalid archive metadata")
-    with archive.open("rb") as stream:
-        if hashlib.file_digest(stream, "sha256").hexdigest() != checksum:
-            raise ValueError("archive checksum mismatch")
-    command(["docker", "load", "-i", str(archive)])
-    if image_id(ref) != identity:
-        raise ValueError("loaded image id mismatch")
-
-
-def export_payload(image, channel, digest):
-    Path(".test").mkdir(exist_ok=True)
-    if channel == "stable":
-        if not DIGEST.fullmatch(digest):
-            raise ValueError("stable installer requires workstation manifest digest")
-        immutable = f"{image.rsplit(':', 1)[0]}@{digest}"
-        command(["docker", "pull", immutable])
-        command(["docker", "tag", immutable, image])
-        source = f"docker://{immutable}"
-    elif channel == "testing":
-        source = f"docker-daemon:{image}"
-    else:
-        raise ValueError("invalid channel")
-    command(["skopeo", "copy", source, "oci:.test/payload.oci:latest"])
-
-
 def main():
     parser = argparse.ArgumentParser()
-    parser.add_argument("action", choices=("hash", "select", "save", "load", "export"))
+    parser.add_argument("action", choices=("hash", "select"))
     args = parser.parse_args()
     env = os.environ
     outputs = {}
@@ -128,7 +84,7 @@ def main():
         outputs["fingerprint"] = inputs_hash(
             ROOT, env["FEDORA_VERSION"], env["BASE_DIGEST"]
         )
-    elif args.action == "select":
+    else:
         digest = select(
             env.get("CORE_REF", ""),
             env["FEDORA_VERSION"],
@@ -137,13 +93,6 @@ def main():
             env.get("FORCE_REBUILD") == "true",
         )
         outputs.update(reused=str(bool(digest)).lower(), digest=digest)
-    elif args.action == "save":
-        identity, checksum = save(env["IMAGE"], Path(env["ARCHIVE"]))
-        outputs.update(image_id=identity, archive_sha256=checksum)
-    elif args.action == "load":
-        load(env["IMAGE"], Path(env["ARCHIVE"]), env["ARCHIVE_SHA256"], env["IMAGE_ID"])
-    else:
-        export_payload(env["IMAGE"], env["CHANNEL"], env.get("WORKSTATION_DIGEST", ""))
     if outputs:
         with Path(env["GITHUB_OUTPUT"]).open("a", encoding="utf-8") as out:
             for key, value in outputs.items():

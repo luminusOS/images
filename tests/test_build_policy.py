@@ -1,3 +1,4 @@
+import hashlib
 import importlib.util
 import json
 import subprocess
@@ -20,6 +21,8 @@ def module(name):
 
 meta = module("build_metadata")
 reuse = module("core_reuse")
+archive_tools = module("image_archive")
+installer_payload = module("installer_payload")
 BASE = "sha256:" + "a" * 64
 CONFIG = {
     "UPDATE_CHANNEL": "testing",
@@ -196,8 +199,11 @@ class ReuseTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             archive = Path(tmp) / "image.tar"
             archive.write_bytes(b"tampered")
-            with patch.object(reuse, "command") as cmd, self.assertRaises(ValueError):
-                reuse.load("local:core", archive, "a" * 64, BASE)
+            with (
+                patch.object(archive_tools, "command") as cmd,
+                self.assertRaises(ValueError),
+            ):
+                archive_tools.load("local:core", archive, "a" * 64, BASE)
             cmd.assert_not_called()
 
     def test_forced_and_absent_refs_never_reuse(self):
@@ -223,31 +229,134 @@ class ReuseTests(unittest.TestCase):
             archive.write_bytes(b"core archive")
             checksum = hashlib.sha256(archive.read_bytes()).hexdigest()
             with (
-                patch.object(reuse, "command") as command,
-                patch.object(reuse, "image_id", return_value=BASE),
+                patch.object(archive_tools, "command") as command,
+                patch.object(archive_tools, "image_id", return_value=BASE),
             ):
-                reuse.load("local:core", archive, checksum, BASE)
+                archive_tools.load("local:core", archive, checksum, BASE)
             command.assert_called_once_with(["docker", "load", "-i", str(archive)])
             with (
-                patch.object(reuse, "command"),
-                patch.object(reuse, "image_id", return_value="sha256:" + "b" * 64),
+                patch.object(archive_tools, "command"),
+                patch.object(
+                    archive_tools, "image_id", return_value="sha256:" + "b" * 64
+                ),
                 self.assertRaisesRegex(ValueError, "image id mismatch"),
             ):
-                reuse.load("local:core", archive, checksum, BASE)
+                archive_tools.load("local:core", archive, checksum, BASE)
 
     def test_stable_installer_requires_digest(self):
         with (
-            patch.object(reuse, "command") as cmd,
-            patch.object(reuse.Path, "mkdir"),
+            patch.object(installer_payload, "command") as cmd,
+            patch.object(installer_payload.Path, "mkdir"),
         ):
             with self.assertRaises(ValueError):
-                reuse.export_payload(
+                installer_payload.export_payload(
                     "ghcr.io/luminusos/luminusos-workstation:testing-45",
                     "stable",
                     "45.20261105",
                 )
             cmd.assert_not_called()
-            reuse.export_payload(
+            installer_payload.export_payload(
                 "ghcr.io/luminusos/luminusos-workstation:testing-45", "stable", BASE
             )
             self.assertIn("@" + BASE, cmd.call_args_list[0].args[0][-1])
+
+    def test_archive_save_returns_image_identity_and_checksum(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            archive = Path(tmp) / "image.tar"
+            contents = b"saved image"
+
+            def save_command(args):
+                archive.write_bytes(contents)
+                return subprocess.CompletedProcess(args, 0)
+
+            with (
+                patch.object(archive_tools, "image_id", return_value=BASE),
+                patch.object(
+                    archive_tools, "command", side_effect=save_command
+                ) as command,
+            ):
+                identity, checksum = archive_tools.save("local:core", archive)
+
+            self.assertEqual(identity, BASE)
+            self.assertEqual(checksum, hashlib.sha256(contents).hexdigest())
+            command.assert_called_once_with(
+                ["docker", "save", "-o", str(archive), "local:core"]
+            )
+
+    def test_archive_load_rejects_invalid_metadata_without_loading(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            archive = Path(tmp) / "image.tar"
+            archive.write_bytes(b"archive")
+            for checksum, identity in (("bad", BASE), ("a" * 64, "bad")):
+                with (
+                    self.subTest(checksum=checksum, identity=identity),
+                    patch.object(archive_tools, "command") as command,
+                    self.assertRaises(ValueError),
+                ):
+                    archive_tools.load("local:core", archive, checksum, identity)
+                command.assert_not_called()
+
+    def test_archive_load_propagates_docker_load_failure(self):
+        import hashlib
+
+        with tempfile.TemporaryDirectory() as tmp:
+            archive = Path(tmp) / "image.tar"
+            archive.write_bytes(b"archive")
+            checksum = hashlib.sha256(archive.read_bytes()).hexdigest()
+            failure = subprocess.CalledProcessError(1, ["docker", "load"])
+            with (
+                patch.object(archive_tools, "command", side_effect=failure) as command,
+                self.assertRaises(subprocess.CalledProcessError),
+            ):
+                archive_tools.load("local:core", archive, checksum, BASE)
+            command.assert_called_once_with(["docker", "load", "-i", str(archive)])
+
+    def test_testing_payload_uses_local_image_without_pull(self):
+        image = "ghcr.io/luminusos/luminusos-workstation:testing-45"
+        with (
+            patch.object(installer_payload, "command") as command,
+            patch.object(installer_payload.Path, "mkdir"),
+        ):
+            installer_payload.export_payload(image, "testing", "local-image-id")
+        command.assert_called_once_with(
+            ["skopeo", "copy", "docker-daemon:" + image, "oci:.test/payload.oci:latest"]
+        )
+
+    def test_stable_payload_pulls_immutable_digest_reference(self):
+        image = "ghcr.io/luminusos/luminusos-workstation:testing-45"
+        with (
+            patch.object(installer_payload, "command") as command,
+            patch.object(installer_payload.Path, "mkdir"),
+        ):
+            installer_payload.export_payload(image, "stable", BASE)
+        self.assertEqual(
+            [call.args[0] for call in command.call_args_list],
+            [
+                ["docker", "pull", "ghcr.io/luminusos/luminusos-workstation@" + BASE],
+                [
+                    "docker",
+                    "tag",
+                    "ghcr.io/luminusos/luminusos-workstation@" + BASE,
+                    image,
+                ],
+                [
+                    "skopeo",
+                    "copy",
+                    "docker://ghcr.io/luminusos/luminusos-workstation@" + BASE,
+                    "oci:.test/payload.oci:latest",
+                ],
+            ],
+        )
+
+    def test_payload_rejects_unknown_channel_and_invalid_stable_digest(self):
+        with (
+            patch.object(installer_payload, "command") as command,
+            patch.object(installer_payload.Path, "mkdir"),
+        ):
+            with self.assertRaises(ValueError):
+                installer_payload.export_payload("local:workstation", "preview", BASE)
+            with self.assertRaises(ValueError):
+                installer_payload.export_payload(
+                    "local:workstation", "stable", "not-a-digest"
+                )
+        command.assert_not_called()

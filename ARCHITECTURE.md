@@ -554,6 +554,20 @@ flowchart TD
     Workstation --> QCOW2Builder --> QCOW2 --> LastQCOW2
 ```
 
+## Container CI Responsibilities
+
+`.github/workflows/build-containers.yml` is the read-only build validation entry point. `containers.yml` resolves metadata and explicitly orchestrates core → workstation → installer. The installer is a live root for workstation, not a separate edition. Build jobs retain their existing names and dependency edges so required checks remain stable.
+
+The workflow helpers separate three responsibilities:
+
+- `core_reuse.py hash|select` fingerprints core inputs and selects a signed, compatible core image when reuse is requested.
+- `image_archive.py save|load` transports any built image between jobs, verifying the archive SHA-256 before loading and the local image ID afterward. A local image ID is not a registry manifest digest.
+- `installer_payload.py export` prepares the workstation OCI payload: testing uses the locally built image; stable uses the approved workstation manifest digest.
+
+New editions based on core or workstation should declare their actual parent through explicit job dependencies and verified archive handoffs. Keep edition-specific Containerfiles and build arguments explicit; do not route unrelated edition operations through core reuse or installer helpers. No additional edition definitions or generic dependency engine are needed for the current two editions.
+
+`publish.yml` owns publication, signing and promotion, not the read-only build workflow. Stable promotion preserves the approved installed payload rather than rebuilding it. The quality, automatic testing and protected installation-validation workflows retain their existing triggers, permissions and evidence gates.
+
 ## Local QEMU Testing
 
 The repository supports two local VM paths:

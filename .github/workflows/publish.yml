@@ -192,21 +192,21 @@ jobs:
           ARCHIVE: core-image.tar
           ARCHIVE_SHA256: ${{ needs.containers.outputs.core_archive_sha256 }}
           IMAGE_ID: ${{ needs.containers.outputs.core_image_id }}
-        run: python3 .github/scripts/workflow/core_reuse.py load
+        run: python3 .github/scripts/workflow/image_archive.py load
       - name: Load verified workstation archive
         env:
           IMAGE: ${{ needs.containers.outputs.workstation_image }}
           ARCHIVE: workstation-image.tar
           ARCHIVE_SHA256: ${{ needs.containers.outputs.workstation_archive_sha256 }}
           IMAGE_ID: ${{ needs.containers.outputs.workstation_image_id }}
-        run: python3 .github/scripts/workflow/core_reuse.py load
+        run: python3 .github/scripts/workflow/image_archive.py load
       - name: Load verified installer archive
         env:
           IMAGE: ${{ needs.containers.outputs.workstation_iso_image }}
           ARCHIVE: installer-image.tar
           ARCHIVE_SHA256: ${{ needs.containers.outputs.installer_archive_sha256 }}
           IMAGE_ID: ${{ needs.containers.outputs.installer_image_id }}
-        run: python3 .github/scripts/workflow/core_reuse.py load
+        run: python3 .github/scripts/workflow/image_archive.py load
       - uses: docker/login-action@81c6f93d4bc991e510b342a00b419b3bb4efc5c6 # v4.7.0
         with:
           registry: ghcr.io
@@ -291,7 +291,7 @@ jobs:
           ARCHIVE: installer-image.tar
           ARCHIVE_SHA256: ${{ needs.stable-installer.outputs.installer_archive_sha256 }}
           IMAGE_ID: ${{ needs.stable-installer.outputs.installer_image_id }}
-        run: python3 .github/scripts/workflow/core_reuse.py load
+        run: python3 .github/scripts/workflow/image_archive.py load
       - uses: docker/login-action@81c6f93d4bc991e510b342a00b419b3bb4efc5c6 # v4.7.0
         with:
           registry: ghcr.io
