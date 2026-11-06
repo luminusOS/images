@@ -1,4 +1,4 @@
-name: Reusable Container Build
+name: Image Build Orchestration
 
 on:
   workflow_call:
@@ -42,6 +42,7 @@ on:
 
 jobs:
   metadata:
+    name: Resolve build metadata
     runs-on: ubuntu-latest
     permissions: {contents: read}
     outputs:
@@ -81,6 +82,7 @@ jobs:
         run: python3 .github/scripts/workflow/build_metadata.py
 
   core:
+    name: Build core image
     if: inputs.channel != 'stable'
     needs: [metadata]
     runs-on: ubuntu-latest
@@ -152,6 +154,7 @@ jobs:
         with: {name: core-image, path: core-image.tar, compression-level: 0, if-no-files-found: error}
 
   workstation:
+    name: Build workstation image
     if: inputs.channel != 'stable'
     needs: [metadata, core]
     runs-on: ubuntu-latest
@@ -212,63 +215,22 @@ jobs:
         with: {name: workstation-image, path: workstation-image.tar, compression-level: 0, if-no-files-found: error}
 
   installer:
+    name: Build installer image
     if: always() && inputs.build_installer && needs.metadata.result == 'success' && (inputs.channel == 'stable' || needs.workstation.result == 'success')
     needs: [metadata, workstation]
-    runs-on: ubuntu-latest
-    timeout-minutes: 180
     permissions: {contents: read, packages: read}
-    outputs:
-      image_id: '${{ steps.save.outputs.image_id }}'
-      archive_sha256: '${{ steps.save.outputs.archive_sha256 }}'
-    steps:
-      - uses: docker/setup-docker-action@e43656e248c0bd0647d3f5c195d116aacf6fcaf4 # v4.7.0
-        with:
-          daemon-config: '{"features":{"containerd-snapshotter":true}}'
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
-        if: inputs.channel == 'testing'
-        with: {name: workstation-image}
-      - name: Load workstation image
-        if: inputs.channel == 'testing'
-        env:
-          IMAGE: '${{ needs.metadata.outputs.workstation_image }}'
-          ARCHIVE: workstation-image.tar
-          ARCHIVE_SHA256: '${{ needs.workstation.outputs.archive_sha256 }}'
-          IMAGE_ID: '${{ needs.workstation.outputs.image_id }}'
-        run: python3 .github/scripts/workflow/image_archive.py load
-      - name: Install skopeo
-        run: sudo apt-get update && sudo apt-get install -y skopeo
-      - name: Export installer payload
-        env:
-          IMAGE: '${{ needs.metadata.outputs.workstation_image }}'
-          CHANNEL: '${{ inputs.channel }}'
-          WORKSTATION_DIGEST: '${{ inputs.workstation_digest }}'
-        run: python3 .github/scripts/workflow/installer_payload.py export
-      - uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
-        with: {driver: docker}
-      - name: Build workstation ISO live root
-        uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
-        with:
-          context: .
-          file: editions/workstation/Containerfile.installer
-          load: true
-          push: false
-          cache-from: type=gha,scope=installer-${{ needs.metadata.outputs.fedora_version }}-${{ runner.arch }}
-          cache-to: type=gha,scope=installer-${{ needs.metadata.outputs.fedora_version }}-${{ runner.arch }},mode=max
-          build-args: |
-            fedora_version=${{ needs.metadata.outputs.fedora_version }}
-            sirius_version=${{ needs.metadata.outputs.sirius_version }}
-            sirius_rpm_version=${{ needs.metadata.outputs.sirius_rpm_version }}
-            sirius_sha256=${{ needs.metadata.outputs.sirius_sha256 }}
-            image_version=${{ needs.metadata.outputs.build_version }}
-            workstation_image=${{ needs.metadata.outputs.workstation_image }}
-            workstation_target_image=ghcr.io/${{ needs.metadata.outputs.image_namespace }}/luminusos-workstation:${{ needs.metadata.outputs.target_tag }}
-          tags: '${{ needs.metadata.outputs.workstation_iso_image }}'
-      - name: Save installer image archive
-        id: save
-        env:
-          IMAGE: '${{ needs.metadata.outputs.workstation_iso_image }}'
-          ARCHIVE: installer-image.tar
-        run: python3 .github/scripts/workflow/image_archive.py save
-      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
-        with: {name: installer-image, path: installer-image.tar, compression-level: 0, if-no-files-found: error}
+    uses: ./.github/workflows/installer.yml
+    with:
+      channel: ${{ inputs.channel }}
+      fedora_version: ${{ needs.metadata.outputs.fedora_version }}
+      sirius_version: ${{ needs.metadata.outputs.sirius_version }}
+      sirius_rpm_version: ${{ needs.metadata.outputs.sirius_rpm_version }}
+      sirius_sha256: ${{ needs.metadata.outputs.sirius_sha256 }}
+      build_version: ${{ needs.metadata.outputs.build_version }}
+      workstation_image: ${{ needs.metadata.outputs.workstation_image }}
+      image_namespace: ${{ needs.metadata.outputs.image_namespace }}
+      target_tag: ${{ needs.metadata.outputs.target_tag }}
+      workstation_iso_image: ${{ needs.metadata.outputs.workstation_iso_image }}
+      workstation_digest: ${{ inputs.workstation_digest }}
+      workstation_archive_sha256: ${{ needs.workstation.outputs.archive_sha256 }}
+      workstation_image_id: ${{ needs.workstation.outputs.image_id }}

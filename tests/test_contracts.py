@@ -111,7 +111,6 @@ class RepositoryContracts(unittest.TestCase):
 
     def test_workflow_security_and_contracts(self):
         publish = read(".github/workflows/publish.yml")
-        containers = read(".github/workflows/containers.yml")
         metadata = read(".github/scripts/workflow/build_metadata.py")
         publisher = read(".github/scripts/workflow/release_publish.py")
         auto = read(".github/workflows/auto-testing.yml")
@@ -142,7 +141,8 @@ class RepositoryContracts(unittest.TestCase):
         self.assertIn('env.get("PUBLISH") == "true"', metadata)
         self.assertIn("reusable build is read-only", metadata)
         self.assertIn(
-            "luminusos-workstation:${{ needs.metadata.outputs.target_tag }}", containers
+            "workstation_target_image=ghcr.io/${{ inputs.image_namespace }}/luminusos-workstation:${{ inputs.target_tag }}",
+            read(".github/workflows/installer.yml"),
         )
         self.assertIn(
             '"cosign", "sign", "--yes", "--key", "env://COSIGN_PRIVATE_KEY"',

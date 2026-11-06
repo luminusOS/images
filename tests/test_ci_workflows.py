@@ -1007,10 +1007,49 @@ class ContainerWorkflowTests(unittest.TestCase):
             )
             self.assertFalse(any("secrets." in str(step) for step in job["steps"]))
         for job in workflow["jobs"].values():
-            for step in job["steps"]:
+            for step in job.get("steps", []):
                 if "docker/build-push-action" in step.get("uses", ""):
                     self.assertEqual(step["with"].get("push"), "false")
                 self.assertNotIn("secrets.", str(step))
+
+    def test_reusable_installer_workflow_is_read_only_and_uses_approved_payload(self):
+        workflow = self.load_workflow("installer.yml")
+        build = workflow["jobs"]["build"]
+        self.assertEqual(build["permissions"], {"contents": "read", "packages": "read"})
+        self.assertEqual(
+            workflow["on"]["workflow_call"]["outputs"]["image_id"]["value"],
+            "${{ jobs.build.outputs.image_id }}",
+        )
+        self.assertEqual(
+            workflow["on"]["workflow_call"]["outputs"]["archive_sha256"]["value"],
+            "${{ jobs.build.outputs.archive_sha256 }}",
+        )
+        steps = build["steps"]
+        load = next(
+            step for step in steps if step.get("name") == "Load workstation image"
+        )
+        export = next(
+            step for step in steps if step.get("name") == "Export installer payload"
+        )
+        self.assertEqual(load["if"], "inputs.channel == 'testing'")
+        self.assertEqual(
+            load["env"]["ARCHIVE_SHA256"], "${{ inputs.workstation_archive_sha256 }}"
+        )
+        self.assertEqual(load["env"]["IMAGE_ID"], "${{ inputs.workstation_image_id }}")
+        self.assertEqual(
+            export["env"]["WORKSTATION_DIGEST"], "${{ inputs.workstation_digest }}"
+        )
+        self.assertLess(steps.index(load), steps.index(export))
+        build_step = next(
+            step
+            for step in steps
+            if step.get("name") == "Build workstation ISO live root"
+        )
+        self.assertEqual(build_step["with"]["push"], "false")
+        self.assertEqual(build_step["with"]["load"], "true")
+        self.assertEqual(
+            build_step["with"]["file"], "editions/workstation/Containerfile.installer"
+        )
 
     def test_publish_false_uses_loaded_docker_archive(self):
         workflow = self.load_workflow("containers.yml")

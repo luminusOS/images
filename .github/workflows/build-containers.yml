@@ -1,4 +1,4 @@
-name: Build Containers
+name: Image Build Validation
 
 on:
   push:
@@ -18,7 +18,7 @@ concurrency:
 
 jobs:
   build-containers:
-    name: Build core and workstation
+    name: Validate image builds
     permissions:
       contents: read
       packages: read
