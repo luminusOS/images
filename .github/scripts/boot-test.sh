@@ -1,8 +1,7 @@
 #!/usr/bin/env bash
 # openQA-style boot smoke test: boots an artifact headless under QEMU
-# (KVM when available), takes periodic screendumps over QMP, and asserts
-# the final screen is a real graphical frame — a blank/black console
-# fails, a rendered GDM/Sirius/Initial Setup screen passes. Screenshots
+# (KVM when available), takes periodic screendumps over QMP, and checks
+# the final screen for a graphical frame and expected text. Screenshots
 # and the serial log are kept as evidence for human review.
 #
 # Usage: boot-test.sh iso|disk <image-path> [outdir]
@@ -101,16 +100,7 @@ done
 colors="$(count_colors "${shot}")"
 echo "Final screendump has ${colors} distinct sampled colors (minimum ${min_colors})"
 
-# Advisory OCR: log what is on screen; never fails the test on its own.
-if command -v tesseract >/dev/null 2>&1; then
-  tesseract "${shot}" "${outdir}/final-screen" 2>/dev/null || true
-  if [ -f "${outdir}/final-screen.txt" ]; then
-    echo "--- OCR of final screen ---"
-    cat "${outdir}/final-screen.txt"
-    grep -iEq 'sirius|luminus|install|setup|welcome' "${outdir}/final-screen.txt" &&
-      echo "OCR: recognized expected installer/setup wording" ||
-      echo "OCR: expected wording not found (advisory only)"
-  fi
-fi
-
 [ "${colors}" -ge "${min_colors}" ]
+tesseract "${shot}" "${outdir}/final-screen" 2>/dev/null
+cat "${outdir}/final-screen.txt"
+bash "${project_dir}/.github/scripts/check-boot-screen.sh" "${mode}" "${outdir}/final-screen.txt"

@@ -6,7 +6,7 @@ set -euo pipefail
 
 KVER=$(kernel-install list --json pretty 2>/dev/null |
   jq -r '.[] | select(.has_kernel == true) | .version' |
-  head -n1)
+  head -n1) || KVER=""
 if [ -z "${KVER}" ]; then
   KVER=$(ls -1 /lib/modules | tail -n1)
 fi

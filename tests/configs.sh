@@ -20,6 +20,13 @@ if python3 -c 'import yaml' >/dev/null 2>&1; then
       python3 -c 'import sys, yaml; yaml.safe_load(open(sys.argv[1], encoding="utf-8"))' "${yaml}"
   done < <(find "${ROOT}" -path "${ROOT}/.git" -prune -o \
     \( -name '*.yml' -o -name '*.yaml' \) -type f -print0)
+  disk_yaml="${SYSTEM_FILES}/usr/lib/image-builder/bootc/disk.yaml"
+  expect "disk layout associates /boot and subvolumes with their filesystems" \
+    python3 "${ROOT}/tests/validate-disk-layout.py" "${disk_yaml}"
+  python3 -c 'import sys, yaml; d=yaml.safe_load(open(sys.argv[1])); p=d["partition_table"]["partitions"]; p[1]["payload"]["type"]="ext4"; p[2]["payload"]["type"]="btrfs"; yaml.safe_dump(d, open(sys.argv[2], "w"))' \
+    "${disk_yaml}" "${TEST_TMP}/invalid-disk.yaml"
+  expect_failure "disk layout rejects btrfs boot even with another ext4 partition" \
+    python3 "${ROOT}/tests/validate-disk-layout.py" "${TEST_TMP}/invalid-disk.yaml"
 else
   skip "PyYAML unavailable; CI performs YAML parsing"
 fi
@@ -97,13 +104,6 @@ expect "repart.d ships exactly three definitions" \
 expect "Sirius root is Btrfs" grep -qx 'Format=btrfs' "${repart_dir}/10-root.conf"
 expect "Sirius /boot is ext4" grep -qx 'Format=ext4' "${repart_dir}/20-boot.conf"
 expect "Sirius ESP is vfat" grep -qx 'Format=vfat' "${repart_dir}/30-esp.conf"
-expect "image-builder /boot is ext4" \
-  awk '/type: "ext4"/ { ext4=1 } ext4 && /mountpoint: "\/boot"/ { found=1 } END { exit !found }' \
-  "${SYSTEM_FILES}/usr/lib/image-builder/bootc/disk.yaml"
-expect "image-builder provides root, home and var Btrfs subvolumes" \
-  awk '/mountpoint: "\/"/ { root=1 } /mountpoint: "\/home"/ { home=1 } /mountpoint: "\/var"/ { var=1 } END { exit !(root && home && var) }' \
-  "${SYSTEM_FILES}/usr/lib/image-builder/bootc/disk.yaml"
-
 expect "Flatpak list is sorted and unique" env LC_ALL=C sort -cu "${ROOT}/shared/flatpaks"
 
 expect "system overlay excludes Sirius configuration" test ! -e "${SYSTEM_FILES}/etc/sirius"
@@ -136,8 +136,9 @@ expect "elastic-swap release digest is pinned" \
   sh -c 'grep -Eq "^ELASTIC_SWAP_VERSION=[0-9]+\\.[0-9]+\\.[0-9]+$" "$1" && grep -Eq "^ELASTIC_SWAP_SHA256=[0-9a-f]{64}$" "$1"' \
   _ "${ROOT}/config/versions.env"
 expect "ddcutil-service COPR RPM digest is pinned" \
-  grep -Eq '^    echo "[0-9a-f]{64}  /tmp/ddcutil-service\.rpm" \| sha256sum -c - && \\$' \
-  "${ROOT}/editions/workstation/Containerfile"
+  grep -Eq '^DDCUTIL_SERVICE_SHA256=[0-9a-f]{64}$' "${ROOT}/config/versions.env"
+expect "AppImage thumbnailer RPM digest is pinned" \
+  grep -Eq '^APPIMAGE_THUMBNAILER_SHA256=[0-9a-f]{64}$' "${ROOT}/config/versions.env"
 expect "elastic-swap daemon is enabled by the build" \
   grep -qx 'systemctl enable elastic-swap.service' "${ROOT}/editions/workstation/build.sh"
 expect "interim swap file service and script are gone" \

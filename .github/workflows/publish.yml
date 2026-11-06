@@ -250,7 +250,10 @@ jobs:
           install -m 0700 -d ~/.ssh
           install -m 0600 /dev/null ~/.ssh/id_sourceforge
           printf '%s\n' "${SF_SSH_KEY}" > ~/.ssh/id_sourceforge
-          ssh-keyscan frs.sourceforge.net >> ~/.ssh/known_hosts 2>/dev/null
+          ssh-keyscan -t ed25519 frs.sourceforge.net > ~/.ssh/sourceforge_host 2>/dev/null
+          fingerprint="$(ssh-keygen -lf ~/.ssh/sourceforge_host -E sha256 | awk '{print $2}')"
+          test "$fingerprint" = 'SHA256:209BDmH3jsRyO9UeGPPgLWPSegKmYCBIya0nR/AWWCY'
+          cat ~/.ssh/sourceforge_host >> ~/.ssh/known_hosts
           dest="${SF_USER}@frs.sourceforge.net:/home/frs/project/luminusos/${{ needs.containers.outputs.version_tag }}/"
           rsync -avP --rsh="ssh -i ~/.ssh/id_sourceforge" dist/ "${dest}"
 

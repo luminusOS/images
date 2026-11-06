@@ -14,7 +14,9 @@ format="$1"
 dnf -y install image-builder podman
 
 if [ -n "${GHCR_TOKEN:-}" ]; then
-  podman login ghcr.io -u "${GHCR_USER}" -p "${GHCR_TOKEN}"
+  set +x
+  printf '%s' "${GHCR_TOKEN}" | podman login ghcr.io -u "${GHCR_USER}" --password-stdin
+  set -x
 else
   echo "WARNING: GHCR_TOKEN is empty — pulls from private GHCR packages will fail" >&2
 fi

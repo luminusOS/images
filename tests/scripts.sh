@@ -46,6 +46,41 @@ expect_contains "package adapter maps qcow2 type" "qcow2" \
 expect_failure "package adapter rejects unknown formats" \
   env IMAGE_BUILDER_DRY_RUN=1 "${ROOT}/tools/package-artifact.sh" raw image.test out.raw
 
+mkdir -p "${TEST_TMP}/kernel-bin"
+printf '#!/bin/sh\nexit 1\n' >"${TEST_TMP}/kernel-bin/kernel-install"
+printf '#!/bin/sh\nprintf "fallback-kernel\\n"\n' >"${TEST_TMP}/kernel-bin/ls"
+printf '#!/bin/sh\nexit 0\n' >"${TEST_TMP}/kernel-bin/plymouth-set-default-theme"
+printf '#!/bin/sh\nprintf "%%s\\n" "$@"\n' >"${TEST_TMP}/kernel-bin/dracut"
+chmod +x "${TEST_TMP}/kernel-bin/"*
+expect_contains "initramfs falls back when kernel-install fails" '/usr/lib/modules/fallback-kernel/initramfs.img' \
+  env PATH="${TEST_TMP}/kernel-bin:${PATH}" bash "${ROOT}/shared/scripts/rebuild-initramfs.sh"
+
+printf '%s\n' 'UEFI firmware configuration' >"${TEST_TMP}/boot-screen.txt"
+expect_failure "boot evidence rejects a firmware screen" \
+  bash "${ROOT}/.github/scripts/check-boot-screen.sh" iso "${TEST_TMP}/boot-screen.txt"
+printf '%s\n' 'Sirius Installer' >"${TEST_TMP}/boot-screen.txt"
+expect "boot evidence accepts the installer" \
+  bash "${ROOT}/.github/scripts/check-boot-screen.sh" iso "${TEST_TMP}/boot-screen.txt"
+printf '%s\n' 'Start Installation' >"${TEST_TMP}/boot-screen.txt"
+expect "boot evidence accepts the Sirius welcome button" \
+  bash "${ROOT}/.github/scripts/check-boot-screen.sh" iso "${TEST_TMP}/boot-screen.txt"
+expect_failure "installer evidence does not satisfy the disk check" \
+  bash "${ROOT}/.github/scripts/check-boot-screen.sh" disk "${TEST_TMP}/boot-screen.txt"
+
+mkdir -p "${TEST_TMP}/rpm-bin"
+printf 'RPM test fixture\n' >"${TEST_TMP}/fixture.rpm"
+printf '#!/bin/sh\ncp "$RPM_FIXTURE" "$4"\n' >"${TEST_TMP}/rpm-bin/curl"
+printf '#!/bin/sh\ntouch "$RPM_INSTALLED"\n' >"${TEST_TMP}/rpm-bin/dnf"
+chmod +x "${TEST_TMP}/rpm-bin/"*
+rpm_digest="$(sha256sum "${TEST_TMP}/fixture.rpm" | cut -d ' ' -f1)"
+export RPM_FIXTURE="${TEST_TMP}/fixture.rpm" RPM_INSTALLED="${TEST_TMP}/rpm-installed"
+expect_failure "RPM installer rejects an incorrect digest" env PATH="${TEST_TMP}/rpm-bin:${PATH}" \
+  bash "${ROOT}/editions/workstation/install-rpm.sh" 45 https://example.test/test.rpm "$(printf '%064d' 0)"
+expect "RPM installer does not install after a checksum failure" test ! -e "${RPM_INSTALLED}"
+expect "RPM installer accepts a matching digest" env PATH="${TEST_TMP}/rpm-bin:${PATH}" \
+  bash "${ROOT}/editions/workstation/install-rpm.sh" 45 https://example.test/test.rpm "${rpm_digest}"
+expect "RPM installer invokes dnf after verification" test -e "${RPM_INSTALLED}"
+
 # shellcheck disable=SC1091
 source "${ROOT}/tools/qemu-common.sh"
 expect_contains "QEMU recognizes qcow2 disks" qcow2 qemu_disk_format disk.qcow2

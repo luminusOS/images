@@ -15,6 +15,11 @@ FROM scratch AS ctx-flatpaks
 
 COPY shared/flatpaks /flatpaks
 
+FROM scratch AS ctx-workstation-inputs
+
+COPY config/versions.env /versions.env
+COPY editions/workstation/install-rpm.sh /install-rpm.sh
+
 FROM ${fedora_bootc_base} AS aurora-extension
 
 ARG fedora_version
@@ -180,13 +185,12 @@ RUN --mount=type=cache,target=/var/cache/dnf \
 # upstream RPM; the pinned digest guards against a replaced release asset.
 RUN --mount=type=cache,target=/var/cache/dnf \
     --mount=type=bind,from=ctx-scripts,source=/scripts,target=/scripts \
+    --mount=type=bind,from=ctx-workstation-inputs,source=/,target=/inputs \
     bash /scripts/rpmdb-repair.sh && \
-    curl -fsSL \
-      "https://github.com/kem-a/appimage-thumbnailer/releases/download/v4.1.1/appimage-thumbnailer-v4.1.1-1.x86_64.rpm" \
-      -o /tmp/appimage-thumbnailer.rpm && \
-    echo "c249b93ed422be6348c5f162c640ef1cf02f00a26d5afe014c3685122ca7c050  /tmp/appimage-thumbnailer.rpm" | sha256sum -c - && \
-    dnf -y --releasever="${fedora_version}" install /tmp/appimage-thumbnailer.rpm && \
-    rm -f /tmp/appimage-thumbnailer.rpm && \
+    . /inputs/versions.env && \
+    bash /inputs/install-rpm.sh "${fedora_version}" \
+      "https://github.com/kem-a/appimage-thumbnailer/releases/download/v${APPIMAGE_THUMBNAILER_VERSION}/appimage-thumbnailer-v${APPIMAGE_THUMBNAILER_VERSION}-1.x86_64.rpm" \
+      "${APPIMAGE_THUMBNAILER_SHA256}" && \
     dnf clean all
 
 # Swap daemon: grows and shrinks swap files in /var/swap behind zswap. It is
@@ -194,13 +198,11 @@ RUN --mount=type=cache,target=/var/cache/dnf \
 # replaced asset. A mismatch fails the build.
 RUN --mount=type=cache,target=/var/cache/dnf \
     --mount=type=bind,from=ctx-scripts,source=/scripts,target=/scripts \
+    --mount=type=bind,from=ctx-workstation-inputs,source=/,target=/inputs \
     bash /scripts/rpmdb-repair.sh && \
-    curl -fsSL \
+    bash /inputs/install-rpm.sh "${fedora_version}" \
       "https://github.com/luminusOS/elastic-swap/releases/download/v${elastic_swap_version}/elastic-swap-${elastic_swap_version}-1.fc${fedora_version}.x86_64.rpm" \
-      -o /tmp/elastic-swap.rpm && \
-    echo "${elastic_swap_sha256}  /tmp/elastic-swap.rpm" | sha256sum -c - && \
-    dnf -y --releasever="${fedora_version}" install /tmp/elastic-swap.rpm && \
-    rm -f /tmp/elastic-swap.rpm && \
+      "${elastic_swap_sha256}" && \
     dnf clean all
 
 # D-Bus service for DDC/CI monitor control, used by Aurora Shell's External
@@ -211,13 +213,12 @@ RUN --mount=type=cache,target=/var/cache/dnf \
 # the pinned digest fails the build when the asset is removed or replaced.
 RUN --mount=type=cache,target=/var/cache/dnf \
     --mount=type=bind,from=ctx-scripts,source=/scripts,target=/scripts \
+    --mount=type=bind,from=ctx-workstation-inputs,source=/,target=/inputs \
     bash /scripts/rpmdb-repair.sh && \
-    curl -fsSL \
-      "https://download.copr.fedorainfracloud.org/results/hopsayer/ddcutil-service/fedora-${fedora_version}-x86_64/Packages/d/ddcutil-service-1.0.15-0.x86_64.rpm" \
-      -o /tmp/ddcutil-service.rpm && \
-    echo "05518dcadd7e24b31633fa5f4b2e3dbb002813ecad26c41e3cc4cbac3646dcfb  /tmp/ddcutil-service.rpm" | sha256sum -c - && \
-    dnf -y --releasever="${fedora_version}" install /tmp/ddcutil-service.rpm && \
-    rm -f /tmp/ddcutil-service.rpm && \
+    . /inputs/versions.env && \
+    bash /inputs/install-rpm.sh "${fedora_version}" \
+      "https://download.copr.fedorainfracloud.org/results/hopsayer/ddcutil-service/fedora-${fedora_version}-x86_64/Packages/d/ddcutil-service-${DDCUTIL_SERVICE_VERSION}-0.x86_64.rpm" \
+      "${DDCUTIL_SERVICE_SHA256}" && \
     dnf clean all
 
 # The system overlay mirrors the installed filesystem. Live-installer files
@@ -275,7 +276,6 @@ RUN test -f /usr/share/gnome-shell/extensions/${aurora_shell_uuid}/metadata.json
       '.uuid == $uuid and (."shell-version" | index($major)) and (."session-modes" | index("initial-setup"))' \
       /usr/share/gnome-shell/extensions/${aurora_shell_uuid}/metadata.json
 
-# Final cleanup
 RUN dnf clean all && \
     rm -rf /var/cache/dnf /var/cache/libdnf5 /tmp/* /var/log/* /var/tmp/*
 
