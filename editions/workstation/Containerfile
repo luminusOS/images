@@ -173,7 +173,6 @@ RUN --mount=type=cache,target=/var/cache/dnf \
       oo7-daemon \
       oo7-portal \
       sushi \
-      gnome-software \
       glycin-thumbnailer \
       gst-thumbnailers \
       papers-thumbnailer \

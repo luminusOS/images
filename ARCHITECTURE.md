@@ -296,7 +296,7 @@ Main file: `editions/workstation/build.py`.
 
 Responsibilities:
 
-- Install `accountsservice`, `gdm`, `gnome-initial-setup`, `gnome-shell`, `gnome-backgrounds`, `nautilus`, `sushi`, and `gnome-software`.
+- Install `accountsservice`, `gdm`, `gnome-initial-setup`, `gnome-shell`, `gnome-backgrounds`, `nautilus`, and `sushi`.
 - Install the Fedora GStreamer plugins `gstreamer1-plugins-good`, `gstreamer1-plugins-bad-free`, `gstreamer1-plugin-openh264` (with `openh264` from the `fedora-cisco-openh264` repository), and `gstreamer1-plugin-libav`, so host apps can play MP4/H.264 and AAC media.
 - Prepare `/boot/efi` and `/boot/loader/entries`.
 - Disable GNOME Software autostart and search provider.
