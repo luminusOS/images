@@ -11,12 +11,113 @@ def workflow(name):
 
 
 class WorkflowPhasesTest(unittest.TestCase):
+    def test_workflow_names_describe_the_build_responsibility(self):
+        self.assertEqual(
+            workflow("containers.yml")["name"], "Image Build Orchestration"
+        )
+        self.assertEqual(
+            workflow("build-containers.yml")["name"], "Image Build Validation"
+        )
+        self.assertEqual(workflow("publish.yml")["name"], "Image Publication")
+        jobs = workflow("containers.yml")["jobs"]
+        self.assertEqual(jobs["core"]["name"], "Build core image")
+        self.assertEqual(jobs["workstation"]["name"], "Build workstation image")
+        self.assertEqual(jobs["installer"]["name"], "Build installer image")
+        validation = workflow("build-containers.yml")
+        self.assertEqual(
+            validation["jobs"]["build-containers"]["name"], "Validate image builds"
+        )
+
     def test_container_editions_keep_explicit_build_dependency_chain(self):
         jobs = workflow("containers.yml")["jobs"]
         assert jobs["core"]["needs"] == ["metadata"]
         assert "core" in jobs["workstation"]["needs"]
         assert "workstation" in jobs["installer"]["needs"]
         assert "installer" not in jobs["workstation"]["needs"]
+
+    def test_installer_is_a_separate_reusable_workflow_with_declared_contract(self):
+        installer = workflow("installer.yml")
+        call = installer.get("on", installer.get(True))["workflow_call"]
+        inputs = call["inputs"]
+        self.assertTrue(
+            {
+                "channel",
+                "fedora_version",
+                "sirius_version",
+                "sirius_rpm_version",
+                "sirius_sha256",
+                "build_version",
+                "workstation_image",
+                "image_namespace",
+                "target_tag",
+                "workstation_iso_image",
+            }.issubset(inputs)
+        )
+        self.assertTrue(
+            all(
+                inputs[name]["required"] is True
+                for name in (
+                    "channel",
+                    "fedora_version",
+                    "sirius_version",
+                    "sirius_rpm_version",
+                    "sirius_sha256",
+                    "build_version",
+                    "workstation_image",
+                    "image_namespace",
+                    "target_tag",
+                    "workstation_iso_image",
+                )
+            )
+        )
+        for name in (
+            "workstation_digest",
+            "workstation_archive_sha256",
+            "workstation_image_id",
+        ):
+            self.assertEqual(inputs[name]["default"], "")
+        self.assertEqual(
+            call["outputs"]["image_id"]["value"],
+            "${{ jobs.build.outputs.image_id }}",
+        )
+        self.assertEqual(
+            call["outputs"]["archive_sha256"]["value"],
+            "${{ jobs.build.outputs.archive_sha256 }}",
+        )
+
+    def test_installer_caller_forwards_metadata_and_testing_archive_evidence(self):
+        jobs = workflow("containers.yml")["jobs"]
+        installer = jobs["installer"]
+        self.assertEqual(installer["uses"], "./.github/workflows/installer.yml")
+        self.assertEqual(installer["needs"], ["metadata", "workstation"])
+        self.assertIn("always()", installer["if"])
+        self.assertIn("needs.metadata.result == 'success'", installer["if"])
+        self.assertIn("needs.workstation.result == 'success'", installer["if"])
+        for name in (
+            "channel",
+            "fedora_version",
+            "sirius_version",
+            "sirius_rpm_version",
+            "sirius_sha256",
+            "build_version",
+            "workstation_image",
+            "image_namespace",
+            "target_tag",
+            "workstation_iso_image",
+        ):
+            self.assertIn(name, installer["with"])
+        self.assertEqual(
+            installer["with"]["workstation_archive_sha256"],
+            "${{ needs.workstation.outputs.archive_sha256 }}",
+        )
+        self.assertEqual(
+            installer["with"]["workstation_image_id"],
+            "${{ needs.workstation.outputs.image_id }}",
+        )
+        self.assertEqual(
+            jobs["installer"]["permissions"],
+            {"contents": "read", "packages": "read"},
+        )
 
     def test_dispatch_inputs_and_candidate_autodetection(self):
         publish = workflow("publish.yml")

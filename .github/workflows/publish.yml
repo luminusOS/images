@@ -1,4 +1,4 @@
-name: Publish
+name: Image Publication
 
 "on":
   workflow_dispatch:
@@ -86,7 +86,7 @@ jobs:
     uses: ./.github/workflows/ci.yml
 
   containers:
-    name: Build and push containers
+    name: Build candidate images
     needs: [quality, inputs]
     # The signing key is available to this workflow, and only main may use it.
     if: github.ref == 'refs/heads/main' && inputs.candidate_run_id == '' && inputs.validation_run_id == '' && inputs.channel == 'testing'
@@ -245,7 +245,7 @@ jobs:
           if-no-files-found: error
 
   stable-installer:
-    name: Build installer from testing candidate
+    name: Build stable installer from approved testing image
     needs: [stable-source]
     if: inputs.channel == 'stable' && github.ref == 'refs/heads/main'
     permissions:

@@ -99,7 +99,6 @@ class ContainerCachePolicyTests(unittest.TestCase):
         for name, scope in (
             ("core", "core"),
             ("workstation", "workstation"),
-            ("installer", "installer"),
         ):
             start = text.index(f"  {name}:\n")
             next_job = -1
@@ -120,8 +119,22 @@ class ContainerCachePolicyTests(unittest.TestCase):
                 f"scope={scope}-${{{{ needs.metadata.outputs.fedora_version }}}}-${{{{ runner.arch }}}},mode=max",
                 section,
             )
-            if name != "installer":
-                self.assertIn("inputs.force_core", section)
+            self.assertIn("inputs.force_core", section)
+
+    def test_installer_workflow_preserves_installer_cache_scope(self):
+        workflow = ROOT / ".github/workflows/installer.yml"
+        text = workflow.read_text()
+        setup = text.index("docker/setup-docker-action@")
+        build = text.index("docker/build-push-action@")
+        self.assertLess(setup, build)
+        self.assertIn('"containerd-snapshotter":true', text)
+        self.assertIn(
+            "scope=installer-${{ inputs.fedora_version }}-${{ runner.arch }}", text
+        )
+        self.assertIn(
+            "scope=installer-${{ inputs.fedora_version }}-${{ runner.arch }},mode=max",
+            text,
+        )
 
 
 class ReuseTests(unittest.TestCase):
