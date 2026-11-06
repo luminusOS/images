@@ -1,13 +1,13 @@
-default_fedora_version := shell('"$1" "$2"', justfile_directory() / "tools/config-value.sh", "DEFAULT_FEDORA_VERSION")
-default_fedora_bootc_digest := shell('"$1" "$2"', justfile_directory() / "tools/config-value.sh", "FEDORA_BOOTC_DIGEST")
-default_aurora_shell_version := shell('"$1" "$2"', justfile_directory() / "tools/config-value.sh", "AURORA_SHELL_VERSION")
-default_aurora_shell_sha256 := shell('"$1" "$2"', justfile_directory() / "tools/config-value.sh", "AURORA_SHELL_SHA256")
-default_elastic_swap_version := shell('"$1" "$2"', justfile_directory() / "tools/config-value.sh", "ELASTIC_SWAP_VERSION")
-default_elastic_swap_sha256 := shell('"$1" "$2"', justfile_directory() / "tools/config-value.sh", "ELASTIC_SWAP_SHA256")
-default_sirius_version := shell('"$1" "$2"', justfile_directory() / "tools/config-value.sh", "SIRIUS_VERSION")
-default_sirius_rpm_version := shell('"$1" "$2"', justfile_directory() / "tools/config-value.sh", "SIRIUS_RPM_VERSION")
-default_update_channel := shell('"$1" "$2"', justfile_directory() / "tools/config-value.sh", "UPDATE_CHANNEL")
-default_sirius_sha256 := shell('"$1" "$2"', justfile_directory() / "tools/config-value.sh", "SIRIUS_SHA256")
+default_fedora_version := shell('python3 "$1" "$2"', justfile_directory() / "tools/config-value.py", "DEFAULT_FEDORA_VERSION")
+default_fedora_bootc_digest := shell('python3 "$1" "$2"', justfile_directory() / "tools/config-value.py", "FEDORA_BOOTC_DIGEST")
+default_aurora_shell_version := shell('python3 "$1" "$2"', justfile_directory() / "tools/config-value.py", "AURORA_SHELL_VERSION")
+default_aurora_shell_sha256 := shell('python3 "$1" "$2"', justfile_directory() / "tools/config-value.py", "AURORA_SHELL_SHA256")
+default_elastic_swap_version := shell('python3 "$1" "$2"', justfile_directory() / "tools/config-value.py", "ELASTIC_SWAP_VERSION")
+default_elastic_swap_sha256 := shell('python3 "$1" "$2"', justfile_directory() / "tools/config-value.py", "ELASTIC_SWAP_SHA256")
+default_sirius_version := shell('python3 "$1" "$2"', justfile_directory() / "tools/config-value.py", "SIRIUS_VERSION")
+default_sirius_rpm_version := shell('python3 "$1" "$2"', justfile_directory() / "tools/config-value.py", "SIRIUS_RPM_VERSION")
+default_update_channel := shell('python3 "$1" "$2"', justfile_directory() / "tools/config-value.py", "UPDATE_CHANNEL")
+default_sirius_sha256 := shell('python3 "$1" "$2"', justfile_directory() / "tools/config-value.py", "SIRIUS_SHA256")
 
 fedora_ver := env("LOS_FEDORA_VERSION", default_fedora_version)
 fedora_bootc_digest := env("LOS_FEDORA_BOOTC_DIGEST", default_fedora_bootc_digest)
@@ -33,14 +33,22 @@ force_core := env("LOS_FORCE_CORE", "0")
 skip_flatpaks := env("LOS_SKIP_FLATPAKS", "0")
 qemu_disk_size := env("QEMU_INSTALL_DISK_SIZE", "64G")
 
-sudo_keepalive := '''
-keep_sudo_alive() {
-  sudo -v
-  while true; do
-    sudo -n true
-    sleep 60
-  done &
-  sudo_keepalive_pid="$!"
-  trap 'kill "${sudo_keepalive_pid}" 2>/dev/null || true' EXIT
-}
-'''
+export IMAGES_BASE := base
+export IMAGES_FEDORA := fedora_ver
+export IMAGES_TAG := tag
+export IMAGES_VERSION := version
+export IMAGES_NAME := name
+export IMAGES_PRETTY := pretty
+export IMAGES_CORE := core_image
+export IMAGES_WORKSTATION := workstation_image
+export IMAGES_INSTALLER := workstation_iso_image
+export IMAGES_TARGET := workstation_target_image
+export IMAGES_AURORA_VERSION := aurora_shell_version
+export IMAGES_AURORA_SHA256 := aurora_shell_sha256
+export IMAGES_ELASTIC_VERSION := elastic_swap_version
+export IMAGES_ELASTIC_SHA256 := elastic_swap_sha256
+export IMAGES_SIRIUS_VERSION := sirius_version
+export IMAGES_SIRIUS_RPM_VERSION := sirius_rpm_version
+export IMAGES_SIRIUS_SHA256 := sirius_sha256
+export IMAGES_FORCE_CORE := force_core
+export IMAGES_SKIP_FLATPAKS := skip_flatpaks

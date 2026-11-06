@@ -21,10 +21,9 @@ jobs:
     name: Build core and workstation
     permissions:
       contents: read
-      packages: write
+      packages: read
     uses: ./.github/workflows/containers.yml
     with:
       fedora_version: ${{ inputs.fedora_version || '' }}
       builder_mode: local
       publish: false
-    secrets: inherit

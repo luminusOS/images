@@ -75,7 +75,7 @@ flowchart TD
 │       ├── assets/
 │       ├── Containerfile
 │       ├── Containerfile.installer
-│       ├── build.sh
+│       ├── build.py
 │       └── files/
 │           ├── installer/
 │           └── system/
@@ -84,11 +84,11 @@ flowchart TD
 │   ├── flatpaks
 │   └── scripts/
 └── tools/
-    ├── config-value.sh
-    ├── install-qemu.sh
-    ├── package-artifact.sh
-    ├── qemu-common.sh
-    └── qemu.sh
+    ├── config-value.py
+    ├── install-qemu.py
+    ├── package-artifact.py
+    ├── qemu_common.py
+    └── qemu.py
 ```
 
 ## Naming And Scope
@@ -102,9 +102,9 @@ flowchart TD
 | OS version | `LOS_TAG` without the `testing-` prefix (`<fedora>.<YYYYMMDD>` by default) unless `LOS_VERSION` is set; channel-neutral so promoted stable builds are not labelled testing. |
 | Shared data/config | Stored in `shared/`; current shared inputs are Flatpak refs and bootc-image-builder config. |
 | Workstation overlays | Installed files live under `files/system/`; live-only files live under `files/installer/`. Both mirror `/`. |
-| Desktop build script | `editions/workstation/build.sh`, called from the workstation Containerfile. |
+| Desktop build script | `editions/workstation/build.py`, called with `python3` from the workstation Containerfile. |
 | Artifact packaging | Handled by `image-builder` through `just package workstation`. |
-| Local VM testing | Handled by `tools/qemu.sh` and `tools/install-qemu.sh`. |
+| Local VM testing | Handled by `tools/qemu.py` and `tools/install-qemu.py`. |
 
 ## Build Inputs
 
@@ -112,7 +112,7 @@ flowchart TD
 | --- | --- | --- |
 | `LOS_BASE` | `quay.io/fedora/fedora-bootc:<fedora>@<digest>` | Pinned base image for the core edition. |
 | `LOS_FEDORA_VERSION` | From `config/versions.env` | Fedora release version used for base images, DNF repos and tags. |
-| `LOS_FEDORA_BOOTC_DIGEST` | From `config/versions.env` | Fedora bootc composition for local builds. Quay garbage-collects superseded digests within a day, so CI and `publish` ignore it and resolve the live digest with `tools/fedora-bootc-digest.sh`, recording it in the release notes. If a local build cannot pull it, set `LOS_FEDORA_BOOTC_DIGEST=$(tools/fedora-bootc-digest.sh 45)`. |
+| `LOS_FEDORA_BOOTC_DIGEST` | From `config/versions.env` | Fedora bootc composition for local builds. CI resolves the current digest with `python3 tools/fedora-bootc-digest.py`. If the configured digest is no longer available, set `LOS_FEDORA_BOOTC_DIGEST=$(python3 tools/fedora-bootc-digest.py 45)`. |
 | `LOS_REGISTRY` | `localhost` | Registry prefix for local builds. |
 | `LOS_TAG` | `testing-<fedora>.<date>` | Local image tag. |
 | `LOS_VERSION` | `LOS_TAG` without the `testing-` prefix | Version written to `VERSION`, `BUILD_ID`, `IMAGE_VERSION`, and bootloader entries. |
@@ -166,9 +166,9 @@ flowchart TD
     Format -->|all| QCOW2
 
     Qemu --> Target{"target"}
-    Target -->|iso| QemuISO["tools/qemu.sh iso"]
-    Target -->|install| QemuInstall["tools/install-qemu.sh"]
-    Target -->|run| QemuRun["tools/qemu.sh disk<br/>.test/install-disk.qcow2"]
+    Target -->|iso| QemuISO["tools/qemu.py iso"]
+    Target -->|install| QemuInstall["tools/install-qemu.py"]
+    Target -->|run| QemuRun["tools/qemu.py disk<br/>.test/install-disk.qcow2"]
 ```
 
 ## Core Image
@@ -227,7 +227,7 @@ The workstation Containerfile has five stages:
 
 ```mermaid
 flowchart TD
-    ScriptCtx["ctx-workstation-script<br/>editions/workstation/build.sh"]
+    ScriptCtx["ctx-workstation-script<br/>editions/workstation/build.py"]
     FlatpakCtx["ctx-flatpaks<br/>shared/flatpaks"]
     FilesCtx["system overlay<br/>files/system"]
     AuroraStage["aurora-extension stage"]
@@ -237,7 +237,7 @@ flowchart TD
     Dracut["rebuild installed initramfs<br/>with plymouth"]
     CopyAurora["install Aurora Shell"]
     PatchAurora["patch metadata<br/>session-modes includes initial-setup"]
-    GnomeBuild["editions/workstation/build.sh"]
+    GnomeBuild["editions/workstation/build.py"]
     Flatpaks["optional Flatpak installation"]
     ValidateAurora["compile schemas<br/>validate shell version + session mode"]
     Lint["bootc container lint"]
@@ -292,7 +292,7 @@ The Sirius RPM ships the binary, the polkit action, the desktop file, and generi
 
 ## GNOME Workstation Setup
 
-Main file: `editions/workstation/build.sh`.
+Main file: `editions/workstation/build.py`.
 
 Responsibilities:
 
@@ -570,7 +570,7 @@ flowchart TD
     QemuRun["just qemu run"]
 
     DirectInstall["just qemu install"]
-    InstallScript["tools/install-qemu.sh"]
+    InstallScript["tools/install-qemu.py"]
     BIB["bootc-image-builder container"]
     Disk[".test/install-disk.qcow2"]
 
@@ -578,7 +578,7 @@ flowchart TD
     Build --> DirectInstall --> InstallScript --> BIB --> Disk --> QemuRun
 ```
 
-`tools/qemu.sh iso`:
+`python3 tools/qemu.py iso`:
 
 - Selects ISO through `QEMU_ISO_PATH`, `.test/last-iso`, or the newest root-level ISO.
 - Creates or reuses `.test/install-disk.qcow2`.
@@ -586,12 +586,12 @@ flowchart TD
 - Uses AHCI/SATA by default for firmware compatibility.
 - Enables serial logging and `.test/qemu.log` when `QEMU_DEBUG != 0`.
 
-`tools/qemu.sh disk`:
+`python3 tools/qemu.py disk`:
 
 - Selects `QEMU_DISK_PATH`, `.test/last-qcow2`, the newest root-level qcow2, or the legacy `.test/disk.qcow2`, in that order.
 - `just qemu run` uses `.test/install-disk.qcow2` and resets NVRAM by default.
 
-`tools/install-qemu.sh`:
+`python3 tools/install-qemu.py`:
 
 - Runs `quay.io/centos-bootc/bootc-image-builder:latest`.
 - Mounts local container storage.
@@ -638,17 +638,17 @@ Release metadata lives in `config/releases.env` on `main` and is read by every b
 - `SUPPORTED_RELEASES`: releases that may be built.
 - `LATEST_RELEASE`: the only release allowed to move the floating `testing` and `latest` tags.
 
-`auto-testing` runs daily on `main`. It compares the live `fedora-bootc:<fedora>` digest with the `org.opencontainers.image.base.digest` label of the latest `testing-<fedora>` image and rebuilds only when it changed, or when the last build never got its git tag (a failed release step). Its builds are versioned `<fedora>.<YYYYMMDD>.<n>`; `tools/release-notes.sh` compares `rpm -qa` of the previous and new image for the release notes.
+`auto-testing` checks the Fedora base on `main`. Automatic builds are candidates, not evidence that a release has passed installation or update tests. `python3 tools/release-notes.py` compares `rpm -qa` of the previous and new image for release notes.
 
 Stable images are promoted from an existing testing build with `skopeo copy --all --preserve-digests`, never rebuilt, so a stable tag always has the same digest as the testing build that was validated.
 
 ### Image signatures
 
-`publish` and `auto-testing` sign `luminusos` and `luminusos-workstation` by digest with cosign, using the `COSIGN_PRIVATE_KEY`/`COSIGN_PASSWORD` repository secrets, and refuses to publish if the key is missing. Cosign stays on v2 because cosign 3 defaults to a bundle format that containers/image cannot read. A build pushes only its immutable version tag; the branch and channel tags (`testing-<fedora>`, `testing`) move with `skopeo copy --preserve-digests` after signing, so installed systems never follow an unsigned image. Stable promotion preserves digests, so the testing signatures also cover the stable tags.
+Release policy requires signing candidate image digests and verifying them against the expected public key before promotion. Cosign stays on v2 for containers/image compatibility. Signing alone is not approval: branch and channel tags may move only after the required quality, artifact, installation, and trust evidence has been validated. Stable promotion must preserve the approved payload digest; a rebuilt live root has its own identity and evidence.
 
-Installed systems ship `/etc/containers/policy.json`, which requires a `sigstoreSigned` signature from `/etc/pki/containers/luminusos.pub` for those two repositories only; every other image keeps the Fedora default. `/etc/containers/registries.d/luminusos.yaml` enables sigstore attachments for them. `bootc upgrade` and `bootc switch` therefore reject unsigned or foreign-signed LuminusOS images.
+The core installs `/etc/containers/policy.json` and `/etc/pki/containers/luminusos.pub` from `shared/trust/`. The policy requires a `sigstoreSigned` signature for the two LuminusOS repositories; other images keep the Fedora default. `/etc/containers/registries.d/luminusos.yaml` enables sigstore attachments for them. Effective enforcement by `bootc upgrade` and `bootc switch` must be demonstrated on a system installed through Sirius; inspecting this configuration is not a substitute for unsigned-image and incorrect-key rejection tests.
 
-The Sirius `enforce_sigpolicy` stays `false`: the install source is the unsigned OCI layout embedded in the ISO, and bootc's enforcement also rejects a policy whose default is `insecureAcceptAnything`.
+The Sirius `enforce_sigpolicy` stays `false` for installation from the embedded OCI layout. This is distinct from the trust policy for subsequent registry updates. Do not change this setting solely from static inspection: prove offline installation and update enforcement together on an installed VM.
 
 Rotating the key means shipping the new `luminusos.pub` in an image signed with the old key first, then switching the secret.
 

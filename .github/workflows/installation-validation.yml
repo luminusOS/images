@@ -1,0 +1,58 @@
+name: Installation Validation
+
+on:
+  workflow_dispatch:
+    inputs:
+      candidate_run_id:
+        description: Successful main-branch release candidate run ID
+        type: string
+        required: true
+
+permissions:
+  contents: read
+  actions: read
+
+concurrency:
+  group: installation-validation-${{ github.repository }}-${{ inputs.candidate_run_id }}
+  cancel-in-progress: false
+
+jobs:
+  installation:
+    if: github.ref == 'refs/heads/main' && github.event_name == 'workflow_dispatch'
+    runs-on: [self-hosted, linux, x64, luminusos-validation]
+    environment: release-validation
+    timeout-minutes: 360
+    permissions:
+      contents: read
+      actions: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Check Python version
+        run: python3 -c 'import sys; sys.exit(sys.version_info < (3, 11))'
+      - uses: sigstore/cosign-installer@d58896d6a1865668819e1d91763c7751a165e159 # v3.9.2
+        with:
+          cosign-release: v2.6.5
+      - name: Fetch and verify candidate
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          CANDIDATE_RUN_ID: ${{ inputs.candidate_run_id }}
+        run: python3 .github/scripts/workflow/release_pipeline.py fetch-candidate --repository "$GITHUB_REPOSITORY" --run-id "$CANDIDATE_RUN_ID" --output candidate --public-key shared/trust/etc/pki/containers/luminusos.pub
+      - name: Run installation and trust validation
+        id: validate
+        env:
+          CANDIDATE_RUN_ID: ${{ inputs.candidate_run_id }}
+        run: python3 .github/scripts/workflow/validation_runner.py
+      - name: Record and sign observed validation
+        env:
+          RECEIPTS: ${{ steps.validate.outputs.receipts }}
+          COSIGN_PRIVATE_KEY: ${{ secrets.COSIGN_PRIVATE_KEY }}
+          COSIGN_PASSWORD: ${{ secrets.COSIGN_PASSWORD }}
+        run: python3 .github/scripts/workflow/release_pipeline.py record-validation --candidate candidate/candidate.json --receipts "$RECEIPTS" --output "$RECEIPTS/validation.json" --public-key shared/trust/etc/pki/containers/luminusos.pub
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: installation-validation
+          path: ${{ steps.validate.outputs.receipts }}/
+          include-hidden-files: true
+          if-no-files-found: error

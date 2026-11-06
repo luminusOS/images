@@ -26,10 +26,11 @@ Use `QEMU_RESET_DISK=1 just qemu iso` when the installer test needs a fresh disk
 
 ## Script Conventions
 
-- Build helper scripts use `.sh` extensions.
+- Repository-owned automation uses Python scripts with `.py` extensions and explicit `python3` entrypoints.
 - Shared data/config inputs live in `shared/`.
-- Do not add shared shell scripts unless there is a concrete cross-edition need that cannot live in `core`.
-- Edition scripts live under their edition, for example `editions/workstation/build.sh`.
+- Prefer the Python standard library and subprocess argument lists; do not use `shell=True` for repository automation.
+- Do not add shared helpers unless there is a concrete cross-edition need that cannot live in `core`.
+- Edition scripts live under their edition, for example `editions/workstation/build.py`.
 - Containerfiles may call edition scripts through a `/ctx` bind mount.
 
 ## Installer Notes

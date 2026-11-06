@@ -38,17 +38,22 @@ Tags apply to both `ghcr.io/luminusos/luminusos` and `ghcr.io/luminusos/luminuso
 
 `config/releases.env` on `main` lists the Fedora releases LuminusOS builds (`SUPPORTED_RELEASES`) and the newest one (`LATEST_RELEASE`). Every branch reads it from `main`. Builds of unsupported releases fail. Only `LATEST_RELEASE` moves the floating `testing` and `latest` tags, so they never go back to an older release. Stable promotion is refused until Fedora itself has released that version, i.e. until `quay.io/fedora/fedora-bootc:latest` reaches it.
 
-Published images are signed with cosign and installed systems refuse unsigned updates. Verify manually with:
+Release images require cosign signatures. Verify a specific image digest with the repository's public key:
 
 ```bash
-cosign verify --key editions/workstation/files/system/etc/pki/containers/luminusos.pub ghcr.io/luminusos/luminusos-workstation:testing
+cosign verify --key shared/trust/etc/pki/containers/luminusos.pub 'ghcr.io/luminusos/luminusos-workstation@sha256:<digest>'
 ```
+
+The shared core installs the trust policy and public key. This configuration alone does not prove that an installed system enforces signature verification: acceptance of the expected key and rejection of unsigned and foreign-signed updates must also be tested after Sirius installation.
 
 ### Release pipeline
 
-1. **Testing containers**: `auto-testing` checks daily whether the Fedora base image changed. When it did, it builds and signs new containers (no ISO/qcow2) and publishes a pre-release `testing-<fedora>.<YYYYMMDD>.<n>` with generated notes: major package versions, commits since the previous release and the `bootc switch` command. Run it manually with `force` to rebuild without a base change.
-2. **Testing ISO**: run the `publish` workflow with `channel=testing`. It builds new images, packages and boot-tests the ISO/qcow2, and publishes a pre-release.
-3. **Stable**: after validating a testing build, run `publish` with `channel=stable` and `promote_version=45.20260923` (or `45.20260923.2` for an `auto-testing` build). Stable never rebuilds; it copies the `testing-45.20260923` images to the stable tags with identical digests, then repackages, boot-tests and publishes a normal release.
+1. **Prepare**: build candidates, capture and verify their signed image digests, scan them, and package and boot-test ISO/qcow2 artifacts. Candidate creation does not advance update channels or imply installation approval.
+2. **Validate**: install the exact candidate ISO through Sirius in a disposable VM. Retain signed, run-bound evidence for first boot, live isolation, signed-update acceptance and rejection, update/rollback, and host security state.
+3. **Promote**: resume the original candidate run and verify its manifest, signatures, digests, artifact hashes, and installation evidence. Only then advance release/channel tags and publish downloads. Do not rebuild a different candidate during this step.
+4. **Stable**: promote approved testing core/workstation digests without rebuilding those payloads. A separately rebuilt live installer needs its own packaging, boot, and installation evidence before release.
+
+See [the release strategy](docs/release-strategy.md) for the acceptance contract. A missing validation runner or missing evidence blocks promotion; it is not a reason to bypass a gate.
 
 Installed systems follow `UPDATE_CHANNEL` in `config/versions.env` (it sets the Sirius `target_imgref`), independent of which channel an ISO was published on. It stays `testing` until the first stable release exists; switch it to `stable` to make new installs track `luminusos-workstation:{FEDORA_VERSION}`.
 
@@ -66,8 +71,9 @@ bootc switch ghcr.io/luminusos/luminusos-workstation:testing
 | --- | --- | --- |
 | `ci` | Push to `main`, PRs | Lint, unit/config tests, workflow lint |
 | `build-containers` | Push/PR on `main` and `f*`, or manual | Validation build of `core` and `workstation`. It never publishes |
-| `auto-testing` | Daily, or manual | Builds, signs and pushes testing containers (no ISO/qcow2) and publishes a pre-release with generated notes, only when the Fedora base digest changed |
-| `publish` | Manual | `testing`: builds, pushes, packages and boot-tests ISO/qcow2, publishes a pre-release. `stable`: promotes an existing testing build, repackages, boot-tests, publishes a release |
+| `auto-testing` | Daily, or manual | Checks the Fedora base and prepares signed candidates; does not bypass release approval or advance update channels |
+| `publish` | Manual | Prepares candidates and resumes their promotion after validating evidence; stable retains approved payload digests |
+| `installation-validation` | Manual, protected runner | Runs the provisioned installation test driver against an existing candidate and records signed validation evidence |
 
 ISO and qcow2 downloads are hosted at `download.luminusos.org` on Cloudflare R2. Each channel retains its latest published artifact release; previous R2 versions are removed after the new files and metadata are published. SourceForge remains a backup, and GitHub Releases carry download links and SHA256 checksums. Older GitHub release links to R2 expire when that channel is updated.
 
