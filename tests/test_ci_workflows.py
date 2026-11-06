@@ -1025,6 +1025,12 @@ class ContainerWorkflowTests(unittest.TestCase):
             "${{ jobs.build.outputs.archive_sha256 }}",
         )
         steps = build["steps"]
+        docker_setup = next(
+            step
+            for step in steps
+            if "docker/setup-docker-action@" in step.get("uses", "")
+        )
+        self.assertEqual(docker_setup["with"]["set-host"], "true")
         load = next(
             step for step in steps if step.get("name") == "Load workstation image"
         )
