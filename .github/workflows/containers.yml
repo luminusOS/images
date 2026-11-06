@@ -147,7 +147,7 @@ jobs:
         env:
           IMAGE: '${{ needs.metadata.outputs.core_image }}'
           ARCHIVE: core-image.tar
-        run: python3 .github/scripts/workflow/core_reuse.py save
+        run: python3 .github/scripts/workflow/image_archive.py save
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with: {name: core-image, path: core-image.tar, compression-level: 0, if-no-files-found: error}
 
@@ -175,7 +175,7 @@ jobs:
           ARCHIVE: core-image.tar
           ARCHIVE_SHA256: '${{ needs.core.outputs.archive_sha256 }}'
           IMAGE_ID: '${{ needs.core.outputs.image_id }}'
-        run: python3 .github/scripts/workflow/core_reuse.py load
+        run: python3 .github/scripts/workflow/image_archive.py load
       - uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
         with: {driver: docker}
       - name: Build workstation
@@ -207,7 +207,7 @@ jobs:
         env:
           IMAGE: '${{ needs.metadata.outputs.workstation_image }}'
           ARCHIVE: workstation-image.tar
-        run: python3 .github/scripts/workflow/core_reuse.py save
+        run: python3 .github/scripts/workflow/image_archive.py save
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with: {name: workstation-image, path: workstation-image.tar, compression-level: 0, if-no-files-found: error}
 
@@ -235,7 +235,7 @@ jobs:
           ARCHIVE: workstation-image.tar
           ARCHIVE_SHA256: '${{ needs.workstation.outputs.archive_sha256 }}'
           IMAGE_ID: '${{ needs.workstation.outputs.image_id }}'
-        run: python3 .github/scripts/workflow/core_reuse.py load
+        run: python3 .github/scripts/workflow/image_archive.py load
       - name: Install skopeo
         run: sudo apt-get update && sudo apt-get install -y skopeo
       - name: Export installer payload
@@ -243,7 +243,7 @@ jobs:
           IMAGE: '${{ needs.metadata.outputs.workstation_image }}'
           CHANNEL: '${{ inputs.channel }}'
           WORKSTATION_DIGEST: '${{ inputs.workstation_digest }}'
-        run: python3 .github/scripts/workflow/core_reuse.py export
+        run: python3 .github/scripts/workflow/installer_payload.py export
       - uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
         with: {driver: docker}
       - name: Build workstation ISO live root
@@ -269,6 +269,6 @@ jobs:
         env:
           IMAGE: '${{ needs.metadata.outputs.workstation_iso_image }}'
           ARCHIVE: installer-image.tar
-        run: python3 .github/scripts/workflow/core_reuse.py save
+        run: python3 .github/scripts/workflow/image_archive.py save
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with: {name: installer-image, path: installer-image.tar, compression-level: 0, if-no-files-found: error}

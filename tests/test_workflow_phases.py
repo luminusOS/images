@@ -11,6 +11,13 @@ def workflow(name):
 
 
 class WorkflowPhasesTest(unittest.TestCase):
+    def test_container_editions_keep_explicit_build_dependency_chain(self):
+        jobs = workflow("containers.yml")["jobs"]
+        assert jobs["core"]["needs"] == ["metadata"]
+        assert "core" in jobs["workstation"]["needs"]
+        assert "workstation" in jobs["installer"]["needs"]
+        assert "installer" not in jobs["workstation"]["needs"]
+
     def test_dispatch_inputs_and_candidate_autodetection(self):
         publish = workflow("publish.yml")
         inputs = publish["on"]["workflow_dispatch"]["inputs"]
