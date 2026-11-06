@@ -589,7 +589,9 @@ flowchart TD
 `python3 tools/qemu.py disk`:
 
 - Selects `QEMU_DISK_PATH`, `.test/last-qcow2`, the newest root-level qcow2, or the legacy `.test/disk.qcow2`, in that order.
-- `just qemu run` uses `.test/install-disk.qcow2` and resets NVRAM by default.
+- `just qemu run` uses `.test/install-disk.qcow2` and resets legacy NVRAM by default, except when TPM or Secure Boot is explicitly requested.
+
+`QEMU_TPM=1` and `QEMU_SECURE_BOOT=1` are independent opt-in local VM features; both default to `0`. The launcher supervises QEMU and, when requested, `swtpm`, holding a per-disk lock across reset, creation and execution. Optional TPM and firmware state live under `.test/qemu-vms/<sha256-of-canonical-disk-path>/`, separate from the legacy NVRAM file. Secure Boot selects a QEMU-described raw q35 UEFI firmware pair with enrolled keys and SMM support. Firmware state persists across ISO installation and installed boot; guest-side verification is still required because persistent NVRAM is mutable. These options neither make TPM/Secure Boot mandatory in Sirius nor establish EAC Linux v2 compliance. See [the local testing guide](CONTRIBUTING.md#optional-tpm-20-and-secure-boot) for commands and dependencies.
 
 `python3 tools/install-qemu.py`:
 
