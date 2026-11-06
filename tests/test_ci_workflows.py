@@ -1026,7 +1026,9 @@ class ContainerWorkflowTests(unittest.TestCase):
         )
         steps = build["steps"]
         docker_setup = next(
-            step for step in steps if "docker/setup-docker-action@" in step.get("uses", "")
+            step
+            for step in steps
+            if "docker/setup-docker-action@" in step.get("uses", "")
         )
         self.assertEqual(docker_setup["with"]["set-host"], "true")
         load = next(
