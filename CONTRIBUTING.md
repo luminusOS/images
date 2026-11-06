@@ -72,6 +72,26 @@ just qemu install
 just qemu run
 ```
 
+## Automation and Verification
+
+Repository-owned automation uses Python with explicit `python3` entrypoints. Keep configuration as data and invoke external tools with subprocess argument lists, not `shell=True`. Edition-specific helpers stay under their edition; shared helpers need concrete consumers.
+
+Use Python 3.11 or newer, `just`, and `jq`. Install the pinned development dependencies into an isolated environment with `uv sync --frozen --group dev`, then activate it with `source .venv/bin/activate`.
+
+Run the public quality gates before submitting changes:
+
+```bash
+just check
+just lint
+just test
+```
+
+Python tests use `unittest`; Ruff checks Python style and formatting. Workflow changes also require actionlint. These checks do not replace image builds, ISO/qcow2 packaging, or VM tests.
+
+For installer changes, exercise Sirius from the ISO on a disposable disk and inspect the installed system after first boot. Booting a prebuilt qcow2 does not establish that Sirius works. Claims about signed updates require tests with the expected key, an incorrect key, and an unsigned image, plus update and rollback evidence. Report unavailable runtime checks as blocked, not passed.
+
+Keep runtime evidence tied to the exact source commit, candidate image digests, and SHA256 hashes of the tested ISO/qcow2. Retain the installation and first-boot logs, bootc state before and after update/rollback, signature rejection results, and observed SELinux, firewall, and Secure Boot state. Confirm that the installed system has the intended update reference and contains no Sirius or live-session configuration. A screenshot or an asserted JSON boolean alone is not installation evidence.
+
 ## AI-Assisted Contributions
 
 Contributions made with AI assistance are welcome, but the contributor remains responsible for the change. Do not submit code you do not understand. You must be able to explain what the code does, why it is correct, and what tradeoffs or risks it introduces.

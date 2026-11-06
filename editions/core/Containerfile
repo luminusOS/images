@@ -4,7 +4,13 @@ FROM scratch AS ctx-scripts
 
 COPY shared/scripts /scripts
 
+FROM ${base} AS python-tools
+ARG fedora_version
+RUN dnf -y --releasever="${fedora_version}" install python3 && dnf clean all
+
 FROM ${base}
+
+COPY shared/trust/ /
 
 ARG fedora_version
 ARG distro_version
@@ -20,17 +26,20 @@ LABEL containers.bootc="1" \
       org.opencontainers.image.licenses="Apache-2.0"
 
 RUN --mount=type=bind,from=ctx-scripts,source=/scripts,target=/scripts \
-    bash /scripts/dnf-releasever.sh "${fedora_version}"
+    --mount=type=bind,from=python-tools,source=/usr,target=/opt/python,ro \
+    env PYTHONHOME=/opt/python LD_LIBRARY_PATH=/opt/python/lib64 /opt/python/bin/python3 /scripts/dnf-releasever.py "${fedora_version}"
 
 RUN --mount=type=bind,from=ctx-scripts,source=/scripts,target=/scripts \
-    bash /scripts/rpmdb-repair.sh && \
+    --mount=type=bind,from=python-tools,source=/usr,target=/opt/python,ro \
+    env PYTHONHOME=/opt/python LD_LIBRARY_PATH=/opt/python/lib64 /opt/python/bin/python3 /scripts/rpmdb-repair.py && \
     dnf -y --releasever="${fedora_version}" install firewalld && \
     dnf clean all && \
     rm -rf /var/cache/dnf /var/cache/libdnf5 /tmp/* /var/log/* /var/tmp/*
 
 # Dynamic branding stays late so version-only changes reuse package layers.
 RUN --mount=type=bind,from=ctx-scripts,source=/scripts,target=/scripts \
-    bash /scripts/os-release-set.sh \
+    --mount=type=bind,from=python-tools,source=/usr,target=/opt/python,ro \
+    env PYTHONHOME=/opt/python LD_LIBRARY_PATH=/opt/python/lib64 /opt/python/bin/python3 /scripts/os-release-set.py \
       NAME "${distro_name}" \
       PRETTY_NAME "${distro_pretty_name} ${distro_version}" \
       VERSION "${distro_version}" \

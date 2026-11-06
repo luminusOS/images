@@ -2,6 +2,8 @@
 *.qcow2
 *.7z
 *.log
+__pycache__/
+*.py[cod]
 *.osbuild-manifest.json
 .test/
 .iso-output/
