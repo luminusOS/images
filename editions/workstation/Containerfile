@@ -74,7 +74,7 @@ RUN --mount=type=cache,target=/var/cache/dnf \
     env PYTHONHOME=/opt/python LD_LIBRARY_PATH=/opt/python/lib64 /opt/python/bin/python3 /scripts/rpmdb-repair.py && \
     dnf -y --releasever="${fedora_version}" install \
       kernel dracut kernel-modules-extra \
-      NetworkManager-wifi wpa_supplicant wireless-regdb \
+      NetworkManager-wifi wpa_supplicant wireless-regdb bluez \
       NetworkManager-iodine NetworkManager-iodine-gnome \
       NetworkManager-l2tp NetworkManager-l2tp-gnome \
       NetworkManager-libreswan NetworkManager-libreswan-gnome \
@@ -173,7 +173,6 @@ RUN --mount=type=cache,target=/var/cache/dnf \
       oo7-daemon \
       oo7-portal \
       sushi \
-      gnome-software \
       glycin-thumbnailer \
       gst-thumbnailers \
       papers-thumbnailer \
