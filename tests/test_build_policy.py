@@ -330,10 +330,28 @@ class ReuseTests(unittest.TestCase):
             patch.object(installer_payload, "command") as command,
             patch.object(installer_payload.Path, "mkdir"),
         ):
-            installer_payload.export_payload(image, "testing", "local-image-id")
+            installer_payload.export_payload(
+                image, "testing", "local-image-id", "unix:///tmp/docker.sock"
+            )
         command.assert_called_once_with(
-            ["skopeo", "copy", "docker-daemon:" + image, "oci:.test/payload.oci:latest"]
+            [
+                "skopeo",
+                "copy",
+                "--src-daemon-host",
+                "unix:///tmp/docker.sock",
+                "docker-daemon:" + image,
+                "oci:.test/payload.oci:latest",
+            ]
         )
+
+    def test_testing_payload_rejects_missing_docker_host(self):
+        with (
+            patch.object(installer_payload, "command") as command,
+            patch.object(installer_payload.Path, "mkdir"),
+            self.assertRaisesRegex(ValueError, "requires Docker daemon host"),
+        ):
+            installer_payload.export_payload("local:workstation", "testing", "")
+        command.assert_not_called()
 
     def test_stable_payload_pulls_immutable_digest_reference(self):
         image = "ghcr.io/luminusos/luminusos-workstation:testing-45"
