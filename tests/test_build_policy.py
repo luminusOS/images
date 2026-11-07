@@ -1,6 +1,7 @@
 import hashlib
 import importlib.util
 import json
+import re
 import subprocess
 import tempfile
 import unittest
@@ -94,6 +95,19 @@ class MetadataTests(unittest.TestCase):
 
 
 class ContainerCachePolicyTests(unittest.TestCase):
+    def test_publish_jobs_use_containerd_store_before_loading_archives(self):
+        text = (ROOT / ".github/workflows/publish.yml").read_text()
+        for name in ("publish-images", "publish-stable-installer"):
+            with self.subTest(job=name):
+                section = re.split(
+                    r"\n  [\w-]+:\n", text.split(f"  {name}:\n", 1)[1], maxsplit=1
+                )[0]
+                self.assertLess(
+                    section.index("docker/setup-docker-action@"),
+                    section.index("image_archive.py load"),
+                )
+                self.assertIn('"containerd-snapshotter":true', section)
+
     def test_container_jobs_enable_store_before_docker_import_and_cache_scopes(self):
         text = (ROOT / ".github/workflows/containers.yml").read_text()
         for name, scope in (
