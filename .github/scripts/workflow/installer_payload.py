@@ -12,8 +12,9 @@ def command(args, capture=False):
     return subprocess.run(args, check=True, capture_output=capture, text=True)
 
 
-def export_payload(image, channel, digest):
+def export_payload(image, channel, digest, docker_host=""):
     Path(".test").mkdir(exist_ok=True)
+    options = []
     if channel == "stable":
         if not DIGEST.fullmatch(digest):
             raise ValueError("stable installer requires workstation manifest digest")
@@ -22,10 +23,13 @@ def export_payload(image, channel, digest):
         command(["docker", "tag", immutable, image])
         source = f"docker://{immutable}"
     elif channel == "testing":
+        if not docker_host.strip():
+            raise ValueError("testing installer requires Docker daemon host")
+        options = ["--src-daemon-host", docker_host]
         source = f"docker-daemon:{image}"
     else:
         raise ValueError("invalid channel")
-    command(["skopeo", "copy", source, "oci:.test/payload.oci:latest"])
+    command(["skopeo", "copy", *options, source, "oci:.test/payload.oci:latest"])
 
 
 def main():
@@ -33,7 +37,12 @@ def main():
     parser.add_argument("action", choices=("export",))
     parser.parse_args()
     env = os.environ
-    export_payload(env["IMAGE"], env["CHANNEL"], env.get("WORKSTATION_DIGEST", ""))
+    export_payload(
+        env["IMAGE"],
+        env["CHANNEL"],
+        env.get("WORKSTATION_DIGEST", ""),
+        env.get("DOCKER_HOST", ""),
+    )
 
 
 if __name__ == "__main__":
