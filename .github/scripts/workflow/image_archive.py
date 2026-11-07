@@ -37,8 +37,9 @@ def load(ref, archive, checksum, identity):
         if hashlib.file_digest(stream, "sha256").hexdigest() != checksum:
             raise ValueError("archive checksum mismatch")
     command(["docker", "load", "-i", str(archive)])
-    if image_id(ref) != identity:
-        raise ValueError("loaded image id mismatch")
+    actual = image_id(ref)
+    if actual != identity:
+        raise ValueError(f"loaded image id mismatch: expected {identity}, got {actual}")
 
 
 def main():

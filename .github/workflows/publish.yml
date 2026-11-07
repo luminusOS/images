@@ -169,6 +169,9 @@ jobs:
       workstation_candidate: ${{ steps.candidates.outputs.workstation }}
       installer_candidate: ${{ steps.candidates.outputs.installer }}
     steps:
+      - uses: docker/setup-docker-action@e43656e248c0bd0647d3f5c195d116aacf6fcaf4 # v4.7.0
+        with:
+          daemon-config: '{"features":{"containerd-snapshotter":true}}'
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: sigstore/cosign-installer@d58896d6a1865668819e1d91763c7751a165e159 # v3.9.2
         if: inputs.channel == 'testing'
@@ -276,6 +279,9 @@ jobs:
     outputs:
       installer_candidate: ${{ steps.candidate.outputs.installer }}
     steps:
+      - uses: docker/setup-docker-action@e43656e248c0bd0647d3f5c195d116aacf6fcaf4 # v4.7.0
+        with:
+          daemon-config: '{"features":{"containerd-snapshotter":true}}'
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
