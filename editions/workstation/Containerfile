@@ -168,6 +168,9 @@ RUN --mount=type=cache,target=/var/cache/dnf \
       gnome-initial-setup \
       gnome-shell \
       gnome-backgrounds \
+      tesseract \
+      tesseract-langpack-eng \
+      tesseract-langpack-por \
       ibus \
       nautilus \
       oo7-daemon \
@@ -299,6 +302,9 @@ RUN dnf clean all && \
 
 RUN set -eux; \
     command -v bootc && \
+    ocr_languages="$(tesseract --list-langs)" && \
+    printf '%s\n' "$ocr_languages" | grep -qx eng && \
+    printf '%s\n' "$ocr_languages" | grep -qx por && \
     rpm -q gstreamer1-plugins-good gstreamer1-plugins-bad-free \
       gstreamer1-plugin-openh264 openh264 gstreamer1-plugin-libav \
       glycin-thumbnailer gst-thumbnailers papers-thumbnailer \
