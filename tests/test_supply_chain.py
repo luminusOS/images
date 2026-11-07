@@ -67,9 +67,17 @@ class SupplyChainTests(unittest.TestCase):
                                 "vulnerability": {
                                     "id": "CVE-2025-1234",
                                     "severity": "Critical",
+                                    "fix": {"versions": ["2.0"]},
                                 },
-                                "artifact": {"name": "pkg"},
-                            }
+                                "artifact": {"name": "pkg", "version": "1.0"},
+                            },
+                            {
+                                "vulnerability": {
+                                    "id": "CVE-2025-5678",
+                                    "severity": "High",
+                                },
+                                "artifact": {"name": "other", "version": "3.0"},
+                            },
                         ]
                     }
                 )
@@ -78,7 +86,7 @@ class SupplyChainTests(unittest.TestCase):
 
             with (
                 patch.object(supply_chain.subprocess, "run", side_effect=run),
-                self.assertRaises(supply_chain.SupplyChainError),
+                self.assertRaises(supply_chain.SupplyChainError) as raised,
             ):
                 supply_chain.inspect_image(
                     "repo@sha256:" + "a" * 64,
@@ -87,6 +95,16 @@ class SupplyChainTests(unittest.TestCase):
                     expected_syft_version="1.2.3",
                     expected_grype_version="1.2.3",
                 )
+            self.assertIn(
+                "Critical CVE-2025-1234: pkg 1.0 (fixed versions: 2.0)",
+                str(raised.exception),
+            )
+            self.assertIn(
+                "High CVE-2025-5678: other 3.0 (fixed versions: unknown)",
+                str(raised.exception),
+            )
+            self.assertFalse((output / "scan-evidence.json").exists())
+            self.assertTrue((output / "vulnerabilities.json").exists())
 
     def test_unexpected_tool_version_fails(self):
         with (
