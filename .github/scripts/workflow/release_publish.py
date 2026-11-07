@@ -129,6 +129,8 @@ def write(path: Path, data: object) -> None:
 
 
 def prepare_gates(directory: Path) -> None:
+    if os.environ.get("SECURITY_FINDINGS_BYPASS", "false") != "false":
+        raise ValueError("security bypass cannot authorize release gates")
     for name in ("QUALITY_RESULT", "BOOT_RESULT", "SCAN_RESULT"):
         if os.environ.get(name) != "success":
             raise ValueError(f"required job did not succeed: {name}")
@@ -144,6 +146,11 @@ def prepare_gates(directory: Path) -> None:
         )
         scan = directory / "scan" / name / "scan-evidence.json"
         data = json.loads(scan.read_text(encoding="utf-8"))
+        security = data.get("security")
+        if security is not None and (
+            not isinstance(security, dict) or security.get("gate") != "success"
+        ):
+            raise ValueError("security bypass scan cannot authorize release gates")
         source_sha = (
             os.environ.get("SOURCE_IMAGE_SHA", os.environ["GITHUB_SHA"])
             if name in ("core", "workstation")

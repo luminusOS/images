@@ -13,9 +13,256 @@ SPEC.loader.exec_module(supply_chain)
 
 
 class SupplyChainTests(unittest.TestCase):
+    def bypass_environment(self):
+        return {
+            "SECURITY_FINDINGS_BYPASS": "true",
+            "GITHUB_REPOSITORY": "owner/images",
+            "GITHUB_WORKFLOW_REF": "owner/images/.github/workflows/auto-testing.yml@refs/heads/main",
+            "GITHUB_EVENT_NAME": "workflow_dispatch",
+            "GITHUB_REF": "refs/heads/main",
+            "GITHUB_ACTOR": "operator",
+            "GITHUB_RUN_ID": "123",
+            "GITHUB_SERVER_URL": "https://github.com",
+            "BYPASS_CHANNEL": "testing",
+        }
+
+    def test_bypass_requires_exact_manual_fresh_auto_testing_context(self):
+        with patch.dict("os.environ", self.bypass_environment(), clear=True):
+            self.assertTrue(supply_chain.authorize_bypass())
+        cases = {
+            "GITHUB_EVENT_NAME": "schedule",
+            "GITHUB_REF": "refs/heads/topic",
+            "GITHUB_WORKFLOW_REF": "owner/images/.github/workflows/publish.yml@refs/heads/main",
+            "GITHUB_REPOSITORY": "other/images",
+            "BYPASS_CHANNEL": "stable",
+            "BYPASS_CANDIDATE": "1",
+            "BYPASS_VALIDATION": "2",
+            "BYPASS_TESTING": "3",
+            "BYPASS_TESTING_VALIDATION": "4",
+            "BYPASS_VERSION": "45.20260101",
+        }
+        for field, value in cases.items():
+            with (
+                self.subTest(field=field),
+                patch.dict(
+                    "os.environ", self.bypass_environment() | {field: value}, clear=True
+                ),
+                self.assertRaises(supply_chain.SupplyChainError),
+            ):
+                supply_chain.authorize_bypass()
+
+    def test_default_and_explicit_false_are_strict(self):
+        for environment in (
+            {},
+            {"SECURITY_FINDINGS_BYPASS": "false", "GITHUB_EVENT_NAME": "schedule"},
+        ):
+            with patch.dict("os.environ", environment, clear=True):
+                self.assertFalse(supply_chain.authorize_bypass())
+
+    def test_bypass_audits_clean_and_vulnerable_scans(self):
+        for severity in (None, "High", "Critical", "Unknown"):
+            with (
+                self.subTest(severity=severity),
+                tempfile.TemporaryDirectory() as temporary,
+            ):
+                output = Path(temporary)
+                summary = output / "summary.md"
+                matches = (
+                    []
+                    if severity is None
+                    else [
+                        {
+                            "vulnerability": {
+                                "id": "CVE-2026-1234",
+                                "severity": severity,
+                            },
+                            "artifact": {"name": "pkg", "version": "1.0"},
+                        }
+                    ]
+                )
+
+                def run(argv, matches=matches, **kwargs):
+                    if argv[1] == "version":
+                        return subprocess.CompletedProcess(
+                            argv, 0, "Version: 1.2.3", ""
+                        )
+                    payload = (
+                        {"spdxVersion": "SPDX-2.3", "packages": []}
+                        if argv[0] == "syft"
+                        else {"matches": matches}
+                    )
+                    Path(argv[argv.index("--file") + 1]).write_text(json.dumps(payload))
+                    return subprocess.CompletedProcess(argv, 0, "", "")
+
+                with (
+                    patch.dict(
+                        "os.environ",
+                        self.bypass_environment()
+                        | {"GITHUB_STEP_SUMMARY": str(summary)},
+                        clear=True,
+                    ),
+                    patch.object(supply_chain.subprocess, "run", side_effect=run),
+                ):
+                    manifest = supply_chain.inspect_image(
+                        "repo@sha256:" + "a" * 64,
+                        output,
+                        "b" * 40,
+                        expected_syft_version="1.2.3",
+                        expected_grype_version="1.2.3",
+                    )
+                audit = json.loads(manifest.read_text())["security"]
+                self.assertEqual(audit["gate"], "bypassed")
+                self.assertEqual(audit["actor"], "operator")
+                self.assertEqual(audit["run_id"], "123")
+                self.assertEqual(len(audit["findings"]), int(severity is not None))
+                self.assertEqual(
+                    json.loads((output / "provenance.json").read_text())["predicate"][
+                        "security"
+                    ],
+                    audit,
+                )
+                self.assertIn("NOT eligible for promotion", summary.read_text())
+
     def test_rejects_tag(self):
         with self.assertRaises(supply_chain.SupplyChainError):
             supply_chain._digest_image("registry.example/image:latest")
+
+    def test_bypass_does_not_relax_invalid_scanner_evidence(self):
+        cases = [
+            "not JSON",
+            {"matches": {}},
+            {"matches": [None]},
+            {
+                "matches": [
+                    {
+                        "vulnerability": {"id": "CVE-2026-1234", "severity": "Severe"},
+                        "artifact": {"name": "pkg", "version": "1"},
+                    }
+                ]
+            },
+            {
+                "matches": [
+                    {
+                        "vulnerability": {"id": "CVE-2026-1234", "severity": []},
+                        "artifact": {"name": "pkg", "version": "1"},
+                    }
+                ]
+            },
+            {
+                "matches": [
+                    {
+                        "vulnerability": {"id": "CVE-2026-1234", "severity": "High"},
+                        "artifact": {"name": "pkg"},
+                    }
+                ]
+            },
+        ]
+        for fix in ([], "invalid", {"versions": "1.0"}, {"versions": [None]}):
+            cases.append(
+                {
+                    "matches": [
+                        {
+                            "vulnerability": {
+                                "id": "CVE-2026-1234",
+                                "severity": "High",
+                                "fix": fix,
+                            },
+                            "artifact": {"name": "pkg", "version": "1"},
+                        }
+                    ]
+                }
+            )
+        for payload in cases:
+            with (
+                self.subTest(payload=payload),
+                tempfile.TemporaryDirectory() as temporary,
+            ):
+
+                def run(argv, payload=payload, **kwargs):
+                    if argv[1] == "version":
+                        return subprocess.CompletedProcess(
+                            argv, 0, "Version: 1.2.3", ""
+                        )
+                    value = (
+                        {"spdxVersion": "SPDX-2.3", "packages": []}
+                        if argv[0] == "syft"
+                        else payload
+                    )
+                    Path(argv[argv.index("--file") + 1]).write_text(
+                        value if isinstance(value, str) else json.dumps(value)
+                    )
+                    return subprocess.CompletedProcess(argv, 0, "", "")
+
+                with (
+                    patch.dict("os.environ", self.bypass_environment(), clear=True),
+                    patch.object(supply_chain.subprocess, "run", side_effect=run),
+                    self.assertRaises(supply_chain.SupplyChainError),
+                ):
+                    supply_chain.inspect_image(
+                        "repo@sha256:" + "a" * 64,
+                        Path(temporary),
+                        "b" * 40,
+                        expected_syft_version="1.2.3",
+                        expected_grype_version="1.2.3",
+                    )
+                self.assertFalse((Path(temporary) / "scan-evidence.json").exists())
+
+    def test_bypass_does_not_relax_command_failures_or_digest(self):
+        with (
+            patch.dict("os.environ", self.bypass_environment(), clear=True),
+            tempfile.TemporaryDirectory() as temporary,
+        ):
+            for image, error in (
+                ("repo:tag", None),
+                ("repo@sha256:" + "a" * 64, subprocess.CalledProcessError(1, "grype")),
+            ):
+                with (
+                    self.subTest(image=image),
+                    patch.object(supply_chain.subprocess, "run", side_effect=error),
+                    self.assertRaises(supply_chain.SupplyChainError),
+                ):
+                    supply_chain.inspect_image(
+                        image,
+                        Path(temporary),
+                        "b" * 40,
+                        expected_syft_version="1.2.3",
+                        expected_grype_version="1.2.3",
+                    )
+
+    def test_bypass_scanner_execution_failures_remain_fatal(self):
+        for failed_tool in ("syft", "grype"):
+            with (
+                self.subTest(tool=failed_tool),
+                tempfile.TemporaryDirectory() as temporary,
+            ):
+
+                def run(argv, failed_tool=failed_tool, **kwargs):
+                    if argv[1] == "version":
+                        return subprocess.CompletedProcess(
+                            argv, 0, "Version: 1.2.3", ""
+                        )
+                    if argv[0] == failed_tool:
+                        raise subprocess.CalledProcessError(1, argv)
+                    Path(argv[argv.index("--file") + 1]).write_text(
+                        json.dumps({"spdxVersion": "SPDX-2.3", "packages": []})
+                    )
+                    return subprocess.CompletedProcess(argv, 0, "", "")
+
+                with (
+                    patch.dict("os.environ", self.bypass_environment(), clear=True),
+                    patch.object(supply_chain.subprocess, "run", side_effect=run),
+                    self.assertRaisesRegex(
+                        supply_chain.SupplyChainError, f"command failed: {failed_tool}"
+                    ),
+                ):
+                    supply_chain.inspect_image(
+                        "repo@sha256:" + "a" * 64,
+                        Path(temporary),
+                        "b" * 40,
+                        expected_syft_version="1.2.3",
+                        expected_grype_version="1.2.3",
+                    )
+                self.assertFalse((Path(temporary) / "scan-evidence.json").exists())
 
     def test_inspection_writes_digest_linked_evidence(self):
         with tempfile.TemporaryDirectory() as temporary:
@@ -200,7 +447,10 @@ class SupplyChainTests(unittest.TestCase):
             target = Path(temporary) / "artifact"
             target.write_text("x")
             with (
-                patch.dict("os.environ", {"COSIGN_PRIVATE_KEY": "secret"}),
+                patch.dict(
+                    "os.environ",
+                    self.bypass_environment() | {"COSIGN_PRIVATE_KEY": "secret"},
+                ),
                 patch.object(
                     supply_chain,
                     "_run",
