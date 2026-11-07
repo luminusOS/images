@@ -10,6 +10,10 @@ on:
         description: "Build even if the Fedora base digest is unchanged"
         type: boolean
         default: false
+      security_findings_bypass:
+        description: "Diagnostics only: bypass vulnerability findings; never approve promotion"
+        type: boolean
+        default: false
 
 permissions:
   contents: read
@@ -96,6 +100,7 @@ jobs:
       channel: testing
       build_sequence: true
       force_core: true
+      security_findings_bypass: ${{ github.event_name == 'workflow_dispatch' && inputs.security_findings_bypass || false }}
     secrets:
       COSIGN_PRIVATE_KEY: ${{ secrets.COSIGN_PRIVATE_KEY }}
       COSIGN_PASSWORD: ${{ secrets.COSIGN_PASSWORD }}

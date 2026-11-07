@@ -337,6 +337,48 @@ class ReleasePublisherTests(unittest.TestCase):
             release_publish.prepare_gates(Path("unused"))
         run.assert_not_called()
 
+    def test_bypass_cannot_be_converted_to_successful_release_gates(self):
+        with (
+            patch.dict(
+                release_publish.os.environ,
+                {
+                    "SECURITY_FINDINGS_BYPASS": "true",
+                    "QUALITY_RESULT": "success",
+                    "BOOT_RESULT": "success",
+                    "SCAN_RESULT": "success",
+                },
+            ),
+            patch.object(release_publish.subprocess, "run") as run,
+            self.assertRaisesRegex(ValueError, "bypass"),
+        ):
+            release_publish.prepare_gates(Path("unused"))
+        run.assert_not_called()
+
+    def test_archived_bypass_scan_cannot_become_release_gate(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            directory = Path(temporary)
+            scan = directory / "scan/core/scan-evidence.json"
+            scan.parent.mkdir(parents=True)
+            scan.write_text(json.dumps({"security": {"gate": "bypassed"}}))
+            with (
+                patch.dict(
+                    release_publish.os.environ,
+                    {
+                        "SECURITY_FINDINGS_BYPASS": "false",
+                        "QUALITY_RESULT": "success",
+                        "BOOT_RESULT": "success",
+                        "SCAN_RESULT": "success",
+                        "CORE": "core",
+                        "WORKSTATION": "workstation",
+                        "INSTALLER": "installer",
+                    },
+                ),
+                patch.object(release_publish.subprocess, "run"),
+                self.assertRaisesRegex(ValueError, "bypass"),
+            ):
+                release_publish.prepare_gates(directory)
+            self.assertFalse((directory / "gates").exists())
+
     def test_failed_third_image_preflight_prevents_all_tag_changes(self):
         digest = "sha256:" + "a" * 64
         images = {

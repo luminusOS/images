@@ -13,6 +13,38 @@ class SupplyChainError(ValueError):
     pass
 
 
+def authorize_bypass() -> bool:
+    requested = os.environ.get("SECURITY_FINDINGS_BYPASS", "false")
+    if requested == "false":
+        return False
+    repository = os.environ.get("GITHUB_REPOSITORY", "")
+    if (
+        requested != "true"
+        or not re.fullmatch(r"[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+", repository)
+        or os.environ.get("GITHUB_WORKFLOW_REF")
+        != f"{repository}/.github/workflows/auto-testing.yml@refs/heads/main"
+        or os.environ.get("GITHUB_EVENT_NAME") != "workflow_dispatch"
+        or os.environ.get("GITHUB_REF") != "refs/heads/main"
+        or os.environ.get("BYPASS_CHANNEL") != "testing"
+        or any(
+            os.environ.get(f"BYPASS_{field}")
+            for field in (
+                "CANDIDATE",
+                "VALIDATION",
+                "TESTING",
+                "TESTING_VALIDATION",
+                "VERSION",
+            )
+        )
+        or not os.environ.get("GITHUB_ACTOR")
+        or not re.fullmatch(r"[1-9][0-9]*", os.environ.get("GITHUB_RUN_ID", ""))
+    ):
+        raise SupplyChainError(
+            "security findings bypass requires a fresh manual Auto Testing run on main"
+        )
+    return True
+
+
 def _run(argv: list[str], **kwargs: object) -> subprocess.CompletedProcess[str]:
     try:
         result = subprocess.run(
@@ -102,6 +134,7 @@ def inspect_image(
     expected_syft_version: str,
     expected_grype_version: str,
 ) -> Path:
+    bypass = authorize_bypass()
     digest = _digest_image(image)
     if not re.fullmatch(r"[0-9a-f]{40,64}", source_sha):
         raise SupplyChainError("invalid source commit")
@@ -139,7 +172,10 @@ def inspect_image(
             raise SupplyChainError("malformed Grype vulnerability id")
         if not isinstance(package, str) or not package.strip():
             raise SupplyChainError("malformed Grype package name")
-        if severity not in {
+        version = artifact.get("version")
+        if not isinstance(version, str) or not version.strip():
+            raise SupplyChainError("malformed Grype package version")
+        if not isinstance(severity, str) or severity not in {
             "Negligible",
             "Low",
             "Medium",
@@ -148,29 +184,56 @@ def inspect_image(
             "Unknown",
         }:
             raise SupplyChainError("unknown Grype severity")
+        fix = vulnerability.get("fix", {})
+        if not isinstance(fix, dict):
+            raise SupplyChainError("malformed Grype fix")
+        versions = fix.get("versions", [])
+        if not isinstance(versions, list) or any(
+            not isinstance(value, str) or not value.strip() for value in versions
+        ):
+            raise SupplyChainError("malformed Grype fix versions")
         if severity in {"High", "Critical", "Unknown"}:
             key = (vulnerability_id, package)
             if key not in approved:
-                version = artifact.get("version") or "unknown"
-                fix = vulnerability.get("fix") or {}
-                versions = fix.get("versions", []) if isinstance(fix, dict) else []
-                fixes = (
-                    ", ".join(map(str, versions)) if isinstance(versions, list) else ""
-                )
+                fixes = ", ".join(versions)
                 blocked.add(
                     f"{severity} {vulnerability_id}: {package} {version} "
                     f"(fixed versions: {fixes or 'unknown'})"
                 )
-    if blocked:
+    if blocked and not bypass:
         raise SupplyChainError(
             "unexcepted vulnerabilities:\n" + "\n".join(sorted(blocked))
         )
+    security = {
+        "gate": "bypassed" if bypass else "success",
+        "actor": os.environ.get("GITHUB_ACTOR"),
+        "run_id": os.environ.get("GITHUB_RUN_ID"),
+        "run_url": _run_url(),
+        "workflow_ref": os.environ.get("GITHUB_WORKFLOW_REF"),
+        "findings": sorted(blocked),
+    }
+    if bypass:
+        message = (
+            f"Security findings gate BYPASSED for {image}; "
+            f"actor={security['actor']}, run={security['run_id']}, "
+            f"findings={len(blocked)}. Diagnostic artifacts are NOT eligible for promotion."
+        )
+        print(f"::warning::{message}")
+        if summary := os.environ.get("GITHUB_STEP_SUMMARY"):
+            with Path(summary).open("a", encoding="utf-8") as stream:
+                stream.write(
+                    f"\n### Security bypass: diagnostics only\n\n{message}\n\n"
+                )
+                stream.write(
+                    "\n".join(f"- {finding}" for finding in sorted(blocked)) + "\n"
+                )
     provenance_path = output / "provenance.json"
     provenance = {
         "_type": "https://in-toto.io/Statement/v1",
         "predicateType": "https://luminusos.org/provenance/v1",
         "subject": [{"name": image, "digest": {"sha256": digest}}],
         "predicate": {
+            "security": security,
             "source": {
                 "commit": source_sha,
                 "repository": os.environ.get("GITHUB_REPOSITORY"),
@@ -199,6 +262,7 @@ def inspect_image(
                 "image": image,
                 "digest": digest,
                 "source_sha": source_sha,
+                "security": security,
                 "tools": {"syft": syft_version, "grype": grype_version},
                 "files": {
                     name: _file_hash(output / name)
@@ -305,6 +369,7 @@ def sign_file(path: Path, public_key: Path) -> Path:
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser()
     commands = parser.add_subparsers(dest="command", required=True)
+    commands.add_parser("validate-bypass")
     inspect = commands.add_parser("inspect")
     inspect.add_argument("--image", required=True)
     inspect.add_argument("--output", type=Path, required=True)
@@ -319,7 +384,9 @@ def main(argv: list[str] | None = None) -> int:
     sign.add_argument("--public-key", type=Path, required=True)
     args = parser.parse_args(argv)
     try:
-        if args.command == "inspect":
+        if args.command == "validate-bypass":
+            authorize_bypass()
+        elif args.command == "inspect":
             inspect_image(
                 args.image,
                 args.output,

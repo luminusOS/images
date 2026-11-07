@@ -49,6 +49,7 @@ name: Image Publication
       testing_validation_run_id: {type: string, default: ""}
       build_sequence: {type: boolean, default: false}
       force_core: {type: boolean, default: false}
+      security_findings_bypass: {type: boolean, default: false}
     secrets:
       COSIGN_PRIVATE_KEY: {required: true}
       COSIGN_PASSWORD: {required: false}
@@ -60,6 +61,15 @@ name: Image Publication
 permissions:
   contents: read
 
+env:
+  SECURITY_FINDINGS_BYPASS: ${{ inputs.security_findings_bypass || false }}
+  BYPASS_CHANNEL: ${{ inputs.channel }}
+  BYPASS_CANDIDATE: ${{ inputs.candidate_run_id }}
+  BYPASS_VALIDATION: ${{ inputs.validation_run_id }}
+  BYPASS_TESTING: ${{ inputs.testing_run_id }}
+  BYPASS_TESTING_VALIDATION: ${{ inputs.testing_validation_run_id }}
+  BYPASS_VERSION: ${{ inputs.promote_version }}
+
 concurrency:
   group: luminus-release-${{ github.repository }}
   cancel-in-progress: false
@@ -68,6 +78,10 @@ jobs:
   inputs:
     runs-on: ubuntu-latest
     steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with: {persist-credentials: false}
+      - name: Authorize diagnostic security bypass
+        run: python3 .github/scripts/workflow/supply_chain.py validate-bypass
       - name: Validate phase inputs
         env:
           CANDIDATE: ${{ inputs.candidate_run_id }}
@@ -111,7 +125,7 @@ jobs:
   stable-source:
     name: Verify approved testing candidate
     needs: [quality, inputs]
-    if: github.ref == 'refs/heads/main' && inputs.candidate_run_id == '' && inputs.validation_run_id == '' && inputs.channel == 'stable'
+    if: ${{ !inputs.security_findings_bypass && github.ref == 'refs/heads/main' && inputs.candidate_run_id == '' && inputs.validation_run_id == '' && inputs.channel == 'stable' }}
     runs-on: ubuntu-latest
     permissions: {contents: read, actions: read}
     outputs:
@@ -487,7 +501,7 @@ jobs:
   prepare-candidate:
     name: Bind candidate artifacts
     needs: [quality, containers, publish-images, stable-source, stable-installer, publish-stable-installer, iso, qcow2, boot-test]
-    if: ${{ always() && github.ref == 'refs/heads/main' && inputs.candidate_run_id == '' && needs.quality.result == 'success' && needs.iso.result == 'success' && needs.qcow2.result == 'success' && needs.boot-test.result == 'success' && ((inputs.channel == 'testing' && needs.publish-images.result == 'success') || (inputs.channel == 'stable' && needs.publish-stable-installer.result == 'success')) }}
+    if: ${{ always() && !inputs.security_findings_bypass && github.ref == 'refs/heads/main' && inputs.candidate_run_id == '' && needs.quality.result == 'success' && needs.iso.result == 'success' && needs.qcow2.result == 'success' && needs.boot-test.result == 'success' && ((inputs.channel == 'testing' && needs.publish-images.result == 'success') || (inputs.channel == 'stable' && needs.publish-stable-installer.result == 'success')) }}
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -553,7 +567,7 @@ jobs:
   release:
     name: Promote validated candidate
     needs: [quality, inputs]
-    if: github.ref == 'refs/heads/main' && inputs.candidate_run_id != '' && inputs.validation_run_id != ''
+    if: ${{ !inputs.security_findings_bypass && github.ref == 'refs/heads/main' && inputs.candidate_run_id != '' && inputs.validation_run_id != '' }}
     runs-on: ubuntu-latest
     permissions:
       actions: read

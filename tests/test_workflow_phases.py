@@ -11,6 +11,44 @@ def workflow(name):
 
 
 class WorkflowPhasesTest(unittest.TestCase):
+    def test_security_bypass_is_manual_auto_testing_only_and_cron_is_false(self):
+        auto = workflow("auto-testing.yml")
+        triggers = auto.get("on", auto.get(True))
+        self.assertEqual(
+            triggers["workflow_dispatch"]["inputs"]["security_findings_bypass"][
+                "default"
+            ],
+            False,
+        )
+        self.assertEqual(
+            auto["jobs"]["prepare"]["with"]["security_findings_bypass"],
+            "${{ github.event_name == 'workflow_dispatch' && inputs.security_findings_bypass || false }}",
+        )
+        publish = workflow("publish.yml")
+        self.assertNotIn(
+            "security_findings_bypass", publish["on"]["workflow_dispatch"]["inputs"]
+        )
+        self.assertEqual(
+            publish["on"]["workflow_call"]["inputs"]["security_findings_bypass"],
+            {"type": "boolean", "default": False},
+        )
+        self.assertEqual(
+            publish["env"]["SECURITY_FINDINGS_BYPASS"],
+            "${{ inputs.security_findings_bypass || false }}",
+        )
+        authorization = publish["jobs"]["inputs"]["steps"]
+        self.assertIn("validate-bypass", authorization[1]["run"])
+        for job in ("containers", "stable-source", "release"):
+            self.assertIn("inputs", publish["jobs"][job]["needs"])
+
+    def test_bypass_blocks_candidate_and_promotion_even_when_scans_succeed(self):
+        jobs = workflow("publish.yml")["jobs"]
+        for name in ("prepare-candidate", "stable-source", "release"):
+            with self.subTest(job=name):
+                self.assertIn("!inputs.security_findings_bypass", jobs[name]["if"])
+        for name in ("publish-images", "iso", "qcow2"):
+            self.assertNotIn("!inputs.security_findings_bypass", jobs[name]["if"])
+
     def test_workflow_names_describe_the_build_responsibility(self):
         self.assertEqual(
             workflow("containers.yml")["name"], "Image Build Orchestration"

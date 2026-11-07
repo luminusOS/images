@@ -64,6 +64,14 @@ Dispatch the installation workflow with the successful preparation run's `candid
 
 Stable eligibility checks the supported Fedora release and whether upstream `fedora-bootc:latest` has reached that Fedora major version. An upstream rebuild does not invalidate the tested candidate merely because the current base digest differs; the original base digest remains recorded as provenance.
 
+### Diagnostic Auto Testing builds
+
+The manual Auto Testing dispatch offers an opt-in vulnerability bypass, disabled by default. Use it only to investigate or boot-test a candidate while waiting for upstream package fixes. Scheduled runs and ordinary publication remain strict. This option is restricted to a fresh testing build from Auto Testing on `main`; it is not available for stable preparation or resumption.
+
+The bypass permits validated blocking vulnerability findings, not missing or malformed scan results, failed scanners, invalid signatures, digest mismatches, or invalid provenance. Scanning still runs, findings remain in the evidence, and the execution records the bypass with an explicit warning. This is acceptance of risk for that diagnostic execution, not an approved false-positive exception or a successful vulnerability gate.
+
+A bypassed execution may produce signed image candidates and diagnostic ISO/qcow2 artifacts, but never a signed `release-candidate`, even if its scan happens to be clean. It cannot be used for installation approval, channel promotion, stable preparation, or release publication through this workflow. To obtain a promotable candidate, run a new strict preparation and satisfy all ordinary gates; clearing a checkbox during resumption cannot rehabilitate a bypassed build.
+
 Configure the publication signing key, SourceForge credentials, and R2 credentials before resumption. GitHub release assets contain `SHA256SUMS`, its signature, and `evidence.tar.gz`; ISO and qcow2 downloads are published through R2 and SourceForge. Promotion and download publication span external services and are not an atomic transaction: inspect completed steps before retrying an interrupted release.
 
 ## How Universal Blue (Bluefin) does it
