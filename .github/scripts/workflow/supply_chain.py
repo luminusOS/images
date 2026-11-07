@@ -124,6 +124,7 @@ def inspect_image(
     if not isinstance(matches, list):
         raise SupplyChainError("malformed Grype scan")
     approved = _exceptions(exceptions)
+    blocked = set()
     for match in matches:
         if not isinstance(match, dict):
             raise SupplyChainError("malformed Grype match")
@@ -150,7 +151,20 @@ def inspect_image(
         if severity in {"High", "Critical", "Unknown"}:
             key = (vulnerability_id, package)
             if key not in approved:
-                raise SupplyChainError(f"unexcepted {severity} vulnerability")
+                version = artifact.get("version") or "unknown"
+                fix = vulnerability.get("fix") or {}
+                versions = fix.get("versions", []) if isinstance(fix, dict) else []
+                fixes = (
+                    ", ".join(map(str, versions)) if isinstance(versions, list) else ""
+                )
+                blocked.add(
+                    f"{severity} {vulnerability_id}: {package} {version} "
+                    f"(fixed versions: {fixes or 'unknown'})"
+                )
+    if blocked:
+        raise SupplyChainError(
+            "unexcepted vulnerabilities:\n" + "\n".join(sorted(blocked))
+        )
     provenance_path = output / "provenance.json"
     provenance = {
         "_type": "https://in-toto.io/Statement/v1",
