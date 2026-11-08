@@ -155,9 +155,23 @@ class ProbeTests(unittest.TestCase):
         for required in (
             'uid="$(id -u)"',
             'test "$uid" -ne 0',
-            'sudo -n -u "#$uid" -g kvm -- /usr/bin/env -i',
+            'passwd_entry="$(getent passwd "$uid")"',
+            'user="${passwd_entry%%:*}"',
+            'test "$(id -u "$user")" = "$uid"',
+            'group_entry="$(getent group kvm)"',
+            'IFS=: read -r group_name _ gid _ <<< "$group_entry"',
+            'test "$group_name" = kvm',
+            'test -n "$gid"',
+            "test -x /usr/sbin/runuser",
+            "/usr/sbin/runuser --version",
+            "sudo -n -l",
+            'sudo -n -- /usr/sbin/runuser -u "$user" -g kvm --',
+            "/usr/bin/env -i PATH=/usr/bin:/bin LANG=C.UTF-8",
+            '"${helper[@]}" /usr/bin/id',
+            'test "$actual_uid" = "$uid"',
+            'test "$actual_gid" = "$gid"',
             '--expected-uid "$uid"',
-            'id >"$output/runner-identity.stdout"',
+            '>"$output/runner-identity.stdout" 2>"$output/runner-identity.stderr"',
             '>"$output/launcher.stdout" 2>"$output/launcher.stderr"',
             'ImageVersion="${ImageVersion:-}"',
         ):
@@ -173,9 +187,23 @@ class ProbeTests(unittest.TestCase):
             "-u root",
             "sudo python",
             "sudo bash",
+            "sudo -n -u",
+            "|| true",
             "${{",
         ):
             self.assertNotIn(forbidden, launcher)
+        self.assertEqual(
+            [
+                line.strip()
+                for line in launcher.splitlines()
+                if line.strip().startswith("sudo ")
+            ],
+            ["sudo -n -l", 'sudo -n -- /usr/sbin/runuser -u "$user" -g kvm --'],
+        )
+        self.assertLess(
+            launcher.index('test "$actual_gid" = "$gid"'),
+            launcher.index("/usr/bin/python3"),
+        )
 
     def test_identity_guard_precedes_resources_and_kvm(self):
         for uid, gid, expected, accepted in (

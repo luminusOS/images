@@ -32,12 +32,36 @@ jobs:
           set -euo pipefail
           output="${RUNNER_TEMP}/vm-capability-probe"
           mkdir -p "$output"
-          id >"$output/runner-identity.stdout" 2>"$output/runner-identity.stderr"
-          uid="$(id -u)"
-          test "$uid" -ne 0
           {
-            sudo -n -u "#$uid" -g kvm -- /usr/bin/env -i \
-              PATH=/usr/bin:/bin LANG=C.UTF-8 \
+            id
+            uid="$(id -u)"
+            test "$uid" -ne 0
+            passwd_entry="$(getent passwd "$uid")"
+            printf '%s\n' "$passwd_entry"
+            user="${passwd_entry%%:*}"
+            test "$(id -u "$user")" = "$uid"
+            group_entry="$(getent group kvm)"
+            printf '%s\n' "$group_entry"
+            IFS=: read -r group_name _ gid _ <<< "$group_entry"
+            test "$group_name" = kvm
+            test -n "$gid"
+            test -x /usr/sbin/runuser
+            /usr/sbin/runuser --version
+            sudo -n -l
+            helper=(
+              sudo -n -- /usr/sbin/runuser -u "$user" -g kvm --
+              /usr/bin/env -i PATH=/usr/bin:/bin LANG=C.UTF-8
+            )
+            "${helper[@]}" /usr/bin/id
+            actual_uid="$("${helper[@]}" /usr/bin/id -u)"
+            actual_gid="$("${helper[@]}" /usr/bin/id -g)"
+            printf 'Expected UID=%s GID=%s; actual UID=%s GID=%s\n' \
+              "$uid" "$gid" "$actual_uid" "$actual_gid"
+            test "$actual_uid" = "$uid"
+            test "$actual_gid" = "$gid"
+          } >"$output/runner-identity.stdout" 2>"$output/runner-identity.stderr"
+          {
+            "${helper[@]}" \
               GITHUB_SHA="$GITHUB_SHA" GITHUB_REF="$GITHUB_REF" \
               GITHUB_RUN_ID="$GITHUB_RUN_ID" ImageVersion="${ImageVersion:-}" \
               /usr/bin/python3 .github/scripts/ci-vm-probe.py "$output" \
