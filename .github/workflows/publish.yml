@@ -346,7 +346,7 @@ jobs:
     name: Package ISO
     needs: [containers, publish-images, stable-source, stable-installer, publish-stable-installer]
     if: ${{ always() && inputs.candidate_run_id == '' && ((needs.containers.result == 'success' && needs.publish-images.result == 'success' && inputs.channel == 'testing') || (needs.stable-source.result == 'success' && needs.stable-installer.result == 'success' && needs.publish-stable-installer.result == 'success' && inputs.channel == 'stable')) }}
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 180
     permissions:
       contents: read
@@ -396,7 +396,7 @@ jobs:
     name: Package qcow2
     needs: [containers, publish-images, stable-source, stable-installer, publish-stable-installer]
     if: ${{ always() && inputs.candidate_run_id == '' && ((needs.containers.result == 'success' && needs.publish-images.result == 'success' && inputs.channel == 'testing') || (needs.stable-source.result == 'success' && needs.stable-installer.result == 'success' && needs.publish-stable-installer.result == 'success' && inputs.channel == 'stable')) }}
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 180
     permissions:
       contents: read
