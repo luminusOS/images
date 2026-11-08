@@ -151,6 +151,70 @@ class ProbeTests(unittest.TestCase):
         self.assertIn("!cancelled()", job["steps"][2]["if"])
         self.assertEqual(job["steps"][-1]["if"], "always()")
         self.assertEqual(job["steps"][-1]["with"]["if-no-files-found"], "error")
+        launcher = job["steps"][2]["run"]
+        for required in (
+            'uid="$(id -u)"',
+            'test "$uid" -ne 0',
+            'sudo -n -u "#$uid" -g kvm -- /usr/bin/env -i',
+            '--expected-uid "$uid"',
+            'id >"$output/runner-identity.stdout"',
+            '>"$output/launcher.stdout" 2>"$output/launcher.stderr"',
+            'ImageVersion="${ImageVersion:-}"',
+        ):
+            self.assertIn(required, launcher)
+        for name in ("GITHUB_SHA", "GITHUB_REF", "GITHUB_RUN_ID"):
+            self.assertIn(f'{name}="${name}"', launcher)
+        for forbidden in (
+            "-E",
+            "usermod",
+            "udev",
+            "AppArmor",
+            "chmod",
+            "-u root",
+            "sudo python",
+            "sudo bash",
+            "${{",
+        ):
+            self.assertNotIn(forbidden, launcher)
+
+    def test_identity_guard_precedes_resources_and_kvm(self):
+        for uid, gid, expected, accepted in (
+            (1001, 993, 1001, True),
+            (0, 993, 1001, False),
+            (1002, 993, 1001, False),
+            (1001, 1001, 1001, False),
+            (0, 993, 0, False),
+        ):
+            with (
+                self.subTest(uid=uid, gid=gid, expected=expected),
+                tempfile.TemporaryDirectory() as temporary,
+            ):
+                output = Path(temporary)
+                with (
+                    patch.object(probe.os, "geteuid", return_value=uid),
+                    patch.object(probe.os, "getegid", return_value=gid),
+                    patch.object(probe.os, "getgroups", return_value=[gid]),
+                    patch.object(probe.grp, "getgrnam") as group,
+                    patch.object(
+                        Path, "read_text", side_effect=ValueError("resources sentinel")
+                    ) as read,
+                    patch.object(probe, "check_kvm") as kvm,
+                    patch.object(probe, "qmp_probe") as qmp,
+                ):
+                    group.return_value.gr_gid = 993
+                    self.assertEqual(probe.run_probe(output, expected), 1)
+                    self.assertEqual(read.call_count, int(accepted))
+                    kvm.assert_not_called()
+                    qmp.assert_not_called()
+                result = json.loads((output / "manifest.json").read_text())
+                self.assertEqual(result["status"], "failed")
+                self.assertEqual(result["identity"]["euid"], uid)
+                self.assertEqual(result["identity"]["egid"], gid)
+                self.assertEqual(result["identity"]["expected_uid"], expected)
+                self.assertEqual(result["identity"]["expected_gid"], 993)
+                self.assertEqual(
+                    set(result["errors"]), {"resources" if accepted else "identity"}
+                )
 
     def test_kvm_metadata_survives_denied_open(self):
         original_stat = os.stat
