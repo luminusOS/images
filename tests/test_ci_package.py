@@ -176,21 +176,22 @@ class PackageTests(unittest.TestCase):
                 self.assertEqual(os.environ["WORKSTATION_ISO_IMAGE"], INDEX_IMAGE)
             calls = run.call_args_list
             self.assertEqual(
-                calls[1].args[0],
+                calls[2].args[0],
                 ["podman", "login", "ghcr.io", "-u", "tester", "--password-stdin"],
             )
-            self.assertEqual(calls[1].kwargs["input"], "test-secret")
+            self.assertEqual(calls[2].kwargs["input"], "test-secret")
             self.assertIn("skopeo", calls[0].args[0])
+            self.assertEqual(Path(calls[1].args[0][1]).name, "ci-mount-probe.py")
             self.assertEqual(
-                calls[2].args[0],
+                calls[3].args[0],
                 ["skopeo", "inspect", "--raw", f"docker://{INDEX_IMAGE}"],
             )
             self.assertEqual(
-                calls[3].args[0],
+                calls[4].args[0],
                 ["podman", "pull", f"ghcr.io/example/live@{CHILD_DIGEST}"],
             )
             self.assertEqual(
-                calls[4].args[0],
+                calls[5].args[0],
                 [
                     "python3",
                     "./tools/package-artifact.py",
@@ -200,7 +201,7 @@ class PackageTests(unittest.TestCase):
                 ],
             )
             self.assertEqual(
-                calls[4].kwargs["env"]["IMAGE_BUILDER_CACHE"],
+                calls[5].kwargs["env"]["IMAGE_BUILDER_CACHE"],
                 str(Path.cwd() / ".osbuild-cache"),
             )
 
@@ -225,6 +226,36 @@ class PackageTests(unittest.TestCase):
                 commands,
             )
 
+    def test_probe_failure_stops_before_registry_access(self) -> None:
+        for format_name, image_key in (
+            ("iso", "WORKSTATION_ISO_IMAGE"),
+            ("qcow2", "WORKSTATION_IMAGE"),
+        ):
+            with (
+                self.subTest(format_name=format_name),
+                patch.dict(
+                    os.environ,
+                    {
+                        image_key: INDEX_IMAGE,
+                        "OUTPUT_NAME": "output",
+                        "GHCR_USER": "tester",
+                        "GHCR_TOKEN": "test-secret",
+                    },
+                    clear=True,
+                ),
+                patch.object(sys, "argv", ["ci-package.py", format_name]),
+                patch.object(ci_package.subprocess, "run") as run,
+            ):
+                run.side_effect = [
+                    Mock(),
+                    subprocess.CalledProcessError(1, ["mount-probe"]),
+                ]
+                self.assertEqual(ci_package.main(), 1)
+                self.assertEqual(len(run.call_args_list), 2)
+                self.assertEqual(
+                    Path(run.call_args_list[1].args[0][1]).name, "ci-mount-probe.py"
+                )
+
     def test_inspect_failure_stops_before_pull_or_packaging(self) -> None:
         for failure in (
             subprocess.CalledProcessError(1, ["skopeo", "inspect"]),
@@ -242,10 +273,11 @@ class PackageTests(unittest.TestCase):
             ):
                 run.side_effect = [
                     Mock(),
+                    Mock(),
                     failure if isinstance(failure, Exception) else Mock(stdout=failure),
                 ]
                 self.assertEqual(ci_package.main(), 1)
-                self.assertEqual(len(run.call_args_list), 2)
+                self.assertEqual(len(run.call_args_list), 3)
 
 
 if __name__ == "__main__":

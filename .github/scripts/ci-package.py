@@ -78,6 +78,10 @@ def main() -> int:
         subprocess.run(
             ["dnf", "-y", "install", "image-builder", "podman", "skopeo"], check=True
         )
+        subprocess.run(
+            ["python3", str(Path(__file__).with_name("ci-mount-probe.py"))],
+            check=True,
+        )
         if token:
             subprocess.run(
                 ["podman", "login", "ghcr.io", "-u", user, "--password-stdin"],
