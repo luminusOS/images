@@ -133,6 +133,7 @@ def run_probe(output):
     output.mkdir(parents=True, exist_ok=True)
     result = {
         "status": "failed",
+        "errors": {},
         "started_unix_seconds": time.time(),
         "required": ["resources", "firmware", "kvm", "qemu", "qmp"],
         "guest_security_validated": False,
@@ -147,6 +148,7 @@ def run_probe(output):
         },
     }
     write_json(output / "manifest.json", result)
+    stage = "resources"
     try:
         meminfo = Path("/proc/meminfo").read_text()
         (output / "meminfo.txt").write_text(meminfo)
@@ -174,14 +176,33 @@ def run_probe(output):
                 capture(output, "swtpm-version", [swtpm, "--version"])
             except (OSError, subprocess.SubprocessError) as error:
                 result["tpm_tool"]["error"] = str(error)
-        result["firmware_sha256"] = {
-            str(path): hashlib.sha256(path.read_bytes()).hexdigest()
-            for path in secure_firmware({})
-        }
+        stage = "firmware"
+        result["firmware_descriptors"] = {}
+        try:
+            inventory = output / "firmware-descriptors"
+            inventory.mkdir(exist_ok=True)
+            for index, directory in enumerate(
+                ("/etc/qemu/firmware", "/usr/share/qemu/firmware")
+            ):
+                for descriptor in sorted(Path(directory).glob("*.json")):
+                    destination = inventory / f"{index}-{descriptor.name}"
+                    destination.write_bytes(descriptor.read_bytes())
+                    result["firmware_descriptors"][str(descriptor)] = str(
+                        destination.relative_to(output)
+                    )
+            result["firmware_sha256"] = {
+                str(path): hashlib.sha256(path.read_bytes()).hexdigest()
+                for path in secure_firmware({})
+            }
+        except (OSError, ValueError, TypeError) as error:
+            result["errors"]["firmware"] = f"{type(error).__name__}: {error}"
+        stage = "kvm"
         result["kvm_api"] = check_kvm()
+        stage = "qemu"
         capture(output, "qemu-version", ["qemu-system-x86_64", "--version"])
+        stage = "qmp"
         result["qmp"] = qmp_probe(output)
-        result["status"] = "passed"
+        result["status"] = "failed" if result["errors"] else "passed"
     except (
         OSError,
         ValueError,
@@ -190,6 +211,7 @@ def run_probe(output):
         KeyboardInterrupt,
     ) as error:
         result["error"] = f"{type(error).__name__}: {error}"
+        result["errors"][stage] = result["error"]
     finally:
         result["finished_unix_seconds"] = time.time()
         write_json(output / "manifest.json", result)

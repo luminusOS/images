@@ -93,17 +93,44 @@ class ProbeTests(unittest.TestCase):
 
     def test_manifest_and_resources_survive_required_failure(self):
         with tempfile.TemporaryDirectory() as temporary:
-            output = Path(temporary)
+            output = Path(temporary) / "output"
+            descriptor = Path(temporary) / "secure.json"
+            descriptor.write_bytes(b'{"mapping":{}}\n')
             with (
                 patch.object(probe.shutil, "which", return_value=None),
                 patch.object(
+                    Path,
+                    "glob",
+                    autospec=True,
+                    side_effect=lambda directory, pattern: (
+                        [descriptor]
+                        if directory == Path("/usr/share/qemu/firmware")
+                        else []
+                    ),
+                ),
+                patch.object(
                     probe, "secure_firmware", side_effect=ValueError("missing")
                 ),
+                patch.object(probe, "check_kvm", return_value=12) as kvm,
+                patch.object(probe, "capture") as capture,
+                patch.object(
+                    probe, "qmp_probe", return_value={"kvm": {"enabled": True}}
+                ) as qmp,
             ):
                 self.assertEqual(probe.run_probe(output), 1)
+            kvm.assert_called_once_with()
+            capture.assert_called_once_with(
+                output, "qemu-version", ["qemu-system-x86_64", "--version"]
+            )
+            qmp.assert_called_once_with(output)
             result = json.loads((output / "manifest.json").read_text())
             self.assertEqual(result["status"], "failed")
-            self.assertIn("missing", result["error"])
+            self.assertEqual(set(result["errors"]), {"firmware"})
+            self.assertIn("missing", result["errors"]["firmware"])
+            saved = output / result["firmware_descriptors"][str(descriptor)]
+            self.assertEqual(saved.read_bytes(), descriptor.read_bytes())
+            self.assertEqual(result["kvm_api"], 12)
+            self.assertTrue(result["qmp"]["kvm"]["enabled"])
             self.assertFalse(result["guest_security_validated"])
             self.assertGreater(result["resources"]["disk_bytes"]["free"], 0)
             self.assertTrue((output / "meminfo.txt").is_file())
