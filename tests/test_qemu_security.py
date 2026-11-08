@@ -124,8 +124,32 @@ class QemuSecurityTests(unittest.TestCase):
                     }
                 )
             )
-            with patch.object(Path, "glob", return_value=[descriptor]):
-                self.assertEqual(qemu_security.secure_firmware({}), (code, variables))
+            template = descriptor.read_text()
+            for mode, omitted in (
+                (None, None),
+                ("split", None),
+                ("combined", None),
+                ("stateless", None),
+                (None, "enrolled-keys"),
+                (None, "requires-smm"),
+            ):
+                with self.subTest(mode=mode, omitted=omitted):
+                    data = json.loads(template)
+                    if mode is None:
+                        del data["mapping"]["mode"]
+                    else:
+                        data["mapping"]["mode"] = mode
+                    if omitted:
+                        data["features"].remove(omitted)
+                    descriptor.write_text(json.dumps(data))
+                    with patch.object(Path, "glob", return_value=[descriptor]):
+                        if omitted or mode in ("combined", "stateless"):
+                            with self.assertRaises(ValueError):
+                                qemu_security.secure_firmware({})
+                        else:
+                            self.assertEqual(
+                                qemu_security.secure_firmware({}), (code, variables)
+                            )
 
     def test_secure_firmware_rejects_unenrolled_keys(self):
         with tempfile.TemporaryDirectory() as tmp:

@@ -48,7 +48,7 @@ def secure_firmware(env):
             if (
                 "uefi" in data["interface-types"]
                 and mapping["device"] == "flash"
-                and mapping["mode"] == "split"
+                and mapping.get("mode", "split") == "split"
                 and executable["format"] == template["format"] == "raw"
                 and {"secure-boot", "enrolled-keys", "requires-smm"} <= features
                 and compatible
