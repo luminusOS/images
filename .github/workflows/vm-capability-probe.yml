@@ -28,7 +28,21 @@ jobs:
       - name: Record capabilities, not guest validation
         if: ${{ !cancelled() }}
         timeout-minutes: 2
-        run: python3 .github/scripts/ci-vm-probe.py "${RUNNER_TEMP}/vm-capability-probe"
+        run: |
+          set -euo pipefail
+          output="${RUNNER_TEMP}/vm-capability-probe"
+          mkdir -p "$output"
+          id >"$output/runner-identity.stdout" 2>"$output/runner-identity.stderr"
+          uid="$(id -u)"
+          test "$uid" -ne 0
+          {
+            sudo -n -u "#$uid" -g kvm -- /usr/bin/env -i \
+              PATH=/usr/bin:/bin LANG=C.UTF-8 \
+              GITHUB_SHA="$GITHUB_SHA" GITHUB_REF="$GITHUB_REF" \
+              GITHUB_RUN_ID="$GITHUB_RUN_ID" ImageVersion="${ImageVersion:-}" \
+              /usr/bin/python3 .github/scripts/ci-vm-probe.py "$output" \
+              --expected-uid "$uid"
+          } >"$output/launcher.stdout" 2>"$output/launcher.stderr"
       - name: Preserve evidence including failures
         if: always()
         timeout-minutes: 3

@@ -131,7 +131,7 @@ def qmp_probe(output, timeout=10):
     return {"kvm": kvm, "state": state}
 
 
-def run_probe(output):
+def run_probe(output, expected_uid=None):
     output.mkdir(parents=True, exist_ok=True)
     result = {
         "status": "failed",
@@ -150,8 +150,23 @@ def run_probe(output):
         },
     }
     write_json(output / "manifest.json", result)
-    stage = "resources"
+    stage = "identity"
     try:
+        identity = result["identity"] = {
+            "euid": os.geteuid(),
+            "egid": os.getegid(),
+            "groups": os.getgroups(),
+            "expected_uid": expected_uid,
+        }
+        if expected_uid is not None:
+            identity["expected_gid"] = grp.getgrnam("kvm").gr_gid
+            if (
+                expected_uid <= 0
+                or identity["euid"] != expected_uid
+                or identity["egid"] != identity["expected_gid"]
+            ):
+                raise ValueError("expected non-root runner UID and primary kvm GID")
+        stage = "resources"
         meminfo = Path("/proc/meminfo").read_text()
         (output / "meminfo.txt").write_text(meminfo)
         memory = {
@@ -229,6 +244,7 @@ def run_probe(output):
         result["status"] = "failed" if result["errors"] else "passed"
     except (
         OSError,
+        KeyError,
         ValueError,
         TypeError,
         subprocess.SubprocessError,
@@ -245,12 +261,14 @@ def run_probe(output):
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument("output", type=Path)
+    parser.add_argument("--expected-uid", type=int, required=True)
 
     def interrupted(signum, frame):
         raise KeyboardInterrupt(f"received signal {signum}")
 
     previous = signal.signal(signal.SIGTERM, interrupted)
     try:
-        sys.exit(run_probe(parser.parse_args().output))
+        arguments = parser.parse_args()
+        sys.exit(run_probe(arguments.output, arguments.expected_uid))
     finally:
         signal.signal(signal.SIGTERM, previous)
