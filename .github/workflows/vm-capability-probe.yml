@@ -1,0 +1,39 @@
+name: VM capability probe
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  probe:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Install probe tooling
+        timeout-minutes: 8
+        run: |
+          set -euo pipefail
+          output="${RUNNER_TEMP}/vm-capability-probe"
+          mkdir -p "$output"
+          df -B1 "$output" >"$output/disk-before-apt.stdout" 2>"$output/disk-before-apt.stderr"
+          { sudo apt-get update; } >"$output/apt-update.stdout" 2>"$output/apt-update.stderr"
+          {
+            sudo apt-get install --no-install-recommends -y qemu-system-x86 ovmf swtpm
+          } >"$output/apt-install.stdout" 2>"$output/apt-install.stderr"
+      - name: Record capabilities, not guest validation
+        if: ${{ !cancelled() }}
+        timeout-minutes: 2
+        run: python3 .github/scripts/ci-vm-probe.py "${RUNNER_TEMP}/vm-capability-probe"
+      - name: Preserve evidence including failures
+        if: always()
+        timeout-minutes: 3
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: vm-capability-probe-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/vm-capability-probe/
+          if-no-files-found: error
