@@ -1,12 +1,14 @@
 #!/usr/bin/env python3
 import argparse
 import fcntl
+import grp
 import hashlib
 import json
 import os
 import platform
 import shutil
 import signal
+import stat
 import subprocess
 import sys
 import time
@@ -197,6 +199,28 @@ def run_probe(output):
         except (OSError, ValueError, TypeError) as error:
             result["errors"]["firmware"] = f"{type(error).__name__}: {error}"
         stage = "kvm"
+        device = result["kvm_device"] = {}
+        try:
+            metadata = os.stat("/dev/kvm")
+            device.update(
+                file_type=stat.S_IFMT(metadata.st_mode),
+                mode=oct(stat.S_IMODE(metadata.st_mode)),
+                uid=metadata.st_uid,
+                gid=metadata.st_gid,
+            )
+            try:
+                device["group"] = grp.getgrgid(metadata.st_gid).gr_name
+            except KeyError as error:
+                device["group_error"] = f"{type(error).__name__}: {error}"
+        except OSError as error:
+            device["stat_error"] = f"{type(error).__name__}: {error}"
+        getfacl = shutil.which("getfacl")
+        device["acl"] = {"available": bool(getfacl), "required": False}
+        if getfacl:
+            try:
+                capture(output, "kvm-getfacl", [getfacl, "--", "/dev/kvm"])
+            except (OSError, subprocess.SubprocessError) as error:
+                device["acl"]["error"] = f"{type(error).__name__}: {error}"
         result["kvm_api"] = check_kvm()
         stage = "qemu"
         capture(output, "qemu-version", ["qemu-system-x86_64", "--version"])

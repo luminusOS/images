@@ -152,6 +152,83 @@ class ProbeTests(unittest.TestCase):
         self.assertEqual(job["steps"][-1]["if"], "always()")
         self.assertEqual(job["steps"][-1]["with"]["if-no-files-found"], "error")
 
+    def test_kvm_metadata_survives_denied_open(self):
+        original_stat = os.stat
+        metadata = os.stat_result((0o20660, 0, 0, 1, 0, 108, 0, 0, 0, 0))
+        for failure in (None, "stat", "group", "acl"):
+            with (
+                self.subTest(failure=failure),
+                tempfile.TemporaryDirectory() as temporary,
+            ):
+                output = Path(temporary)
+
+                def device_stat(path, *args, failure=failure, **kwargs):
+                    if path != "/dev/kvm":
+                        return original_stat(path, *args, **kwargs)
+                    if failure == "stat":
+                        raise FileNotFoundError("stat unavailable")
+                    return metadata
+
+                def acl_capture(directory, name, command, failure=failure):
+                    (directory / f"{name}.stdout").write_text("acl evidence\n")
+                    (directory / f"{name}.stderr").write_text("acl stderr\n")
+                    if failure == "acl":
+                        raise subprocess.CalledProcessError(1, command)
+
+                with (
+                    patch.object(probe.os, "stat", side_effect=device_stat),
+                    patch.object(probe.grp, "getgrgid") as group,
+                    patch.object(
+                        probe.shutil,
+                        "which",
+                        side_effect=lambda name, failure=failure: (
+                            "/usr/bin/getfacl"
+                            if name == "getfacl" and failure != "stat"
+                            else None
+                        ),
+                    ),
+                    patch.object(Path, "glob", return_value=[]),
+                    patch.object(probe, "secure_firmware", return_value=()),
+                    patch.object(probe, "capture", side_effect=acl_capture) as capture,
+                    patch.object(
+                        probe,
+                        "check_kvm",
+                        side_effect=PermissionError(13, "denied", "/dev/kvm"),
+                    ),
+                ):
+                    group.return_value.gr_name = "kvm"
+                    group.side_effect = KeyError(108) if failure == "group" else None
+                    self.assertEqual(probe.run_probe(output), 1)
+                result = json.loads((output / "manifest.json").read_text())
+                self.assertEqual(result["status"], "failed")
+                self.assertEqual(result["errors"], {"kvm": result["error"]})
+                self.assertIn("PermissionError: [Errno 13]", result["error"])
+                device = result["kvm_device"]
+                if failure == "stat":
+                    self.assertIn("stat unavailable", device["stat_error"])
+                    self.assertFalse(device["acl"]["available"])
+                    capture.assert_not_called()
+                else:
+                    self.assertEqual(
+                        [device[key] for key in ("file_type", "mode", "uid", "gid")],
+                        [0o20000, "0o660", 0, 108],
+                    )
+                    group.assert_called_once_with(108)
+                    if failure == "group":
+                        self.assertIn("group_error", device)
+                    else:
+                        self.assertEqual(device["group"], "kvm")
+                    capture.assert_called_once_with(
+                        output, "kvm-getfacl", ["/usr/bin/getfacl", "--", "/dev/kvm"]
+                    )
+                    self.assertEqual(
+                        (output / "kvm-getfacl.stdout").read_text(), "acl evidence\n"
+                    )
+                    self.assertEqual(
+                        (output / "kvm-getfacl.stderr").read_text(), "acl stderr\n"
+                    )
+                    self.assertEqual("error" in device["acl"], failure == "acl")
+
 
 if __name__ == "__main__":
     unittest.main()
