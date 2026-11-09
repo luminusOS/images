@@ -5,6 +5,7 @@ from __future__ import annotations
 import argparse
 import datetime as dt
 import hashlib
+import importlib.util
 import json
 import os
 import re
@@ -32,11 +33,13 @@ CHECKS = (
 GATES = ("quality", "boot", "signature", "sbom", "vulnerability")
 SHA = re.compile(r"[0-9a-f]{64}\Z")
 COMMIT = re.compile(r"[0-9a-f]{40}\Z")
+DIGEST = re.compile(r"sha256:[0-9a-f]{64}\Z")
 REPO = re.compile(r"[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+\Z")
 GIB = 1024**3
 MAX_FILE = 20 * GIB
 MAX_ARCHIVE = 64 * GIB
 MAX_FILES = 1000
+MAX_CORE_BUILD_BYTES = 64 * 1024
 CHUNK_SIZE = 1024 * 1024
 
 
@@ -60,7 +63,21 @@ def require_space(directory: Path, size: int) -> None:
 
 
 def load(path: Path) -> dict:
-    value = json.loads(path.read_text(encoding="utf-8"))
+    def unique_keys(pairs):
+        result = {}
+        for key, value in pairs:
+            require(key not in result, f"duplicate JSON key: {key}")
+            result[key] = value
+        return result
+
+    def invalid_constant(value):
+        raise ValueError(f"invalid JSON constant: {value}")
+
+    value = json.loads(
+        path.read_text(encoding="utf-8"),
+        object_pairs_hook=unique_keys,
+        parse_constant=invalid_constant,
+    )
     require(isinstance(value, dict), f"not an object: {path}")
     return value
 
@@ -147,15 +164,45 @@ def write(path: Path, value: dict) -> None:
     )
 
 
-def candidate(path: Path, key: Path) -> dict:
+def candidate(
+    path: Path, key: Path, *, context: dict | None = None, legacy_only: bool = False
+) -> dict:
     safe_file(path.parent, path.name)
     verify(path, key)
     c = load(path)
-    validate_candidate(c, path.parent)
+    if legacy_only:
+        legacy_candidate(c)
+    validate_candidate(
+        c,
+        path.parent,
+        context=context,
+        official_key_fingerprint=digest(key) if c.get("schema_version") == 2 else None,
+    )
     return c
 
 
-def validate_candidate(c: dict, directory: Path) -> None:
+def validate_candidate(
+    c: dict,
+    directory: Path,
+    *,
+    context: dict | None = None,
+    official_key_fingerprint: str | None = None,
+) -> None:
+    require(isinstance(c, dict), "invalid candidate object")
+    if "schema_version" in c:
+        require(
+            type(c["schema_version"]) is int
+            and c["schema_version"] == 2
+            and "version" not in c,
+            "invalid candidate version",
+        )
+        validate_core_candidate(
+            c,
+            directory,
+            context=context,
+            official_key_fingerprint=official_key_fingerprint,
+        )
+        return
     require(
         c.get("version") == 1 and type(c.get("version")) is int,
         "invalid candidate version",
@@ -213,6 +260,416 @@ def validate_candidate(c: dict, directory: Path) -> None:
         checked_file(directory, name, value)
 
 
+def object_fields(value: object, fields: set[str], name: str) -> dict:
+    require(isinstance(value, dict) and set(value) == fields, f"invalid {name} fields")
+    return value
+
+
+def matches(value: object, pattern: re.Pattern, name: str) -> None:
+    require(isinstance(value, str) and pattern.fullmatch(value), f"invalid {name}")
+
+
+def core_inputs_hash(root: Path, fedora: str, base: str) -> str:
+    spec = importlib.util.spec_from_file_location(
+        "release_core_reuse", Path(__file__).with_name("core_reuse.py")
+    )
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module.inputs_hash(root, fedora, base)
+
+
+def core_context(run: dict, source_root: Path, expected: dict) -> dict:
+    """Bind trusted API run data and protected inputs to a clean source checkout.
+
+    The caller supplies independently authorized run data and configuration, never
+    values copied from the candidate. The checkout must be the producer revision.
+    """
+    object_fields(
+        expected,
+        {"fedora", "channel", "architecture", "base_digest", "policy_sha256"},
+        "trusted core inputs",
+    )
+    matches(expected["fedora"], re.compile(r"[1-9][0-9]*\Z"), "trusted Fedora")
+    matches(expected["base_digest"], DIGEST, "trusted base digest")
+    matches(expected["policy_sha256"], SHA, "trusted policy hash")
+    require(expected["architecture"] == "x86_64", "invalid trusted architecture")
+    require(expected["channel"] in ("testing", "stable"), "invalid trusted channel")
+    repository = run.get("repository", {}).get("full_name")
+    run_id = run.get("id")
+    require(isinstance(repository, str) and type(run_id) is int, "invalid trusted run")
+    authorize_run(
+        run,
+        repository,
+        run_id,
+        {".github/workflows/publish.yml", ".github/workflows/auto-testing.yml"},
+    )
+    require(
+        type(run.get("run_attempt")) is int and run["run_attempt"] > 0,
+        "invalid trusted run attempt",
+    )
+    require(
+        isinstance(source_root, Path)
+        and source_root.is_dir()
+        and not source_root.is_symlink(),
+        "missing trusted source",
+    )
+    head = subprocess.run(
+        ["git", "-C", str(source_root), "rev-parse", "HEAD"],
+        check=True,
+        capture_output=True,
+        text=True,
+    ).stdout.strip()
+    require(head == run["head_sha"], "trusted source revision mismatch")
+    status = subprocess.run(
+        [
+            "git",
+            "-C",
+            str(source_root),
+            "status",
+            "--porcelain",
+            "--untracked-files=all",
+            "--ignored",
+            "--",
+            "editions/core",
+            "shared/trust",
+            "shared/scripts/dnf-releasever.py",
+            "shared/scripts/os-release-set.py",
+            "shared/scripts/rpmdb-repair.py",
+        ],
+        check=True,
+        capture_output=True,
+        text=True,
+    ).stdout
+    require(not status, "dirty trusted core inputs")
+    return expected | {
+        "repository": repository,
+        "source_sha": run["head_sha"],
+        "source_ref": "refs/heads/" + run["head_branch"],
+        "run_id": run_id,
+        "run_attempt": run["run_attempt"],
+        "workflow": run["path"],
+        "inputs_sha256": core_inputs_hash(
+            source_root, expected["fedora"], expected["base_digest"]
+        ),
+    }
+
+
+def validate_core_candidate(
+    c: dict,
+    directory: Path,
+    *,
+    context: dict | None = None,
+    official_key_fingerprint: str | None = None,
+) -> None:
+    object_fields(
+        c,
+        {
+            "kind",
+            "schema_version",
+            "evidence_class",
+            "identity",
+            "components",
+            "artifacts",
+            "installed",
+            "core_dependency",
+            "validation_images",
+        },
+        "candidate v2",
+    )
+    require(
+        type(c["schema_version"]) is int and c["schema_version"] == 2,
+        "invalid candidate version",
+    )
+    require(c["kind"] == "candidate", "invalid candidate kind")
+    require(
+        c["evidence_class"] == "runtime",
+        "invalid candidate version: v2 requires runtime evidence, not synthetic examples",
+    )
+    identity = object_fields(
+        c["identity"],
+        {
+            "repository",
+            "source_sha",
+            "source_ref",
+            "run_id",
+            "run_attempt",
+            "fedora",
+            "architecture",
+            "selection",
+            "channel",
+            "build_version",
+            "base_digest",
+            "core_digest",
+            "policy_sha256",
+        },
+        "candidate identity",
+    )
+    require(identity["selection"] == "core", "v2 workstation/all reader requires T5")
+    matches(identity["repository"], REPO, "repository")
+    matches(identity["source_sha"], COMMIT, "source sha")
+    for field in ("run_id", "run_attempt"):
+        require(
+            type(identity[field]) is int and identity[field] > 0, f"invalid {field}"
+        )
+    matches(identity["fedora"], re.compile(r"[1-9][0-9]*\Z"), "Fedora line")
+    require(identity["architecture"] == "x86_64", "invalid architecture")
+    require(identity["channel"] in ("testing", "stable"), "invalid channel")
+    expected_ref = (
+        "refs/heads/main"
+        if identity["channel"] == "testing"
+        else f"refs/heads/release/{identity['fedora']}"
+    )
+    require(
+        identity["source_ref"] == expected_ref, "source branch/channel/Fedora mismatch"
+    )
+    matches(
+        identity["build_version"],
+        re.compile(rf"{identity['fedora']}\.[0-9]{{8}}(?:\.[1-9][0-9]*)?\Z"),
+        "build version",
+    )
+    date = identity["build_version"].split(".")[1]
+    dt.date(int(date[:4]), int(date[4:6]), int(date[6:]))
+    for field in ("base_digest", "core_digest"):
+        matches(identity[field], DIGEST, field)
+    matches(identity["policy_sha256"], SHA, "policy hash")
+    owner = identity["repository"].split("/")[0].lower()
+    matches(owner, re.compile(r"[a-z0-9-]+\Z"), "image namespace")
+    repository = f"ghcr.io/{owner}/luminusos"
+    components = object_fields(c["components"], {"core"}, "core components")
+    image = object_fields(components["core"], {"repository", "digest"}, "core image")
+    require(
+        image == {"repository": repository, "digest": identity["core_digest"]},
+        "core image identity mismatch",
+    )
+    object_fields(c["artifacts"], set(), "core artifacts")
+    installed = object_fields(c["installed"], {"core"}, "installed editions")["core"]
+    target = ("testing-" if identity["channel"] == "testing" else "") + identity[
+        "fedora"
+    ]
+    require(
+        installed
+        == {
+            "edition": "core",
+            "channel": identity["channel"],
+            "fedora": identity["fedora"],
+            "reference": f"{repository}:{target}",
+            "digest": identity["core_digest"],
+        },
+        "installed identity mismatch",
+    )
+    dependency = object_fields(
+        c["core_dependency"],
+        {
+            "mode",
+            "digest",
+            "evidence_sha256",
+            "source_sha",
+            "source_ref",
+            "fedora",
+            "channel",
+            "architecture",
+            "base_digest",
+            "policy_sha256",
+        },
+        "core dependency",
+    )
+    require(dependency["mode"] == "built", "v2 core reuse requires T5")
+    require(
+        dependency["digest"] == identity["core_digest"],
+        "core dependency digest mismatch",
+    )
+    for field in (
+        "source_sha",
+        "source_ref",
+        "fedora",
+        "channel",
+        "architecture",
+        "base_digest",
+        "policy_sha256",
+    ):
+        require(
+            dependency[field] == identity[field], f"core dependency {field} mismatch"
+        )
+    matches(dependency["evidence_sha256"], SHA, "core evidence hash")
+    object_fields(
+        context,
+        {
+            "repository",
+            "source_sha",
+            "source_ref",
+            "run_id",
+            "run_attempt",
+            "workflow",
+            "fedora",
+            "channel",
+            "architecture",
+            "base_digest",
+            "policy_sha256",
+            "inputs_sha256",
+        },
+        "trusted core context",
+    )
+    for field in context.keys() - {"workflow", "inputs_sha256"}:
+        require(
+            type(context[field]) is type(identity[field])
+            and context[field] == identity[field],
+            f"trusted core {field} mismatch",
+        )
+    matches(context["inputs_sha256"], SHA, "trusted inputs hash")
+    require(
+        context["workflow"]
+        in {".github/workflows/publish.yml", ".github/workflows/auto-testing.yml"},
+        "untrusted core workflow",
+    )
+    proof_path = safe_file(directory, "core/core-build.json")
+    require(
+        0 < proof_path.stat().st_size <= MAX_CORE_BUILD_BYTES,
+        "invalid core build proof size",
+    )
+    checked_file(directory, "core/core-build.json", dependency["evidence_sha256"], True)
+    proof = load(proof_path)
+    object_fields(
+        proof,
+        {
+            "kind",
+            "schema_version",
+            "digest",
+            "source_sha",
+            "source_ref",
+            "fedora",
+            "channel",
+            "architecture",
+            "base_digest",
+            "policy_sha256",
+            "inputs_sha256",
+            "run_id",
+            "run_attempt",
+            "workflow",
+        },
+        "core build proof",
+    )
+    require(
+        proof["kind"] == "core-build"
+        and type(proof["schema_version"]) is int
+        and proof["schema_version"] == 2,
+        "invalid core build proof kind/version",
+    )
+    require(proof["digest"] == identity["core_digest"], "core build digest mismatch")
+    for field in proof.keys() - {"kind", "schema_version", "digest"}:
+        require(
+            type(proof[field]) is type(context[field])
+            and proof[field] == context[field],
+            f"core build {field} mismatch",
+        )
+    matches(official_key_fingerprint, SHA, "official key fingerprint")
+    inputs = object_fields(c["validation_images"], {"core"}, "validation editions")[
+        "core"
+    ]
+    object_fields(
+        inputs, {"update", "signed", "unsigned", "foreign"}, "validation images"
+    )
+    for role, item in inputs.items():
+        object_fields(
+            item,
+            {
+                "digest",
+                "derived_from",
+                "logical_reference",
+                "signing_key_fingerprint",
+                "producer",
+                "producer_evidence",
+            },
+            f"{role} image",
+        )
+        matches(item["digest"], DIGEST, f"{role} digest")
+        matches(item["derived_from"], DIGEST, f"{role} source digest")
+        require(
+            item["logical_reference"] == f"{repository}@{item['digest']}",
+            f"{role} logical reference mismatch",
+        )
+        if role == "unsigned":
+            require(
+                item["signing_key_fingerprint"] is None, "unsigned fixture has signer"
+            )
+        else:
+            matches(item["signing_key_fingerprint"], SHA, f"{role} signing key")
+        producer = object_fields(
+            item["producer"],
+            {
+                "repository",
+                "source_sha",
+                "source_ref",
+                "workflow",
+                "run_id",
+                "run_attempt",
+            },
+            f"{role} producer",
+        )
+        require(
+            all(
+                type(producer[field]) is type(context[field])
+                and producer[field] == context[field]
+                for field in (
+                    "repository",
+                    "source_sha",
+                    "source_ref",
+                    "workflow",
+                    "run_id",
+                    "run_attempt",
+                )
+            ),
+            "validation image producer requires T5",
+        )
+        files = item["producer_evidence"]
+        require(
+            isinstance(files, list) and 0 < len(files) <= MAX_FILES,
+            "missing producer evidence",
+        )
+        paths = set()
+        for entry in files:
+            object_fields(
+                entry, {"path", "sha256", "size_bytes"}, "evidence descriptor"
+            )
+            matches(
+                entry["path"],
+                re.compile(
+                    r"[A-Za-z0-9_-][A-Za-z0-9._-]*(?:/[A-Za-z0-9_-][A-Za-z0-9._-]*)*\Z"
+                ),
+                "evidence path",
+            )
+            require(entry["path"] not in paths, "duplicate producer evidence")
+            paths.add(entry["path"])
+            require(
+                type(entry["size_bytes"]) is int
+                and 0 < entry["size_bytes"] <= MAX_FILE,
+                "invalid evidence size",
+            )
+            path = safe_file(directory, entry["path"])
+            require(
+                path.stat().st_size == entry["size_bytes"], "evidence size mismatch"
+            )
+            checked_file(directory, entry["path"], entry["sha256"], True)
+    b_digest = inputs["update"]["digest"]
+    require(
+        b_digest != identity["core_digest"]
+        and inputs["update"]["derived_from"] == identity["core_digest"]
+        and inputs["signed"]["digest"] == b_digest
+        and all(
+            inputs[role]["derived_from"] == b_digest
+            for role in ("signed", "unsigned", "foreign")
+        )
+        and len({inputs[role]["digest"] for role in ("signed", "unsigned", "foreign")})
+        == 3,
+        "validation image derivation mismatch",
+    )
+    require(
+        inputs["update"]["signing_key_fingerprint"] == official_key_fingerprint
+        and inputs["signed"]["signing_key_fingerprint"] == official_key_fingerprint
+        and inputs["foreign"]["signing_key_fingerprint"] != official_key_fingerprint,
+        "validation image signing identity mismatch",
+    )
+
+
 def create_candidate(metadata: Path, directory: Path, output: Path, key: Path) -> dict:
     require(
         directory.is_dir() and not directory.is_symlink(), "invalid artifact directory"
@@ -227,6 +684,7 @@ def create_candidate(metadata: Path, directory: Path, output: Path, key: Path) -
         "symlink candidate destination",
     )
     c = load(metadata)
+    legacy_candidate(c)
     fields = {
         "version",
         "repository",
@@ -293,6 +751,7 @@ def create_candidate(metadata: Path, directory: Path, output: Path, key: Path) -
 
 
 def candidate_outputs(c: dict, path: Path) -> None:
+    legacy_candidate(c)
     outputs = (
         {f"{name}_candidate": image for name, image in c["images"].items()}
         | {
@@ -332,8 +791,13 @@ def run_info(repository: str, run_id: int, workflows: set[str]) -> dict:
             text=True,
         ).stdout
     )
+    return authorize_run(run, repository, run_id, workflows)
+
+
+def authorize_run(run: dict, repository: str, run_id: int, workflows: set[str]) -> dict:
     require(
-        run.get("id") == run_id
+        type(run.get("id")) is int
+        and run["id"] == run_id
         and run.get("repository", {}).get("full_name") == repository,
         "run repository/id mismatch",
     )
@@ -472,6 +936,7 @@ def download(repository: str, run_id: int, name: str, output: Path) -> None:
 
 
 def binding(c: dict) -> dict:
+    legacy_candidate(c)
     return {k: c[k] for k in ("repository", "source_sha", "images", "artifacts")} | {
         "source_run_id": c["run_id"],
         "candidate_digest": c["images"]["workstation"].split("@", 1)[1],
@@ -492,6 +957,7 @@ def timestamp(value: object) -> dt.datetime:
 
 
 def validate_receipts(receipts: object, base: Path, c: dict) -> None:
+    legacy_candidate(c)
     require(
         isinstance(receipts, list) and len(receipts) == len(CHECKS), "missing receipts"
     )
@@ -523,10 +989,13 @@ def validate_receipts(receipts: object, base: Path, c: dict) -> None:
 
 
 def validate_validation(path: Path, key: Path, c: dict) -> dict:
+    legacy_candidate(c)
     verify(path, key)
     v = load(path)
     require(
-        type(v.get("version")) is int and v["version"] == 1,
+        "schema_version" not in v
+        and type(v.get("version")) is int
+        and v["version"] == 1,
         "invalid validation version",
     )
     require(v.get("binding") == binding(c), "validation candidate mismatch")
@@ -545,6 +1014,13 @@ def validate_validation(path: Path, key: Path, c: dict) -> dict:
     )
     validate_receipts(v.get("receipts"), path.parent, c)
     return v
+
+
+def legacy_candidate(c: dict) -> None:
+    require("schema_version" not in c, "v2 legacy consumers require T5")
+    require(
+        type(c.get("version")) is int and c["version"] == 1, "invalid candidate version"
+    )
 
 
 def main() -> int:
@@ -569,6 +1045,9 @@ def main() -> int:
         choices=[".github/workflows/publish.yml", ".github/workflows/auto-testing.yml"],
         default=None,
     )
+    f.add_argument("--source-root", type=Path)
+    for field in ("fedora", "base-digest", "policy-sha256", "channel"):
+        f.add_argument("--" + field)
     r = sub.add_parser("record-validation")
     for x in ("candidate", "receipts", "output", "public-key"):
         r.add_argument("--" + x, required=True, type=Path)
@@ -606,7 +1085,27 @@ def main() -> int:
             run = run_info(a.repository, a.run_id, workflows)
             download(a.repository, a.run_id, "release-candidate", a.output)
             path = a.output / "candidate.json"
-            c = candidate(path, a.public_key)
+            context = None
+            if a.source_root is not None:
+                context = core_context(
+                    run,
+                    a.source_root,
+                    {
+                        "fedora": a.fedora,
+                        "base_digest": a.base_digest,
+                        "policy_sha256": a.policy_sha256,
+                        "channel": a.channel,
+                        "architecture": "x86_64",
+                    },
+                )
+            c = candidate(path, a.public_key, context=context)
+            if c.get("schema_version") == 2:
+                print(
+                    json.dumps(
+                        {"schema_version": 2, "selection": "core", "read_only": True}
+                    )
+                )
+                return 0
             require(
                 c["repository"] == a.repository
                 and c["run_id"] == a.run_id
@@ -615,7 +1114,8 @@ def main() -> int:
             )
             candidate_outputs(c, path)
         elif a.action == "record-validation":
-            c = candidate(a.candidate, a.public_key)
+            c = candidate(a.candidate, a.public_key, legacy_only=True)
+            legacy_candidate(c)
             require(
                 os.environ.get("GITHUB_REPOSITORY") == c["repository"]
                 and os.environ.get("GITHUB_REF") == "refs/heads/main",
@@ -652,7 +1152,8 @@ def main() -> int:
                 a.workflow == ".github/workflows/installation-validation.yml",
                 "workflow not locally allowlisted",
             )
-            c = candidate(a.candidate, a.public_key)
+            c = candidate(a.candidate, a.public_key, legacy_only=True)
+            legacy_candidate(c)
             require(c["repository"] == a.repository, "candidate repository mismatch")
             run = run_info(a.repository, a.run_id, {a.workflow})
             download(a.repository, a.run_id, "installation-validation", a.output)
@@ -665,7 +1166,7 @@ def main() -> int:
             )
             print(json.dumps({"validation_file": str(path)}))
         else:
-            c = candidate(a.candidate, a.public_key)
+            c = candidate(a.candidate, a.public_key, legacy_only=True)
             validation = validate_validation(a.validation, a.public_key, c)
             results = load(a.results)
             require(set(results) == set(GATES), "missing or extra gate results")

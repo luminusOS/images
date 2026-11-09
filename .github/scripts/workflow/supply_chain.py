@@ -3,10 +3,12 @@ import hashlib
 import json
 import os
 import re
+import stat
 import subprocess
 import sys
-from datetime import UTC, date, datetime
-from pathlib import Path
+from datetime import UTC, datetime, timedelta
+from pathlib import Path, PurePosixPath
+from urllib.parse import parse_qs, unquote
 
 
 class SupplyChainError(ValueError):
@@ -75,54 +77,380 @@ def _version(tool: str, expected: str) -> str:
     return reported
 
 
+def _json_pairs(pairs):
+    result = {}
+    for key, value in pairs:
+        if key in result:
+            raise SupplyChainError(f"duplicate JSON key: {key}")
+        result[key] = value
+    return result
+
+
+def _invalid_constant(value):
+    raise SupplyChainError(f"invalid JSON constant: {value}")
+
+
+def _decode_json(raw, label):
+    try:
+        return json.loads(
+            raw, object_pairs_hook=_json_pairs, parse_constant=_invalid_constant
+        )
+    except (UnicodeError, json.JSONDecodeError, RecursionError) as error:
+        raise SupplyChainError(f"invalid JSON: {label}") from error
+
+
 def _load_json(path: Path) -> object:
     try:
-        return json.loads(path.read_text(encoding="utf-8"))
-    except (OSError, json.JSONDecodeError) as error:
+        return _decode_json(path.read_text(encoding="utf-8"), path.name)
+    except (OSError, UnicodeError) as error:
         raise SupplyChainError(f"invalid JSON output: {path.name}") from error
 
 
-def _exceptions(path: Path | None) -> set[tuple[str, str]]:
-    if path is None:
-        return set()
-    raw = _load_json(path)
-    entries = raw.get("exceptions") if isinstance(raw, dict) else None
-    if not isinstance(entries, list):
-        raise SupplyChainError("exceptions must contain an exceptions array")
-    approved: set[tuple[str, str]] = set()
-    today = datetime.now(UTC).date()
-    for entry in entries:
-        if not isinstance(entry, dict) or set(entry) != {
-            "cve",
-            "package",
-            "reason",
-            "expires",
-        }:
-            raise SupplyChainError(
-                "exception must specify only cve, package, reason, expires"
-            )
-        cve, package, reason, expires = (
-            entry[key] for key in ("cve", "package", "reason", "expires")
+def _require(condition, message):
+    if not condition:
+        raise SupplyChainError(message)
+
+
+def _matches(pattern, value):
+    return isinstance(value, str) and re.fullmatch(pattern, value) is not None
+
+
+EXACT_NAME = r"[A-Za-z0-9][A-Za-z0-9._+:/@-]*"
+SHA256 = r"[0-9a-f]{64}"
+ADVISORY = (
+    r"(?:CVE-[0-9]{4}-[0-9]{4,}|"
+    r"GHSA-[23456789cfghjmpqrvwx]{4}-[23456789cfghjmpqrvwx]{4}-"
+    r"[23456789cfghjmpqrvwx]{4}|GO-[0-9]{4}-[0-9]{4,})"
+)
+SCOPE_FIELDS = ("edition", "component_scope", "channel", "fedora")
+EXCEPTION_FIELDS = {
+    "advisory",
+    "package",
+    "package_version",
+    *SCOPE_FIELDS,
+    "owner",
+    "reason",
+    "classification",
+    "component_type",
+    "evidence",
+    "issued_at",
+    "expires_at",
+}
+
+
+def _safe_bytes(path, limit=1024 * 1024):
+    path = Path(path)
+    _require(".." not in path.parts, "unsafe policy/evidence path")
+    absolute = Path(os.path.abspath(path))
+    directory = None
+    try:
+        flags = os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW
+        directory = os.open(absolute.anchor, flags)
+        for part in absolute.parts[1:-1]:
+            child = os.open(part, flags, dir_fd=directory)
+            os.close(directory)
+            directory = child
+        descriptor = os.open(
+            absolute.name,
+            os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK,
+            dir_fd=directory,
         )
-        if (
-            not isinstance(cve, str)
-            or not re.fullmatch(r"CVE-\d{4}-\d{4,}", cve)
-            or not isinstance(package, str)
-            or not package.strip()
-            or package.strip() in {"*", "all"}
-            or not isinstance(reason, str)
-            or len(reason.strip()) < 10
-            or not isinstance(expires, str)
-        ):
-            raise SupplyChainError("invalid or unjustified vulnerability exception")
+        with os.fdopen(descriptor, "rb") as stream:
+            metadata = os.fstat(stream.fileno())
+            _require(
+                stat.S_ISREG(metadata.st_mode) and 0 < metadata.st_size <= limit,
+                "policy/evidence must be a bounded nonempty regular file",
+            )
+            data = stream.read(limit + 1)
+            _require(0 < len(data) <= limit, "policy/evidence size limit exceeded")
+            return data
+    except OSError as error:
+        raise SupplyChainError(f"cannot safely read policy/evidence: {path}") from error
+    finally:
+        if directory is not None:
+            os.close(directory)
+
+
+def _clock(now):
+    value = datetime.now(UTC) if now is None else now
+    _require(
+        isinstance(value, datetime) and value.utcoffset() == timedelta(0),
+        "evaluation clock must be an aware UTC datetime",
+    )
+    return value
+
+
+def _timestamp(value):
+    match = (
+        re.fullmatch(
+            r"([0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2})"
+            r"(?:\.([0-9]+))?Z",
+            value,
+        )
+        if isinstance(value, str)
+        else None
+    )
+    _require(match is not None, "exception timestamps must use RFC3339 UTC Z")
+    try:
+        whole = datetime.fromisoformat(match[1]).replace(tzinfo=UTC)
+    except ValueError as error:
+        raise SupplyChainError("invalid exception calendar timestamp") from error
+    return whole, (match[2] or "").rstrip("0")
+
+
+def _scope(context):
+    _require(
+        isinstance(context, dict) and set(context) == set(SCOPE_FIELDS),
+        "v2 exceptions require independent edition/component/channel/Fedora context",
+    )
+    scopes = {
+        "core": {"core_payload"},
+        "workstation": {"workstation_payload", "installer_live"},
+    }
+    _require(
+        isinstance(context["edition"], str)
+        and context["edition"] in scopes
+        and isinstance(context["component_scope"], str)
+        and context["component_scope"] in scopes[context["edition"]]
+        and context["channel"] in ("testing", "stable")
+        and _matches(r"[1-9][0-9]*", context["fedora"]),
+        "unknown or incompatible exception scope",
+    )
+
+
+def _exception_key(entry):
+    return tuple(
+        entry[name]
+        for name in ("advisory", "package", "package_version", *SCOPE_FIELDS)
+    )
+
+
+def _exception_hash(entry):
+    raw = (
+        json.dumps(entry, sort_keys=True, indent=2, ensure_ascii=True, allow_nan=False)
+        + "\n"
+    )
+    return hashlib.sha256(raw.encode("utf-8")).hexdigest()
+
+
+def _exceptions(path, *, context=None, now=None, expected_sha256=None):
+    """Only exact reviewed advisory records authorize matches, never scanner aliases."""
+    clock = _clock(now)
+    if path is None:
+        return {}, None
+    _scope(context)
+    _require(_matches(SHA256, expected_sha256), "v2 policy requires expected SHA-256")
+    data = _safe_bytes(path)
+    digest = hashlib.sha256(data).hexdigest()
+    _require(digest == expected_sha256, "exception policy SHA-256 mismatch")
+    try:
+        raw = _decode_json(data.decode("utf-8"), Path(path).name)
+    except UnicodeError as error:
+        raise SupplyChainError("policy must be UTF-8 JSON") from error
+    _require(
+        isinstance(raw, dict)
+        and set(raw) == {"kind", "schema_version", "evidence_class", "exceptions"}
+        and raw["kind"] == "policy"
+        and type(raw["schema_version"]) is int
+        and raw["schema_version"] == 2
+        and raw["evidence_class"] == "runtime"
+        and isinstance(raw["exceptions"], list),
+        "legacy, synthetic or malformed exception policy; scoped runtime v2 required",
+    )
+    approved = {}
+    evaluation = (clock.replace(microsecond=0), f"{clock.microsecond:06d}".rstrip("0"))
+    for entry in raw["exceptions"]:
+        _require(isinstance(entry, dict), "exception must be an object")
+        embedded = entry.get("component_type") == "embedded_go"
+        _require(
+            set(entry) == EXCEPTION_FIELDS | ({"binary"} if embedded else set()),
+            "unknown or missing exception fields",
+        )
+        _require(
+            entry["component_type"] in ("rpm", "embedded_go"), "unknown component type"
+        )
+        _require(_matches(ADVISORY, entry["advisory"]), "invalid exact advisory")
+        for field in ("package", "package_version"):
+            _require(
+                _matches(EXACT_NAME, entry[field]) and entry[field] != "all",
+                f"invalid exact {field}",
+            )
+        _scope({name: entry[name] for name in SCOPE_FIELDS})
+        _require(
+            all(entry[name] == context[name] for name in SCOPE_FIELDS),
+            "out-of-scope exception policy",
+        )
+        _require(
+            isinstance(entry["owner"], str) and entry["owner"].strip(),
+            "exception requires owner",
+        )
+        _require(
+            isinstance(entry["reason"], str) and len(entry["reason"].strip()) >= 10,
+            "exception requires reviewed reason",
+        )
+        _require(
+            entry["classification"] in ("accepted_risk", "proven_false_positive"),
+            "unknown exception classification",
+        )
+        issued, expires = (
+            _timestamp(entry["issued_at"]),
+            _timestamp(entry["expires_at"]),
+        )
         try:
-            expiry = date.fromisoformat(expires)
-        except ValueError as error:
-            raise SupplyChainError("exception expiry must be an ISO date") from error
-        if expiry <= today:
-            raise SupplyChainError("expired vulnerability exception")
-        approved.add((cve, package))
-    return approved
+            deadline = (issued[0] + timedelta(days=30), issued[1])
+        except OverflowError as error:
+            raise SupplyChainError("invalid exception deadline") from error
+        _require(
+            issued <= evaluation < expires <= deadline,
+            "exception is not currently valid for at most 30 days",
+        )
+        if embedded:
+            binary = entry["binary"]
+            _require(
+                isinstance(binary, dict)
+                and set(binary) == {"path", "sha256", "rpm_nevra"},
+                "embedded Go requires owning binary identity",
+            )
+            binary_path = binary["path"]
+            _require(
+                _matches(r"/(?:usr/)?(?:s?bin|libexec)/[A-Za-z0-9._/-]+", binary_path)
+                and PurePosixPath(binary_path).as_posix() == binary_path
+                and ".." not in PurePosixPath(binary_path).parts
+                and _matches(SHA256, binary["sha256"])
+                and _matches(EXACT_NAME, binary["rpm_nevra"])
+                and binary["rpm_nevra"] != "all",
+                "invalid owning binary identity",
+            )
+        evidence = entry["evidence"]
+        _require(isinstance(evidence, list) and evidence, "exception requires evidence")
+        seen = set()
+        for descriptor in evidence:
+            _require(
+                isinstance(descriptor, dict)
+                and set(descriptor) == {"path", "sha256", "size_bytes"},
+                "invalid exception evidence descriptor",
+            )
+            name = descriptor["path"]
+            _require(
+                _matches(
+                    r"[A-Za-z0-9_-][A-Za-z0-9._-]*(?:/[A-Za-z0-9_-][A-Za-z0-9._-]*)*",
+                    name,
+                )
+                and not any(part in (".", "..") for part in name.split("/"))
+                and name not in seen
+                and _matches(SHA256, descriptor["sha256"])
+                and type(descriptor["size_bytes"]) is int
+                and descriptor["size_bytes"] > 0,
+                "unsafe, duplicate or malformed exception evidence",
+            )
+            seen.add(name)
+            content = _safe_bytes(Path(path).parent / name, 8 * 1024 * 1024)
+            _require(
+                len(content) == descriptor["size_bytes"]
+                and hashlib.sha256(content).hexdigest() == descriptor["sha256"],
+                "exception evidence bytes mismatch",
+            )
+        key = _exception_key(entry)
+        _require(key not in approved, "duplicate or conflicting exception")
+        approved[key] = entry
+    return approved, digest
+
+
+def _rpm_nevra(package):
+    identities = set()
+    for ref in package.get("externalRefs", []):
+        if not isinstance(ref, dict) or ref.get("referenceType") != "purl":
+            continue
+        locator = ref.get("referenceLocator")
+        match = (
+            re.fullmatch(r"pkg:rpm/[^/]+/([^@?]+)@([^?]+)\?(.+)", locator)
+            if isinstance(locator, str)
+            else None
+        )
+        if not match:
+            continue
+        query = parse_qs(match[3], keep_blank_values=True)
+        arch, epoch = query.get("arch", []), query.get("epoch", ["0"])
+        if len(arch) != 1 or len(epoch) != 1 or not _matches(r"[0-9]+", epoch[0]):
+            continue
+        version = unquote(match[2])
+        if epoch[0] != "0":
+            version = epoch[0] + ":" + version
+        if (
+            unquote(match[1]) == package.get("name")
+            and version == package.get("versionInfo")
+            and _matches(EXACT_NAME, arch[0])
+        ):
+            identities.add(f"{package['name']}-{version}.{arch[0]}")
+    return identities
+
+
+def _binary_matches(binary, artifact, sbom):
+    locations = artifact.get("locations")
+    if not isinstance(locations, list) or not locations:
+        return False
+    if any(
+        not isinstance(item, dict)
+        or item.get("accessPath", item.get("path")) != binary["path"]
+        for item in locations
+    ):
+        return False
+    files, relationships = sbom.get("files"), sbom.get("relationships")
+    if not isinstance(files, list) or not isinstance(relationships, list):
+        return False
+    packages = sbom.get("packages")
+    if not isinstance(packages, list):
+        return False
+    packages_by_id = {}
+    for package in packages:
+        if not isinstance(package, dict):
+            return False
+        package_id = package.get("SPDXID")
+        if not _matches(r"[A-Za-z0-9.-]+", package_id):
+            return False
+        if package_id in packages_by_id:
+            return False
+        packages_by_id[package_id] = package
+    identities = set()
+    for file in files:
+        if not isinstance(file, dict) or not isinstance(file.get("fileName"), str):
+            return False
+        if "/" + file["fileName"].removeprefix("/") != binary["path"]:
+            continue
+        checksums = file.get("checksums", [])
+        if not isinstance(checksums, list):
+            return False
+        hashes = {
+            item.get("checksumValue")
+            for item in checksums
+            if isinstance(item, dict)
+            and item.get("algorithm") == "SHA256"
+            and _matches(SHA256, item.get("checksumValue"))
+        }
+        if len(hashes) != 1 or not isinstance(file.get("SPDXID"), str):
+            return False
+        owners = []
+        for item in relationships:
+            if (
+                not isinstance(item, dict)
+                or item.get("relationshipType") != "CONTAINS"
+                or item.get("relatedSpdxElement") != file["SPDXID"]
+            ):
+                continue
+            owner = item.get("spdxElementId")
+            if not _matches(r"[A-Za-z0-9.-]+", owner):
+                return False
+            if owner not in packages_by_id:
+                return False
+            owners.append(owner)
+        if not owners:
+            return False
+        for owner in owners:
+            nevras = _rpm_nevra(packages_by_id[owner])
+            if len(nevras) != 1:
+                return False
+            identities.add((binary["path"], next(iter(hashes)), next(iter(nevras))))
+    return identities == {(binary["path"], binary["sha256"], binary["rpm_nevra"])}
 
 
 def inspect_image(
@@ -133,8 +461,18 @@ def inspect_image(
     *,
     expected_syft_version: str,
     expected_grype_version: str,
+    edition: str | None = None,
+    component_scope: str | None = None,
+    channel: str | None = None,
+    fedora: str | None = None,
+    expected_policy_sha256: str | None = None,
+    now: datetime | None = None,
 ) -> Path:
     bypass = authorize_bypass()
+    context = dict(zip(SCOPE_FIELDS, (edition, component_scope, channel, fedora)))
+    if any(value is not None for value in context.values()):
+        _scope(context)
+    _clock(now)
     digest = _digest_image(image)
     if not re.fullmatch(r"[0-9a-f]{40,64}", source_sha):
         raise SupplyChainError("invalid source commit")
@@ -156,7 +494,14 @@ def inspect_image(
     matches = scan.get("matches") if isinstance(scan, dict) else None
     if not isinstance(matches, list):
         raise SupplyChainError("malformed Grype scan")
-    approved = _exceptions(exceptions)
+    evaluated_at = _clock(now)
+    approved, policy_hash = _exceptions(
+        exceptions,
+        context=context,
+        now=evaluated_at,
+        expected_sha256=expected_policy_sha256,
+    )
+    applied = {}
     blocked = set()
     for match in matches:
         if not isinstance(match, dict):
@@ -193,8 +538,24 @@ def inspect_image(
         ):
             raise SupplyChainError("malformed Grype fix versions")
         if severity in {"High", "Critical", "Unknown"}:
-            key = (vulnerability_id, package)
-            if key not in approved:
+            entry = approved.get(
+                (
+                    vulnerability_id,
+                    package,
+                    version,
+                    *(context[name] for name in SCOPE_FIELDS),
+                )
+            )
+            accepted = entry is not None and (
+                entry["component_type"] == "rpm"
+                and artifact.get("type") == "rpm"
+                or entry["component_type"] == "embedded_go"
+                and artifact.get("type") == "go-module"
+                and _binary_matches(entry["binary"], artifact, sbom)
+            )
+            if accepted:
+                applied[_exception_hash(entry)] = entry
+            else:
                 fixes = ", ".join(versions)
                 blocked.add(
                     f"{severity} {vulnerability_id}: {package} {version} "
@@ -211,6 +572,13 @@ def inspect_image(
         "run_url": _run_url(),
         "workflow_ref": os.environ.get("GITHUB_WORKFLOW_REF"),
         "findings": sorted(blocked),
+        "decision": "diagnostic" if bypass else "accepted_risk" if applied else "clean",
+        "policy_sha256": policy_hash,
+        "policy_schema_version": 2 if exceptions is not None else None,
+        "evaluated_at": evaluated_at.isoformat().replace("+00:00", "Z"),
+        "scope": context if exceptions is not None else None,
+        "applied_exceptions": sorted(applied),
+        "exception_summary": [applied[key] for key in sorted(applied)],
     }
     if bypass:
         message = (
@@ -242,9 +610,7 @@ def inspect_image(
                 "run_id": os.environ.get("GITHUB_RUN_ID"),
                 "run_url": _run_url(),
             },
-            "inputs": {
-                "exceptions_sha256": _file_hash(exceptions) if exceptions else None
-            },
+            "inputs": {"exceptions_sha256": policy_hash},
             "tools": {"syft": syft_version, "grype": grype_version},
             "materials": {
                 "sbom.spdx.json": _file_hash(sbom_path),
@@ -263,6 +629,21 @@ def inspect_image(
                 "digest": digest,
                 "source_sha": source_sha,
                 "security": security,
+                "policy_sha256": policy_hash,
+                "scan": None
+                if bypass
+                else {
+                    "decision": security["decision"],
+                    "applied_exceptions": sorted(applied),
+                    "reports": [
+                        {
+                            "path": path.name,
+                            "sha256": _file_hash(path),
+                            "size_bytes": path.stat().st_size,
+                        }
+                        for path in (sbom_path, vulnerabilities_path)
+                    ],
+                },
                 "tools": {"syft": syft_version, "grype": grype_version},
                 "files": {
                     name: _file_hash(output / name)
@@ -375,6 +756,11 @@ def main(argv: list[str] | None = None) -> int:
     inspect.add_argument("--output", type=Path, required=True)
     inspect.add_argument("--source-sha", required=True)
     inspect.add_argument("--exceptions", type=Path)
+    inspect.add_argument("--edition")
+    inspect.add_argument("--component-scope")
+    inspect.add_argument("--channel")
+    inspect.add_argument("--fedora")
+    inspect.add_argument("--policy-sha256")
     inspect.add_argument("--syft-version", required=True)
     inspect.add_argument("--grype-version", required=True)
     checksums = commands.add_parser("checksums")
@@ -394,6 +780,11 @@ def main(argv: list[str] | None = None) -> int:
                 args.exceptions,
                 expected_syft_version=args.syft_version,
                 expected_grype_version=args.grype_version,
+                edition=args.edition,
+                component_scope=args.component_scope,
+                channel=args.channel,
+                fedora=args.fedora,
+                expected_policy_sha256=args.policy_sha256,
             )
         elif args.command == "checksums":
             write_checksums(args.directory)

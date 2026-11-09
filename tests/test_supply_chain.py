@@ -1,8 +1,11 @@
+import copy
+import hashlib
 import importlib.util
 import json
 import subprocess
 import tempfile
 import unittest
+from datetime import UTC, datetime
 from pathlib import Path
 from unittest.mock import patch
 
@@ -474,6 +477,406 @@ class SupplyChainTests(unittest.TestCase):
                 )
             self.assertEqual(command.call_count, 2)
             self.assertIn("verify-blob", command.call_args_list[1].args[0])
+
+
+class ScopedExceptionTests(unittest.TestCase):
+    def setUp(self):
+        self.temporary = tempfile.TemporaryDirectory()
+        self.addCleanup(self.temporary.cleanup)
+        self.root = Path(self.temporary.name)
+        self.path = self.root / "policy.json"
+        self.now = datetime(2026, 11, 9, tzinfo=UTC)
+        self.context = {
+            "edition": "core",
+            "component_scope": "core_payload",
+            "channel": "testing",
+            "fedora": "45",
+        }
+        evidence = b"Reviewed exact advisory; aliases require separate exact entries.\n"
+        (self.root / "triage.txt").write_bytes(evidence)
+        self.entry = {
+            "advisory": "CVE-2026-1234",
+            "package": "pkg",
+            "package_version": "1.0",
+            **self.context,
+            "owner": "reviewer",
+            "reason": "Reviewed temporary exact risk.",
+            "classification": "accepted_risk",
+            "component_type": "rpm",
+            "issued_at": "2026-11-01T00:00:00Z",
+            "expires_at": "2026-12-01T00:00:00Z",
+            "evidence": [
+                {
+                    "path": "triage.txt",
+                    "size_bytes": len(evidence),
+                    "sha256": hashlib.sha256(evidence).hexdigest(),
+                }
+            ],
+        }
+        self.policy = {
+            "kind": "policy",
+            "schema_version": 2,
+            "evidence_class": "runtime",
+            "exceptions": [self.entry],
+        }
+
+    def write_policy(self):
+        raw = json.dumps(self.policy).encode()
+        self.path.write_bytes(raw)
+        return hashlib.sha256(raw).hexdigest()
+
+    def load(self, **changes):
+        args = {
+            "context": self.context,
+            "now": self.now,
+            "expected_sha256": self.write_policy(),
+        }
+        return supply_chain._exceptions(self.path, **(args | changes))
+
+    def inspect(self, artifact=None, advisory=None, sbom=None, failure=None, **changes):
+        artifact = artifact or {"name": "pkg", "version": "1.0", "type": "rpm"}
+        advisory = advisory or self.entry["advisory"]
+        sbom = sbom or {"spdxVersion": "SPDX-2.3", "packages": []}
+        digest = self.write_policy()
+
+        def run(argv, **kwargs):
+            if argv[1] == "version":
+                return subprocess.CompletedProcess(argv, 0, "Version: 1.2.3", "")
+            if failure == argv[0]:
+                raise subprocess.CalledProcessError(1, argv)
+            payload = (
+                sbom
+                if argv[0] == "syft"
+                else {
+                    "matches": [
+                        {
+                            "vulnerability": {"id": advisory, "severity": "Critical"},
+                            "artifact": artifact,
+                            "relatedVulnerabilities": [{"id": self.entry["advisory"]}],
+                        }
+                    ]
+                }
+            )
+            Path(argv[argv.index("--file") + 1]).write_text(json.dumps(payload))
+            return subprocess.CompletedProcess(argv, 0, "", "")
+
+        args = dict(
+            expected_syft_version="1.2.3",
+            expected_grype_version="1.2.3",
+            expected_policy_sha256=digest,
+            now=self.now,
+            **self.context,
+        )
+        with (
+            patch.dict("os.environ", {}, clear=True),
+            patch.object(supply_chain.subprocess, "run", side_effect=run),
+        ):
+            path = supply_chain.inspect_image(
+                "repo@sha256:" + "a" * 64,
+                self.root / "out",
+                "b" * 40,
+                self.path,
+                **(args | changes),
+            )
+        return json.loads(path.read_text())
+
+    def test_exact_advisories_have_auditable_record_and_policy_hashes(self):
+        for advisory in ("CVE-2026-1234", "GHSA-2345-6789-cfgh", "GO-2026-1234"):
+            for classification in ("accepted_risk", "proven_false_positive"):
+                with self.subTest(advisory=advisory, classification=classification):
+                    self.entry.update(advisory=advisory, classification=classification)
+                    result = self.inspect()
+                    record = (
+                        json.dumps(
+                            self.entry,
+                            sort_keys=True,
+                            indent=2,
+                            ensure_ascii=True,
+                            allow_nan=False,
+                        )
+                        + "\n"
+                    )
+                    applied = hashlib.sha256(record.encode()).hexdigest()
+                    self.assertEqual(result["scan"]["decision"], "accepted_risk")
+                    self.assertEqual(result["scan"]["applied_exceptions"], [applied])
+                    self.assertEqual(
+                        result["security"]["exception_summary"], [self.entry]
+                    )
+                    self.assertEqual(
+                        result["policy_sha256"],
+                        hashlib.sha256(self.path.read_bytes()).hexdigest(),
+                    )
+                    provenance = json.loads(
+                        (self.root / "out/provenance.json").read_text()
+                    )
+                    self.assertEqual(
+                        provenance["predicate"]["inputs"]["exceptions_sha256"],
+                        result["policy_sha256"],
+                    )
+
+    def test_rejects_malformed_unknown_duplicate_and_wildcard_records(self):
+        changes = [
+            {"advisory": "CVE-*"},
+            {"advisory": "GHSA-invalid"},
+            {"package": ""},
+            {"package": "pkg*"},
+            {"package_version": "1.*"},
+            {"owner": ""},
+            {"reason": "short"},
+            {"classification": "waive"},
+            {"component_type": "unknown"},
+            {"evidence": []},
+            {"unexpected": True},
+            {"issued_at": "2026-11-01T00:00:00+00:00"},
+            {"issued_at": "2026-02-30T00:00:00Z"},
+            {"issued_at": "2026-11-10T00:00:00Z"},
+            {"expires_at": "2026-12-01T00:00:00.000000001Z"},
+        ]
+        for change in changes:
+            with self.subTest(change=change):
+                self.policy["exceptions"] = [self.entry | change]
+                with self.assertRaises(supply_chain.SupplyChainError):
+                    self.load()
+        for records in (
+            [self.entry, self.entry],
+            [self.entry, self.entry | {"owner": "another-reviewer"}],
+        ):
+            self.policy["exceptions"] = records
+            with self.assertRaises(supply_chain.SupplyChainError):
+                self.load()
+
+    def test_scope_clock_and_version_do_not_transfer(self):
+        for change in (
+            {"edition": "workstation", "component_scope": "workstation_payload"},
+            {"component_scope": "installer_live"},
+            {"channel": "stable"},
+            {"fedora": "46"},
+            {"fedora": 45},
+            {"edition": "installer"},
+        ):
+            with (
+                self.subTest(change=change),
+                self.assertRaises(supply_chain.SupplyChainError),
+            ):
+                self.load(context=self.context | change)
+        for clock in (
+            "2026-11-09T00:00:00Z",
+            self.now.replace(tzinfo=None),
+            datetime(2026, 12, 1, tzinfo=UTC),
+        ):
+            with (
+                self.subTest(clock=clock),
+                self.assertRaises(supply_chain.SupplyChainError),
+            ):
+                self.load(now=clock)
+        with self.assertRaises(supply_chain.SupplyChainError):
+            self.inspect(artifact={"name": "pkg", "version": "1.1", "type": "rpm"})
+        with self.assertRaises(supply_chain.SupplyChainError):
+            self.inspect(advisory="GO-2026-1234")
+
+    def test_rebinding_policy_does_not_renew_expired_exception(self):
+        self.entry["reason"] += " Newly rebound bytes."
+        with self.assertRaises(supply_chain.SupplyChainError):
+            self.load(now=datetime(2026, 12, 1, tzinfo=UTC))
+        self.entry["issued_at"] = "2026-11-01T00:00:00.000000001Z"
+        with self.assertRaises(supply_chain.SupplyChainError):
+            self.load(now=datetime(2026, 11, 1, tzinfo=UTC))
+
+    def test_policy_hash_context_legacy_and_synthetic_are_fail_closed(self):
+        digest = self.write_policy()
+        self.path.write_bytes(self.path.read_bytes() + b"\n")
+        with self.assertRaises(supply_chain.SupplyChainError):
+            supply_chain._exceptions(
+                self.path, context=self.context, now=self.now, expected_sha256=digest
+            )
+        for kwargs in ({}, {"context": self.context}, {"expected_sha256": digest}):
+            with self.assertRaises(supply_chain.SupplyChainError):
+                supply_chain._exceptions(self.path, now=self.now, **kwargs)
+        for policy in (
+            {"exceptions": []},
+            self.policy | {"schema_version": True},
+            self.policy | {"schema_version": 3},
+            self.policy | {"evidence_class": "synthetic"},
+            self.policy | {"unexpected": True},
+        ):
+            self.policy = policy
+            with self.assertRaises(supply_chain.SupplyChainError):
+                self.load()
+
+    def test_evidence_bytes_duplicates_json_and_symlinks_are_rejected(self):
+        original = self.entry["evidence"]
+        for evidence in (
+            [original[0] | {"path": "../triage.txt"}],
+            [original[0] | {"sha256": "f" * 64}],
+            [original[0] | {"size_bytes": True}],
+            [original[0], original[0]],
+        ):
+            self.entry["evidence"] = evidence
+            with self.assertRaises(supply_chain.SupplyChainError):
+                self.load()
+        self.entry["evidence"] = original
+        self.write_policy()
+        raw = self.path.read_bytes().replace(
+            b'"schema_version": 2', b'"schema_version": 2, "schema_version": 2'
+        )
+        self.path.write_bytes(raw)
+        with self.assertRaises(supply_chain.SupplyChainError):
+            supply_chain._exceptions(
+                self.path,
+                context=self.context,
+                now=self.now,
+                expected_sha256=hashlib.sha256(raw).hexdigest(),
+            )
+        (self.root / "triage.txt").unlink()
+        (self.root / "triage.txt").symlink_to(self.path)
+        with self.assertRaises(supply_chain.SupplyChainError):
+            self.load()
+
+    def test_embedded_go_binds_observed_binary_hash_rpm_and_locations(self):
+        binary = {
+            "path": "/usr/bin/tool",
+            "sha256": "c" * 64,
+            "rpm_nevra": "tool-1.0-1.fc45.x86_64",
+        }
+        self.entry.update(component_type="embedded_go", binary=binary)
+        artifact = {
+            "name": "pkg",
+            "version": "1.0",
+            "type": "go-module",
+            "locations": [{"path": "/usr/bin/tool"}],
+        }
+        sbom = {
+            "spdxVersion": "SPDX-2.3",
+            "packages": [
+                {
+                    "SPDXID": "rpm",
+                    "name": "tool",
+                    "versionInfo": "1.0-1.fc45",
+                    "externalRefs": [
+                        {
+                            "referenceType": "purl",
+                            "referenceLocator": "pkg:rpm/fedora/tool@1.0-1.fc45?arch=x86_64",
+                        }
+                    ],
+                }
+            ],
+            "files": [
+                {
+                    "SPDXID": "binary",
+                    "fileName": "usr/bin/tool",
+                    "checksums": [{"algorithm": "SHA256", "checksumValue": "c" * 64}],
+                }
+            ],
+            "relationships": [
+                {
+                    "spdxElementId": "rpm",
+                    "relationshipType": "CONTAINS",
+                    "relatedSpdxElement": "binary",
+                }
+            ],
+        }
+        self.assertEqual(
+            self.inspect(artifact=artifact, sbom=sbom)["scan"]["decision"],
+            "accepted_risk",
+        )
+        for case in (
+            "missing_owner",
+            "invalid_owner_id",
+            "duplicate_package_id",
+            "invalid_package_id",
+            "owner_without_purl",
+            "conflicting_nevra",
+        ):
+            changed = copy.deepcopy(sbom)
+            package = changed["packages"][0]
+            if case in ("missing_owner", "invalid_owner_id", "owner_without_purl"):
+                owner = None if case == "invalid_owner_id" else "second"
+                changed["relationships"].append(
+                    changed["relationships"][0] | {"spdxElementId": owner}
+                )
+                if case == "owner_without_purl":
+                    changed["packages"].append(
+                        package | {"SPDXID": owner, "externalRefs": []}
+                    )
+            elif case == "duplicate_package_id":
+                changed["packages"].append(copy.deepcopy(package))
+            elif case == "invalid_package_id":
+                changed["packages"].append(package | {"SPDXID": []})
+            else:
+                package["externalRefs"].append(
+                    {
+                        "referenceType": "purl",
+                        "referenceLocator": "pkg:rpm/fedora/tool@1.0-1.fc45?arch=aarch64",
+                    }
+                )
+            with (
+                self.subTest(case=case),
+                self.assertRaises(supply_chain.SupplyChainError),
+            ):
+                self.inspect(artifact=artifact, sbom=changed)
+        for field, value in (
+            ("path", "/usr/bin/other"),
+            ("sha256", "d" * 64),
+            ("rpm_nevra", "tool-2.0-1.fc45.x86_64"),
+        ):
+            self.entry["binary"] = binary | {field: value}
+            with (
+                self.subTest(field=field),
+                self.assertRaises(supply_chain.SupplyChainError),
+            ):
+                self.inspect(artifact=artifact, sbom=sbom)
+        self.entry["binary"] = binary
+        changed = copy.deepcopy(sbom)
+        changed["files"][0]["checksums"] = []
+        with self.assertRaises(supply_chain.SupplyChainError):
+            self.inspect(artifact=artifact, sbom=changed)
+        artifact["locations"].append({"path": "/usr/bin/other"})
+        with self.assertRaises(supply_chain.SupplyChainError):
+            self.inspect(artifact=artifact, sbom=sbom)
+
+    def test_scanner_failures_cannot_be_excepted(self):
+        for tool in ("syft", "grype"):
+            with (
+                self.subTest(tool=tool),
+                self.assertRaises(supply_chain.SupplyChainError),
+            ):
+                self.inspect(failure=tool)
+        self.assertFalse((self.root / "out/scan-evidence.json").exists())
+
+    def test_cli_context_is_forwarded_without_inference(self):
+        with patch.object(supply_chain, "inspect_image") as inspect:
+            self.assertEqual(
+                supply_chain.main(
+                    [
+                        "inspect",
+                        "--image",
+                        "repo@sha256:" + "a" * 64,
+                        "--output",
+                        str(self.root),
+                        "--source-sha",
+                        "b" * 40,
+                        "--exceptions",
+                        str(self.path),
+                        "--syft-version",
+                        "1.2.3",
+                        "--grype-version",
+                        "1.2.3",
+                        "--edition",
+                        "core",
+                        "--component-scope",
+                        "core_payload",
+                        "--channel",
+                        "testing",
+                        "--fedora",
+                        "45",
+                        "--policy-sha256",
+                        "d" * 64,
+                    ]
+                ),
+                0,
+            )
+        self.assertEqual(inspect.call_args.kwargs["expected_policy_sha256"], "d" * 64)
+        self.assertEqual(inspect.call_args.kwargs["component_scope"], "core_payload")
 
 
 if __name__ == "__main__":

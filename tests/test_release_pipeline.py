@@ -1,3 +1,4 @@
+import copy
 import importlib.util
 import io
 import json
@@ -66,12 +67,623 @@ def run_document():
     }
 
 
+def core_reader_sample(directory):
+    evidence = directory / "fixture-B.json"
+    evidence.write_text('{"notice":"synthetic unit-test bytes, not provenance"}\n')
+    descriptor = {
+        "path": evidence.name,
+        "sha256": pipeline.digest(evidence),
+        "size_bytes": evidence.stat().st_size,
+    }
+    image = "ghcr.io/owner/luminusos"
+    identity = {
+        "repository": "owner/repo",
+        "source_sha": "a" * 40,
+        "source_ref": "refs/heads/main",
+        "run_id": 123,
+        "run_attempt": 1,
+        "fedora": "45",
+        "architecture": "x86_64",
+        "selection": "core",
+        "channel": "testing",
+        "build_version": "45.20261109.1",
+        "base_digest": "sha256:" + "1" * 64,
+        "core_digest": "sha256:" + "2" * 64,
+        "policy_sha256": "3" * 64,
+    }
+    inputs = {}
+    official_key_fingerprint = pipeline.digest(directory / "key.pub")
+    for role, number, signer in (
+        ("update", "4", official_key_fingerprint),
+        ("signed", "4", official_key_fingerprint),
+        ("unsigned", "5", None),
+        ("foreign", "6", "8" * 64),
+    ):
+        image_digest = "sha256:" + number * 64
+        inputs[role] = {
+            "digest": image_digest,
+            "derived_from": identity["core_digest"]
+            if role == "update"
+            else "sha256:" + "4" * 64,
+            "logical_reference": f"{image}@{image_digest}",
+            "signing_key_fingerprint": signer,
+            "producer": {
+                "repository": "owner/repo",
+                "source_sha": identity["source_sha"],
+                "source_ref": "refs/heads/main",
+                "workflow": ".github/workflows/publish.yml",
+                "run_id": identity["run_id"],
+                "run_attempt": 1,
+            },
+            "producer_evidence": [copy.deepcopy(descriptor)],
+        }
+    source = directory / "source"
+    for name in (
+        "editions/core/Containerfile",
+        "shared/trust/key.pub",
+        "shared/scripts/dnf-releasever.py",
+        "shared/scripts/os-release-set.py",
+        "shared/scripts/rpmdb-repair.py",
+    ):
+        target = source / name
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_text("unit test core input\n")
+    proof = {
+        "kind": "core-build",
+        "schema_version": 2,
+        "digest": identity["core_digest"],
+        **{
+            field: identity[field]
+            for field in (
+                "source_sha",
+                "source_ref",
+                "fedora",
+                "channel",
+                "architecture",
+                "base_digest",
+                "policy_sha256",
+                "run_id",
+                "run_attempt",
+            )
+        },
+        "inputs_sha256": pipeline.core_inputs_hash(
+            source, "45", identity["base_digest"]
+        ),
+        "workflow": ".github/workflows/publish.yml",
+    }
+    proof_path = directory / "core/core-build.json"
+    proof_path.parent.mkdir(exist_ok=True)
+    proof_path.write_text(json.dumps(proof))
+    return {
+        "kind": "candidate",
+        "schema_version": 2,
+        "evidence_class": "runtime",
+        "identity": identity,
+        "components": {
+            "core": {"repository": image, "digest": identity["core_digest"]}
+        },
+        "artifacts": {},
+        "installed": {
+            "core": {
+                "edition": "core",
+                "channel": "testing",
+                "fedora": "45",
+                "reference": f"{image}:testing-45",
+                "digest": identity["core_digest"],
+            }
+        },
+        "core_dependency": {
+            "mode": "built",
+            "digest": identity["core_digest"],
+            "evidence_sha256": pipeline.digest(proof_path),
+            **{
+                field: identity[field]
+                for field in (
+                    "source_sha",
+                    "source_ref",
+                    "fedora",
+                    "channel",
+                    "architecture",
+                    "base_digest",
+                    "policy_sha256",
+                )
+            },
+        },
+        "validation_images": {"core": inputs},
+    }
+
+
 class ReleasePipelineTests(unittest.TestCase):
+    def validate_core(self, document, directory, *, context=None):
+        pipeline.validate_candidate(
+            document,
+            directory,
+            context=context,
+            official_key_fingerprint=pipeline.digest(self.sample[1]),
+        )
+
+    def core_context(self, document):
+        run = run_document() | {"run_attempt": 1}
+        expected = {
+            field: document["identity"][field]
+            for field in (
+                "fedora",
+                "channel",
+                "architecture",
+                "base_digest",
+                "policy_sha256",
+            )
+        }
+        with mock.patch.object(
+            pipeline.subprocess,
+            "run",
+            side_effect=[
+                mock.Mock(stdout="a" * 40 + "\n"),
+                mock.Mock(stdout=""),
+            ],
+        ):
+            return pipeline.core_context(run, self.tmp_path / "source", expected)
+
     def setUp(self):
         self.directory = tempfile.TemporaryDirectory()
         self.addCleanup(self.directory.cleanup)
         self.tmp_path = Path(self.directory.name)
         self.sample = sample(self.tmp_path)
+
+    def test_core_v2_reader_without_workstation_artifacts(self):
+        path, key, _ = self.sample
+        document = core_reader_sample(self.tmp_path)
+        context = self.core_context(document)
+        path.write_text(json.dumps(document))
+        with mock.patch.object(pipeline, "verify") as verify:
+            self.assertEqual(pipeline.candidate(path, key, context=context), document)
+            verify.assert_called_once_with(path, key)
+        with (
+            mock.patch.object(
+                pipeline, "verify", side_effect=ValueError("bad signature")
+            ),
+            self.assertRaisesRegex(ValueError, "signature"),
+        ):
+            pipeline.candidate(path, key)
+
+    def test_core_v2_rebound_validation_keys_match_exact_public_key_bytes(self):
+        path, key, _ = self.sample
+        key.write_bytes(b"unit-test public key bytes\r\n")
+        document = core_reader_sample(self.tmp_path)
+        context = self.core_context(document)
+        path.write_text(json.dumps(document))
+        with mock.patch.object(pipeline, "verify"):
+            self.assertEqual(pipeline.candidate(path, key, context=context), document)
+            for role, fingerprint in (
+                ("update", "f" * 64),
+                ("signed", "f" * 64),
+                ("both", "f" * 64),
+                ("foreign", pipeline.digest(key)),
+                ("foreign", None),
+            ):
+                with self.subTest(role=role, fingerprint=fingerprint):
+                    changed = copy.deepcopy(document)
+                    for selected in ("update", "signed") if role == "both" else (role,):
+                        changed["validation_images"]["core"][selected][
+                            "signing_key_fingerprint"
+                        ] = fingerprint
+                    path.write_text(json.dumps(changed))
+                    with self.assertRaises(ValueError):
+                        pipeline.candidate(path, key, context=context)
+            path.write_text(json.dumps(document))
+            key.write_bytes(b"unit-test public key bytes\n")
+            with self.assertRaisesRegex(ValueError, "signing identity"):
+                pipeline.candidate(path, key, context=context)
+
+    def test_core_v2_rebound_validation_producers_require_trusted_context(self):
+        path, key, _ = self.sample
+        document = core_reader_sample(self.tmp_path)
+        context = self.core_context(document)
+        for role in ("update", "signed", "unsigned", "foreign"):
+            for field, value in (
+                ("repository", "other/repo"),
+                ("source_sha", "f" * 40),
+                ("source_ref", "refs/heads/release/45"),
+                ("run_id", 124),
+                ("run_attempt", 2),
+                ("run_attempt", True),
+                ("workflow", ".github/workflows/untrusted.yml"),
+                ("workflow", ".github/workflows/auto-testing.yml"),
+            ):
+                with self.subTest(role=role, field=field, value=value):
+                    changed = copy.deepcopy(document)
+                    changed["validation_images"]["core"][role]["producer"][field] = (
+                        value
+                    )
+                    path.write_text(json.dumps(changed))
+                    with (
+                        mock.patch.object(pipeline, "verify"),
+                        self.assertRaisesRegex(
+                            ValueError, "validation image producer requires T5"
+                        ),
+                    ):
+                        pipeline.candidate(path, key, context=context)
+
+    def test_core_v2_validators_require_explicit_official_fingerprint(self):
+        document = core_reader_sample(self.tmp_path)
+        context = self.core_context(document)
+        for validator in (
+            pipeline.validate_candidate,
+            pipeline.validate_core_candidate,
+        ):
+            for fingerprint in (None, "invalid", "f" * 64):
+                with (
+                    self.subTest(validator=validator.__name__, fingerprint=fingerprint),
+                    self.assertRaises(ValueError),
+                ):
+                    validator(
+                        document,
+                        self.tmp_path,
+                        context=context,
+                        official_key_fingerprint=fingerprint,
+                    )
+
+    def test_core_v2_rejects_inconsistent_candidate_and_evidence(self):
+        document = core_reader_sample(self.tmp_path)
+        context = self.core_context(document)
+        cases = [
+            (("schema_version",), 3),
+            (("version",), 1),
+            (("identity", "selection"), "unknown"),
+            (("identity", "selection"), "workstation"),
+            (("identity", "selection"), "all"),
+            (("identity", "architecture"), "aarch64"),
+            (("identity", "source_ref"), "refs/heads/release/45"),
+            (("identity", "source_sha"), "a" * 40 + "\n"),
+            (("identity", "run_id"), True),
+            (("identity", "base_digest"), "sha256:" + "F" * 64),
+            (("identity", "build_version"), "44.20261109.1"),
+            (("identity", "build_version"), "45.20260230.1"),
+            (("core_dependency", "base_digest"), "sha256:" + "f" * 64),
+            (("core_dependency", "policy_sha256"), "f" * 64),
+            (("core_dependency", "source_sha"), "f" * 40),
+            (("core_dependency", "evidence_sha256"), "f" * 64),
+            (("components", "installer"), document["components"]["core"]),
+            (("installed", "core", "reference"), "ghcr.io/owner/luminusos:45"),
+            (("validation_images", "core", "update", "digest"), "sha256:" + "f" * 64),
+            (
+                ("validation_images", "core", "foreign", "signing_key_fingerprint"),
+                pipeline.digest(self.sample[1]),
+            ),
+            (
+                (
+                    "validation_images",
+                    "core",
+                    "signed",
+                    "producer_evidence",
+                    0,
+                    "size_bytes",
+                ),
+                1,
+            ),
+            (
+                ("validation_images", "core", "signed", "producer_evidence", 0, "path"),
+                "../core-build.json",
+            ),
+        ]
+        for path, value in cases:
+            with self.subTest(path=path):
+                changed = copy.deepcopy(document)
+                target = changed
+                for field in path[:-1]:
+                    target = target[field]
+                target[path[-1]] = value
+                with self.assertRaises(ValueError):
+                    self.validate_core(changed, self.tmp_path, context=context)
+        evidence = self.tmp_path / "fixture-B.json"
+        evidence.write_text("tampered")
+        with self.assertRaises(ValueError):
+            self.validate_core(document, self.tmp_path, context=context)
+
+    def test_core_v2_not_adapted_into_legacy_authorization(self):
+        path, _, _ = self.sample
+        document = core_reader_sample(self.tmp_path)
+        with self.assertRaisesRegex(ValueError, "v2.*T5"):
+            pipeline.binding(document)
+        output = self.tmp_path / "outputs"
+        output.write_text("existing=unchanged\n")
+        with (
+            mock.patch.dict(pipeline.os.environ, {"GITHUB_OUTPUT": str(output)}),
+            mock.patch.object(pipeline.sys, "stdout", new_callable=io.StringIO),
+            self.assertRaisesRegex(ValueError, "v2.*T5"),
+        ):
+            pipeline.candidate_outputs(document, path)
+        self.assertEqual(output.read_text(), "existing=unchanged\n")
+
+    def test_core_v2_proof_mutations_rejected_after_hash_rebinding(self):
+        document = core_reader_sample(self.tmp_path)
+        context = self.core_context(document)
+        proof_path = self.tmp_path / "core/core-build.json"
+        proof = pipeline.load(proof_path)
+        for field, value in (
+            ("kind", "fixture-B"),
+            ("schema_version", True),
+            ("unknown", "extra"),
+            ("digest", "sha256:" + "f" * 64),
+            ("source_sha", "f" * 40),
+            ("source_ref", "refs/heads/release/45"),
+            ("fedora", "46"),
+            ("channel", "stable"),
+            ("architecture", "aarch64"),
+            ("base_digest", "sha256:" + "f" * 64),
+            ("policy_sha256", "f" * 64),
+            ("inputs_sha256", "f" * 64),
+            ("run_id", 124),
+            ("run_attempt", 2),
+            ("run_id", True),
+            ("workflow", ".github/workflows/other.yml"),
+        ):
+            with self.subTest(field=field, value=value):
+                proof_path.write_text(json.dumps(proof | {field: value}))
+                changed = copy.deepcopy(document)
+                changed["core_dependency"]["evidence_sha256"] = pipeline.digest(
+                    proof_path
+                )
+                with self.assertRaises(ValueError):
+                    self.validate_core(changed, self.tmp_path, context=context)
+
+    def test_core_v2_proof_safe_reads_and_exact_bytes(self):
+        document = core_reader_sample(self.tmp_path)
+        context = self.core_context(document)
+        proof_path = self.tmp_path / "core/core-build.json"
+        original = proof_path.read_bytes()
+        for raw in (b"", original + b" ", b'{"kind":"core-build","kind":"core-build"}'):
+            with self.subTest(raw=raw[:30]):
+                proof_path.write_bytes(raw)
+                changed = copy.deepcopy(document)
+                if b'"kind":"core-build"' in raw:
+                    changed["core_dependency"]["evidence_sha256"] = pipeline.digest(
+                        proof_path
+                    )
+                with self.assertRaises(ValueError):
+                    self.validate_core(changed, self.tmp_path, context=context)
+        proof_path.write_bytes(original)
+        with (
+            mock.patch.object(pipeline, "MAX_CORE_BUILD_BYTES", len(original) - 1),
+            self.assertRaisesRegex(ValueError, "core build.*size"),
+        ):
+            self.validate_core(document, self.tmp_path, context=context)
+        proof_path.unlink()
+        with self.assertRaisesRegex(ValueError, "missing file"):
+            self.validate_core(document, self.tmp_path, context=context)
+        target = self.tmp_path / "elsewhere.json"
+        target.write_bytes(original)
+        proof_path.symlink_to(target)
+        with self.assertRaisesRegex(ValueError, "symlink"):
+            self.validate_core(document, self.tmp_path, context=context)
+
+    def test_core_v2_requires_trusted_context_and_core_A_proof(self):
+        document = core_reader_sample(self.tmp_path)
+        context = self.core_context(document)
+        with self.assertRaisesRegex(ValueError, "trusted core context"):
+            pipeline.validate_candidate(document, self.tmp_path)
+        with self.assertRaisesRegex(ValueError, "candidate v2"):
+            pipeline.validate_core_candidate(
+                self.sample[2], self.tmp_path, context=context
+            )
+        for field in context:
+            changed = dict(context)
+            changed.pop(field)
+            with self.subTest(missing=field), self.assertRaises(ValueError):
+                self.validate_core(document, self.tmp_path, context=changed)
+        document["core_dependency"]["evidence_sha256"] = document["validation_images"][
+            "core"
+        ]["update"]["producer_evidence"][0]["sha256"]
+        with self.assertRaisesRegex(ValueError, "checksum"):
+            self.validate_core(document, self.tmp_path, context=context)
+        (self.tmp_path / "core/core-build.json").write_bytes(
+            (self.tmp_path / "fixture-B.json").read_bytes()
+        )
+        with self.assertRaisesRegex(ValueError, "core build proof"):
+            self.validate_core(document, self.tmp_path, context=context)
+
+    def test_core_v2_reused_and_synthetic_are_not_accepted(self):
+        document = core_reader_sample(self.tmp_path)
+        context = self.core_context(document)
+        for field, value in (("evidence_class", "synthetic"), ("schema_version", True)):
+            changed = copy.deepcopy(document)
+            changed[field] = value
+            with self.subTest(field=field), self.assertRaises(ValueError):
+                self.validate_core(changed, self.tmp_path, context=context)
+        document["core_dependency"]["mode"] = "reused"
+        with self.assertRaisesRegex(ValueError, "T5"):
+            self.validate_core(document, self.tmp_path, context=context)
+
+    def test_core_v2_rebound_identity_cannot_replace_trusted_context(self):
+        document = core_reader_sample(self.tmp_path)
+        context = self.core_context(document)
+        proof_path = self.tmp_path / "core/core-build.json"
+        proof = pipeline.load(proof_path)
+        for field, value in (
+            ("source_sha", "f" * 40),
+            ("source_ref", "refs/heads/release/45"),
+            ("run_id", 124),
+            ("run_attempt", 2),
+            ("base_digest", "sha256:" + "f" * 64),
+            ("policy_sha256", "f" * 64),
+            ("fedora", "46"),
+            ("architecture", "aarch64"),
+            ("channel", "stable"),
+        ):
+            with self.subTest(field=field):
+                changed = copy.deepcopy(document)
+                changed["identity"][field] = value
+                if field in changed["core_dependency"]:
+                    changed["core_dependency"][field] = value
+                proof_path.write_text(json.dumps(proof | {field: value}))
+                changed["core_dependency"]["evidence_sha256"] = pipeline.digest(
+                    proof_path
+                )
+                with self.assertRaises(ValueError):
+                    self.validate_core(changed, self.tmp_path, context=context)
+
+    def test_core_context_uses_real_input_hash_and_rejects_wrong_source(self):
+        document = core_reader_sample(self.tmp_path)
+        context = self.core_context(document)
+        source = self.tmp_path / "source"
+        (source / "editions/core/Containerfile").write_text("changed trusted input")
+        changed_context = self.core_context(document)
+        self.assertNotEqual(context["inputs_sha256"], changed_context["inputs_sha256"])
+        with self.assertRaisesRegex(ValueError, "inputs_sha256"):
+            self.validate_core(document, self.tmp_path, context=changed_context)
+        run = run_document() | {"run_attempt": 1}
+        expected = {
+            field: context[field]
+            for field in (
+                "fedora",
+                "channel",
+                "architecture",
+                "base_digest",
+                "policy_sha256",
+            )
+        }
+        for outputs, error in (
+            ([mock.Mock(stdout="f" * 40)], "revision"),
+            (
+                [
+                    mock.Mock(stdout="a" * 40),
+                    mock.Mock(stdout=" M editions/core/Containerfile"),
+                ],
+                "dirty",
+            ),
+        ):
+            with (
+                self.subTest(error=error),
+                mock.patch.object(pipeline.subprocess, "run", side_effect=outputs),
+                self.assertRaisesRegex(ValueError, error),
+            ):
+                pipeline.core_context(run, source, expected)
+        for field, value in (
+            ("path", ".github/workflows/untrusted.yml"),
+            ("run_attempt", True),
+            ("head_repository", {"full_name": "attacker/repo"}),
+            ("conclusion", "failure"),
+            ("head_branch", "feature"),
+        ):
+            with self.subTest(field=field), self.assertRaises(ValueError):
+                pipeline.core_context(run | {field: value}, source, expected)
+
+    def test_core_v2_legacy_commands_stop_before_side_effects(self):
+        path, key, _ = self.sample
+        document = core_reader_sample(self.tmp_path)
+        path.write_text(json.dumps(document))
+        output = self.tmp_path / "must-not-exist/result.json"
+        for action, flags in (
+            ("record-validation", ["--receipts", str(self.tmp_path)]),
+            ("fetch-validation", ["--repository", "owner/repo", "--run-id", "123"]),
+            (
+                "assemble-evidence",
+                ["--validation", "absent.json", "--results", "absent.json"],
+            ),
+        ):
+            args = [
+                "release_pipeline",
+                action,
+                "--candidate",
+                str(path),
+                "--output",
+                str(output),
+                "--public-key",
+                str(key),
+                *flags,
+            ]
+            with (
+                self.subTest(action=action),
+                mock.patch.object(pipeline.sys, "argv", args),
+                mock.patch.object(pipeline, "verify"),
+                mock.patch.object(pipeline, "download") as download,
+                mock.patch.object(pipeline, "sign") as sign,
+                mock.patch.object(
+                    pipeline.sys, "stderr", new_callable=io.StringIO
+                ) as stderr,
+            ):
+                self.assertEqual(pipeline.main(), 1)
+                self.assertIn("v2 legacy consumers require T5", stderr.getvalue())
+                download.assert_not_called()
+                sign.assert_not_called()
+                self.assertFalse(output.parent.exists())
+        with self.assertRaisesRegex(ValueError, "T5"):
+            pipeline.validate_receipts([], self.tmp_path, document)
+        with mock.patch.object(pipeline, "verify") as verify:
+            with self.assertRaisesRegex(ValueError, "T5"):
+                pipeline.validate_validation(Path("absent.json"), key, document)
+            verify.assert_not_called()
+
+    def test_core_v2_fetch_is_read_only_and_requires_source_context(self):
+        path, key, _ = self.sample
+        document = core_reader_sample(self.tmp_path)
+        context = self.core_context(document)
+        path.write_text(json.dumps(document))
+        args = [
+            "release_pipeline",
+            "fetch-candidate",
+            "--repository",
+            "owner/repo",
+            "--run-id",
+            "123",
+            "--output",
+            str(self.tmp_path),
+            "--public-key",
+            str(key),
+        ]
+        outputs = self.tmp_path / "outputs"
+        outputs.write_text("unchanged=true\n")
+        with (
+            mock.patch.object(pipeline.sys, "argv", args),
+            mock.patch.object(pipeline, "run_info", return_value=run_document()),
+            mock.patch.object(pipeline, "download"),
+            mock.patch.object(pipeline, "verify"),
+            mock.patch.dict(pipeline.os.environ, {"GITHUB_OUTPUT": str(outputs)}),
+            mock.patch.object(
+                pipeline.sys, "stderr", new_callable=io.StringIO
+            ) as stderr,
+        ):
+            self.assertEqual(pipeline.main(), 1)
+            self.assertIn("trusted core context", stderr.getvalue())
+            args.extend(
+                [
+                    "--source-root",
+                    str(self.tmp_path / "source"),
+                    "--fedora",
+                    "45",
+                    "--base-digest",
+                    context["base_digest"],
+                    "--policy-sha256",
+                    context["policy_sha256"],
+                    "--channel",
+                    "testing",
+                ]
+            )
+            with (
+                mock.patch.object(
+                    pipeline, "core_context", return_value=context
+                ) as factory,
+                mock.patch.object(
+                    pipeline.sys, "stdout", new_callable=io.StringIO
+                ) as stdout,
+            ):
+                self.assertEqual(pipeline.main(), 0)
+                self.assertEqual(
+                    json.loads(stdout.getvalue()),
+                    {
+                        "schema_version": 2,
+                        "selection": "core",
+                        "read_only": True,
+                    },
+                )
+                factory.assert_called_once()
+        self.assertEqual(outputs.read_text(), "unchanged=true\n")
+
+    def test_load_rejects_duplicate_keys(self):
+        path = self.tmp_path / "duplicate.json"
+        path.write_text('{"version": 1, "version": 2}')
+        with self.assertRaisesRegex(ValueError, "duplicate"):
+            pipeline.load(path)
 
     def test_fetch_candidate_cli_workflow_authorization(self):
         path, key, _ = self.sample

@@ -22,6 +22,7 @@ SPEC.loader.exec_module(runner)
 
 def candidate():
     return {
+        "version": 1,
         "run_id": 12,
         "repository": "org/repo",
         "source_sha": "a" * 40,
