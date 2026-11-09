@@ -1,0 +1,373 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:luminusos:release-contract:2",
+  "title": "LuminusOS release contracts v2 (not connected to writers)",
+  "oneOf": [
+    {"$ref": "#/$defs/edition"},
+    {"$ref": "#/$defs/candidate"},
+    {"$ref": "#/$defs/validation"},
+    {"$ref": "#/$defs/policy"},
+    {"$ref": "#/$defs/receipt"}
+  ],
+  "$defs": {
+    "sha256": {"type": "string", "minLength": 64, "maxLength": 64, "pattern": "^[0-9a-f]{64}$"},
+    "digest": {"type": "string", "minLength": 71, "maxLength": 71, "pattern": "^sha256:[0-9a-f]{64}$"},
+    "commit": {"type": "string", "minLength": 40, "maxLength": 40, "pattern": "^[0-9a-f]{40}$"},
+    "fedora": {"type": "string", "pattern": "^[1-9][0-9]*$"},
+    "channel": {"enum": ["testing", "stable"]},
+    "editionId": {"enum": ["core", "workstation"]},
+    "timestamp": {"type": "string", "format": "date-time", "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}(?:\\.[0-9]+)?Z(?![\\s\\S])"},
+    "exactName": {"type": "string", "pattern": "^[A-Za-z0-9][A-Za-z0-9._+:/@-]*$"},
+    "repository": {"type": "string", "pattern": "^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$"},
+    "sourceRef": {"type": "string", "pattern": "^refs/heads/(main|release/[1-9][0-9]*)$"},
+    "evidenceClass": {"enum": ["synthetic", "runtime"]},
+    "file": {
+      "type": "object", "additionalProperties": false,
+      "required": ["path", "sha256", "size_bytes"],
+      "properties": {
+        "path": {"type": "string", "pattern": "^(?!.*(?:^|/)\\.{1,2}(?:/|$))[A-Za-z0-9_-][A-Za-z0-9._-]*(?:/[A-Za-z0-9_-][A-Za-z0-9._-]*)*$"},
+        "sha256": {"$ref": "#/$defs/sha256"},
+        "size_bytes": {"type": "integer", "minimum": 1}
+      }
+    },
+    "files": {"type": "array", "minItems": 1, "items": {"$ref": "#/$defs/file"}, "uniqueItems": true},
+    "image": {
+      "type": "object", "additionalProperties": false,
+      "required": ["repository", "digest"],
+      "properties": {
+        "repository": {"type": "string", "pattern": "^ghcr\\.io/[a-z0-9-]+/luminusos(?:-workstation)?$"},
+        "digest": {"$ref": "#/$defs/digest"}
+      }
+    },
+    "identity": {
+      "type": "object", "additionalProperties": false,
+      "required": ["repository", "source_sha", "source_ref", "run_id", "run_attempt", "fedora", "architecture", "selection", "channel", "build_version", "base_digest", "core_digest", "policy_sha256"],
+      "properties": {
+        "repository": {"$ref": "#/$defs/repository"},
+        "source_sha": {"$ref": "#/$defs/commit"},
+        "source_ref": {"$ref": "#/$defs/sourceRef"},
+        "run_id": {"type": "integer", "minimum": 1},
+        "run_attempt": {"type": "integer", "minimum": 1},
+        "fedora": {"$ref": "#/$defs/fedora"},
+        "architecture": {"enum": ["x86_64"]},
+        "selection": {"enum": ["core", "workstation", "all"]},
+        "channel": {"$ref": "#/$defs/channel"},
+        "build_version": {"type": "string", "pattern": "^[1-9][0-9]*\\.[0-9]{8}(?:\\.[1-9][0-9]*)?$"},
+        "base_digest": {"$ref": "#/$defs/digest"},
+        "core_digest": {"$ref": "#/$defs/digest"},
+        "policy_sha256": {"$ref": "#/$defs/sha256"}
+      },
+      "allOf": [
+        {"if": {"properties": {"channel": {"const": "testing"}}}, "then": {"properties": {"source_ref": {"const": "refs/heads/main"}}}},
+        {"if": {"properties": {"channel": {"const": "stable"}}}, "then": {"properties": {"source_ref": {"pattern": "^refs/heads/release/[1-9][0-9]*$"}}}}
+      ]
+    },
+    "binding": {
+      "type": "object", "additionalProperties": false,
+      "required": ["candidate_sha256", "identity"],
+      "properties": {"candidate_sha256": {"$ref": "#/$defs/sha256"}, "identity": {"$ref": "#/$defs/identity"}}
+    },
+    "installed": {
+      "type": "object", "additionalProperties": false,
+      "required": ["edition", "channel", "fedora", "reference", "digest"],
+      "properties": {
+        "edition": {"$ref": "#/$defs/editionId"},
+        "channel": {"$ref": "#/$defs/channel"},
+        "fedora": {"$ref": "#/$defs/fedora"},
+        "reference": {"type": "string", "pattern": "^ghcr\\.io/[a-z0-9-]+/luminusos(?:-workstation)?:(?:testing-)?[1-9][0-9]*$"},
+        "digest": {"$ref": "#/$defs/digest"}
+      }
+    },
+    "edition": {
+      "type": "object", "additionalProperties": false,
+      "required": ["kind", "schema_version", "id", "image", "formats", "controls", "secure_boot", "tpm"],
+      "properties": {
+        "kind": {"const": "edition"}, "schema_version": {"const": 2},
+        "id": {"$ref": "#/$defs/editionId"},
+        "image": {"enum": ["luminusos", "luminusos-workstation"]},
+        "formats": {"type": "array", "items": {"enum": ["oci", "iso", "qcow2"]}, "uniqueItems": true},
+        "controls": {"type": "array", "items": {"$ref": "#/$defs/control"}, "uniqueItems": true},
+        "secure_boot": {"const": "required"},
+        "tpm": {"const": "not_required"}
+      },
+      "oneOf": [
+        {"properties": {"id": {"const": "core"}, "image": {"const": "luminusos"}, "formats": {"const": ["oci"]}, "controls": {"const": ["preflight", "control_channel", "first_boot", "expected_key", "unsigned_rejected", "foreign_key_rejected", "update", "rollback", "selinux_enforcing", "firewall", "secure_boot", "final_boot"]}}},
+        {"properties": {"id": {"const": "workstation"}, "image": {"const": "luminusos-workstation"}, "formats": {"const": ["oci", "iso", "qcow2"]}, "controls": {"const": ["preflight", "control_channel", "sirius_install", "first_boot", "live_isolation", "expected_key", "unsigned_rejected", "foreign_key_rejected", "update", "rollback", "selinux_enforcing", "firewall", "secure_boot", "final_boot"]}}}
+      ]
+    },
+    "candidate": {
+      "type": "object", "additionalProperties": false,
+      "required": ["kind", "schema_version", "evidence_class", "identity", "components", "artifacts", "installed", "core_dependency", "validation_images"],
+      "properties": {
+        "kind": {"const": "candidate"}, "schema_version": {"const": 2},
+        "evidence_class": {"$ref": "#/$defs/evidenceClass"},
+        "identity": {"$ref": "#/$defs/identity"},
+        "validation_images": {
+          "type": "object", "additionalProperties": false,
+          "minProperties": 1,
+          "properties": {"core": {"$ref": "#/$defs/validationImages"}, "workstation": {"$ref": "#/$defs/validationImages"}}
+        },
+        "components": {
+          "type": "object", "additionalProperties": false,
+          "properties": {"core": {"$ref": "#/$defs/image"}, "workstation": {"$ref": "#/$defs/image"}, "installer": {"$ref": "#/$defs/image"}}
+        },
+        "artifacts": {
+          "type": "object", "additionalProperties": false,
+          "properties": {"iso": {"$ref": "#/$defs/file"}, "qcow2": {"$ref": "#/$defs/file"}}
+        },
+        "installed": {
+          "type": "object", "additionalProperties": false,
+          "properties": {"core": {"$ref": "#/$defs/installed"}, "workstation": {"$ref": "#/$defs/installed"}}
+        },
+        "core_dependency": {
+          "type": "object", "additionalProperties": false,
+          "required": ["mode", "digest", "evidence_sha256", "source_sha", "source_ref", "fedora", "channel", "architecture", "base_digest", "policy_sha256"],
+          "properties": {
+            "mode": {"enum": ["built", "reused"]},
+            "digest": {"$ref": "#/$defs/digest"},
+            "evidence_sha256": {"$ref": "#/$defs/sha256"},
+            "source_sha": {"$ref": "#/$defs/commit"},
+            "source_ref": {"$ref": "#/$defs/sourceRef"},
+            "fedora": {"$ref": "#/$defs/fedora"},
+            "channel": {"$ref": "#/$defs/channel"},
+            "architecture": {"const": "x86_64"},
+            "base_digest": {"$ref": "#/$defs/digest"},
+            "policy_sha256": {"$ref": "#/$defs/sha256"}
+          }
+        }
+      },
+      "allOf": [
+        {"if": {"properties": {"identity": {"properties": {"selection": {"const": "core"}}}}}, "then": {"properties": {"components": {"required": ["core"], "maxProperties": 1}, "artifacts": {"maxProperties": 0}, "installed": {"required": ["core"], "maxProperties": 1}}}},
+        {"if": {"properties": {"identity": {"properties": {"selection": {"const": "workstation"}}}}}, "then": {"properties": {"components": {"required": ["workstation", "installer"], "maxProperties": 2}, "artifacts": {"required": ["iso", "qcow2"]}, "installed": {"required": ["workstation"], "maxProperties": 1}}}},
+        {"if": {"properties": {"identity": {"properties": {"selection": {"const": "all"}}}}}, "then": {"properties": {"components": {"required": ["core", "workstation", "installer"]}, "artifacts": {"required": ["iso", "qcow2"]}, "installed": {"required": ["core", "workstation"]}}}}
+      ]
+    },
+    "exception": {
+      "type": "object", "additionalProperties": false,
+      "required": ["advisory", "package", "package_version", "edition", "component_scope", "channel", "fedora", "owner", "reason", "classification", "evidence", "issued_at", "expires_at", "component_type"],
+      "properties": {
+        "advisory": {"type": "string", "pattern": "^(?:CVE-[0-9]{4}-[0-9]{4,}|GHSA-[23456789cfghjmpqrvwx]{4}-[23456789cfghjmpqrvwx]{4}-[23456789cfghjmpqrvwx]{4}|GO-[0-9]{4}-[0-9]{4,})$"},
+        "package": {"$ref": "#/$defs/exactName"},
+        "package_version": {"$ref": "#/$defs/exactName"},
+        "edition": {"$ref": "#/$defs/editionId"},
+        "component_scope": {"enum": ["core_payload", "workstation_payload", "installer_live"]},
+        "channel": {"$ref": "#/$defs/channel"}, "fedora": {"$ref": "#/$defs/fedora"},
+        "owner": {"type": "string", "pattern": "\\S", "minLength": 1},
+        "reason": {"type": "string", "pattern": "\\S", "minLength": 10},
+        "classification": {"enum": ["accepted_risk", "proven_false_positive"]},
+        "evidence": {"$ref": "#/$defs/files"},
+        "issued_at": {"$ref": "#/$defs/timestamp"}, "expires_at": {"$ref": "#/$defs/timestamp"},
+        "component_type": {"enum": ["rpm", "embedded_go"]},
+        "binary": {
+          "type": "object", "additionalProperties": false,
+          "required": ["path", "sha256", "rpm_nevra"],
+          "properties": {"path": {"type": "string", "pattern": "^/(?:usr/)?(?:s?bin|libexec)/[A-Za-z0-9._/-]+$"}, "sha256": {"$ref": "#/$defs/sha256"}, "rpm_nevra": {"$ref": "#/$defs/exactName"}}
+        }
+      },
+      "allOf": [
+        {"if": {"properties": {"edition": {"const": "core"}}}, "then": {"properties": {"component_scope": {"const": "core_payload"}}}, "else": {"properties": {"component_scope": {"enum": ["workstation_payload", "installer_live"]}}}},
+        {"if": {"properties": {"component_type": {"const": "embedded_go"}}}, "then": {"required": ["binary"]}},
+        {"if": {"properties": {"component_type": {"const": "rpm"}}}, "then": {"not": {"required": ["binary"]}}}
+      ]
+    },
+    "validationImage": {
+      "type": "object", "additionalProperties": false,
+      "required": ["digest", "derived_from", "logical_reference", "signing_key_fingerprint", "producer", "producer_evidence"],
+      "properties": {
+        "digest": {"$ref": "#/$defs/digest"},
+        "derived_from": {"$ref": "#/$defs/digest"},
+        "logical_reference": {"type": "string", "pattern": "^ghcr\\.io/[a-z0-9-]+/luminusos(?:-workstation)?@sha256:[0-9a-f]{64}$"},
+        "signing_key_fingerprint": {"oneOf": [{"$ref": "#/$defs/sha256"}, {"type": "null"}]},
+        "producer": {"$ref": "#/$defs/executor"},
+        "producer_evidence": {"$ref": "#/$defs/files"}
+      }
+    },
+    "validationImages": {
+      "type": "object", "additionalProperties": false,
+      "required": ["update", "signed", "unsigned", "foreign"],
+      "properties": {
+        "update": {"$ref": "#/$defs/validationImage", "properties": {"signing_key_fingerprint": {"$ref": "#/$defs/sha256"}}},
+        "signed": {"$ref": "#/$defs/validationImage", "properties": {"signing_key_fingerprint": {"$ref": "#/$defs/sha256"}}},
+        "unsigned": {"$ref": "#/$defs/validationImage", "properties": {"signing_key_fingerprint": {"type": "null"}}},
+        "foreign": {"$ref": "#/$defs/validationImage", "properties": {"signing_key_fingerprint": {"$ref": "#/$defs/sha256"}}}
+      }
+    },
+    "policy": {
+      "type": "object", "additionalProperties": false,
+      "required": ["kind", "schema_version", "evidence_class", "exceptions"],
+      "properties": {
+        "kind": {"const": "policy"}, "schema_version": {"const": 2},
+        "evidence_class": {"$ref": "#/$defs/evidenceClass"},
+        "exceptions": {"type": "array", "items": {"$ref": "#/$defs/exception"}, "uniqueItems": true}
+      }
+    },
+    "executor": {
+      "type": "object", "additionalProperties": false,
+      "required": ["repository", "source_sha", "source_ref", "workflow", "run_id", "run_attempt"],
+      "properties": {
+        "repository": {"$ref": "#/$defs/repository"}, "source_sha": {"$ref": "#/$defs/commit"},
+        "source_ref": {"$ref": "#/$defs/sourceRef"},
+        "workflow": {"type": "string", "pattern": "^\\.github/workflows/[A-Za-z0-9_-]+\\.yml$"},
+        "run_id": {"type": "integer", "minimum": 1}, "run_attempt": {"type": "integer", "minimum": 1}
+      }
+    },
+    "signature": {
+      "type": "object", "additionalProperties": false,
+      "required": ["subject_sha256", "key_fingerprint", "signature_sha256"],
+      "properties": {"subject_sha256": {"$ref": "#/$defs/sha256"}, "key_fingerprint": {"$ref": "#/$defs/sha256"}, "signature_sha256": {"$ref": "#/$defs/sha256"}}
+    },
+    "validation": {
+      "type": "object", "additionalProperties": false,
+      "required": ["kind", "schema_version", "evidence_class", "binding", "executor", "signature", "gates", "scan", "receipts"],
+      "properties": {
+        "kind": {"const": "validation"}, "schema_version": {"const": 2},
+        "evidence_class": {"$ref": "#/$defs/evidenceClass"},
+        "binding": {"$ref": "#/$defs/binding"}, "executor": {"$ref": "#/$defs/executor"}, "signature": {"$ref": "#/$defs/signature"},
+        "gates": {
+          "type": "object", "additionalProperties": false,
+          "required": ["quality", "boot", "signature", "sbom", "vulnerability"],
+          "properties": {"quality": {"const": "success"}, "boot": {"const": "success"}, "signature": {"const": "success"}, "sbom": {"const": "success"}, "vulnerability": {"const": "success"}}
+        },
+        "scan": {
+          "type": "object", "additionalProperties": false,
+          "required": ["decision", "applied_exceptions", "reports"],
+          "properties": {
+            "decision": {"enum": ["clean", "accepted_risk"]},
+            "applied_exceptions": {"type": "array", "items": {"$ref": "#/$defs/sha256"}, "uniqueItems": true},
+            "reports": {"$ref": "#/$defs/files"}
+          },
+          "allOf": [
+            {"if": {"properties": {"decision": {"const": "clean"}}}, "then": {"properties": {"applied_exceptions": {"maxItems": 0}}}},
+            {"if": {"properties": {"decision": {"const": "accepted_risk"}}}, "then": {"properties": {"applied_exceptions": {"minItems": 1}}}}
+          ]
+        },
+        "receipts": {"type": "array", "minItems": 1, "items": {"$ref": "#/$defs/receipt"}}
+      }
+    },
+    "control": {"enum": ["preflight", "control_channel", "sirius_install", "first_boot", "live_isolation", "expected_key", "unsigned_rejected", "foreign_key_rejected", "update", "rollback", "selinux_enforcing", "firewall", "secure_boot", "final_boot"]},
+    "receipt": {
+      "type": "object", "additionalProperties": false,
+      "required": ["kind", "schema_version", "evidence_class", "binding", "executor", "edition", "phase", "control", "result", "started_at", "finished_at", "deadline_seconds", "evidence", "observations"],
+      "properties": {
+        "kind": {"const": "receipt"}, "schema_version": {"const": 2},
+        "evidence_class": {"$ref": "#/$defs/evidenceClass"},
+        "binding": {"$ref": "#/$defs/binding"}, "executor": {"$ref": "#/$defs/executor"},
+        "edition": {"$ref": "#/$defs/editionId"}, "control": {"$ref": "#/$defs/control"},
+        "phase": {"enum": ["live", "installed"]},
+        "result": {"const": "success"}, "started_at": {"$ref": "#/$defs/timestamp"}, "finished_at": {"$ref": "#/$defs/timestamp"},
+        "deadline_seconds": {"type": "integer", "minimum": 1}, "evidence": {"$ref": "#/$defs/files"},
+        "observations": {}
+      },
+      "allOf": [
+        {"if": {"properties": {"edition": {"const": "core"}}}, "then": {"properties": {"phase": {"const": "installed"}}}},
+        {"if": {"properties": {"control": {"enum": ["sirius_install", "live_isolation"]}}}, "then": {"properties": {"phase": {"const": "live"}}}},
+        {"if": {"properties": {"control": {"not": {"enum": ["control_channel", "sirius_install", "live_isolation"]}}}}, "then": {"properties": {"phase": {"const": "installed"}}}},
+        {"if": {"properties": {"control": {"const": "control_channel"}, "phase": {"const": "installed"}}}, "then": {"properties": {"observations": {"properties": {"selinux_mode": {"const": "Enforcing"}}}}}},
+        {"if": {"properties": {"control": {"enum": ["first_boot", "final_boot"]}, "edition": {"const": "core"}}}, "then": {"properties": {"observations": {"properties": {"iso_detached": {"const": "not_applicable"}}}}}},
+        {"if": {"properties": {"control": {"enum": ["first_boot", "final_boot"]}, "edition": {"const": "workstation"}}}, "then": {"properties": {"observations": {"properties": {"iso_detached": {"const": true}}}}}},
+        {"if": {"properties": {"control": {"const": "preflight"}}}, "then": {"properties": {"observations": {"$ref": "#/$defs/preflight"}}}},
+        {"if": {"properties": {"control": {"const": "control_channel"}}}, "then": {"properties": {"observations": {"$ref": "#/$defs/controlChannel"}}}},
+        {"if": {"properties": {"control": {"const": "sirius_install"}}}, "then": {"properties": {"edition": {"const": "workstation"}, "observations": {"$ref": "#/$defs/install"}}}},
+        {"if": {"properties": {"control": {"enum": ["first_boot", "final_boot"]}}}, "then": {"properties": {"observations": {"$ref": "#/$defs/boot"}}}},
+        {"if": {"properties": {"control": {"const": "final_boot"}}}, "then": {"properties": {"observations": {"required": ["channel_receipt_sha256", "host_key_fingerprint", "vm_id", "observation_method"], "properties": {"control_channel_absent": {"const": true}, "ephemeral_credentials_absent": {"const": true}, "observation_method": {"const": "qmp_serial_offline"}}}}}},
+        {"if": {"properties": {"control": {"const": "live_isolation"}}}, "then": {"properties": {"edition": {"const": "workstation"}, "observations": {"$ref": "#/$defs/isolation"}}}},
+        {"if": {"properties": {"control": {"const": "expected_key"}}}, "then": {"properties": {"observations": {"$ref": "#/$defs/mirror"}}}},
+        {"if": {"properties": {"control": {"const": "unsigned_rejected"}}}, "then": {"properties": {"observations": {"$ref": "#/$defs/mirror", "properties": {"outcome": {"const": "unsigned_rejected"}, "attachment_status": {"const": 404}}}}}},
+        {"if": {"properties": {"control": {"const": "foreign_key_rejected"}}}, "then": {"properties": {"observations": {"$ref": "#/$defs/mirror", "properties": {"outcome": {"const": "foreign_key_rejected"}, "attachment_status": {"const": 200}}}}}},
+        {"if": {"properties": {"control": {"const": "expected_key"}}}, "then": {"properties": {"observations": {"properties": {"outcome": {"const": "signed_pass"}, "attachment_status": {"const": 200}}}}}},
+        {"if": {"properties": {"control": {"enum": ["update", "rollback"]}}}, "then": {"properties": {"observations": {"$ref": "#/$defs/transition"}}}},
+        {"if": {"properties": {"control": {"const": "selinux_enforcing"}}}, "then": {"properties": {"observations": {"$ref": "#/$defs/selinux"}}}},
+        {"if": {"properties": {"control": {"const": "firewall"}}}, "then": {"properties": {"observations": {"$ref": "#/$defs/firewall"}}}},
+        {"if": {"properties": {"control": {"const": "secure_boot"}}}, "then": {"properties": {"observations": {"$ref": "#/$defs/firmware"}}}}
+      ]
+    },
+    "preflight": {
+      "type": "object", "additionalProperties": false,
+      "required": ["candidate_inventory", "packages", "ssh_templates", "kvm_usable", "vsock_usable", "transport_authenticated", "firmware_compatible", "tpm", "disk_virtual_bytes", "disk_fully_allocated_bytes", "available_bytes", "required_bytes", "reserve_bytes", "budget_terms", "zip_removed_before_disk", "deadlines_checked"],
+      "properties": {
+        "candidate_inventory": {"$ref": "#/$defs/files"}, "packages": {"$ref": "#/$defs/files"}, "ssh_templates": {"$ref": "#/$defs/files"},
+        "kvm_usable": {"const": true}, "vsock_usable": {"const": true}, "transport_authenticated": {"const": true}, "firmware_compatible": {"const": true},
+        "tpm": {"const": "not_required"},
+        "disk_virtual_bytes": {"const": 34359738368}, "disk_fully_allocated_bytes": {"type": "integer", "minimum": 34359738368},
+        "available_bytes": {"type": "integer", "minimum": 1}, "required_bytes": {"type": "integer", "minimum": 1}, "reserve_bytes": {"type": "integer", "minimum": 1},
+        "budget_terms": {
+          "type": "object", "additionalProperties": false,
+          "required": ["disk", "mirror_cache", "fixtures", "extraction_staging", "logs", "reserve"],
+          "properties": {"disk": {"type": "integer", "minimum": 34359738368}, "mirror_cache": {"type": "integer", "minimum": 1}, "fixtures": {"type": "integer", "minimum": 1}, "extraction_staging": {"type": "integer", "minimum": 1}, "logs": {"type": "integer", "minimum": 1}, "reserve": {"type": "integer", "minimum": 1}}
+        },
+        "zip_removed_before_disk": {"const": true}, "deadlines_checked": {"const": true}
+      }
+    },
+    "controlChannel": {
+      "type": "object", "additionalProperties": false,
+      "required": ["vm_id", "cid", "qemu_pid", "qmp_identity_sha256", "host_key_fingerprint", "host_key_binding", "corroboration", "known_hosts_sha256", "configuration_sha256", "authenticated", "tcp_listener", "persistent_authorized_keys", "selinux_mode"],
+      "properties": {
+        "vm_id": {"$ref": "#/$defs/exactName"}, "cid": {"type": "integer", "minimum": 3, "maximum": 4294967294}, "qemu_pid": {"type": "integer", "minimum": 1},
+        "qmp_identity_sha256": {"$ref": "#/$defs/sha256"}, "host_key_fingerprint": {"type": "string", "pattern": "^SHA256:[A-Za-z0-9+/]{43}$"},
+        "known_hosts_sha256": {"$ref": "#/$defs/sha256"}, "configuration_sha256": {"$ref": "#/$defs/sha256"},
+        "host_key_binding": {"const": "first_contact_cid_bound"},
+        "corroboration": {
+          "type": "object", "additionalProperties": false,
+          "required": ["method", "evidence"],
+          "properties": {"method": {"enum": ["serial", "offline", "unavailable"]}, "evidence": {"type": "array", "items": {"$ref": "#/$defs/file"}}, "reason": {"type": "string", "minLength": 10, "pattern": "\\S"}},
+          "allOf": [
+            {"if": {"properties": {"method": {"const": "unavailable"}}}, "then": {"required": ["reason"], "properties": {"evidence": {"maxItems": 0}}}, "else": {"properties": {"evidence": {"minItems": 1}}}}
+          ]
+        },
+        "authenticated": {"const": true}, "tcp_listener": {"const": false}, "persistent_authorized_keys": {"const": false}, "selinux_mode": {"enum": ["Enforcing", "Permissive"]}
+      }
+    },
+    "install": {
+      "type": "object", "additionalProperties": false,
+      "required": ["iso_sha256", "payload_digest", "disk_id", "request_sha256", "sirius_rpm_sha256", "sirius_exit_code", "disk_inventory", "channel_receipt_sha256", "vm_id"],
+      "properties": {"iso_sha256": {"$ref": "#/$defs/sha256"}, "payload_digest": {"$ref": "#/$defs/digest"}, "disk_id": {"$ref": "#/$defs/exactName"}, "request_sha256": {"$ref": "#/$defs/sha256"}, "sirius_rpm_sha256": {"$ref": "#/$defs/sha256"}, "sirius_exit_code": {"const": 0}, "disk_inventory": {"$ref": "#/$defs/files"}, "channel_receipt_sha256": {"$ref": "#/$defs/sha256"}, "vm_id": {"$ref": "#/$defs/exactName"}}
+    },
+    "boot": {
+      "type": "object", "additionalProperties": false,
+      "required": ["boot_id", "disk_id", "installed", "iso_detached", "control_channel_absent", "ephemeral_credentials_absent", "offline_inventory"],
+      "properties": {"boot_id": {"type": "string", "format": "uuid"}, "disk_id": {"$ref": "#/$defs/exactName"}, "installed": {"$ref": "#/$defs/installed"}, "iso_detached": {"enum": [true, "not_applicable"]}, "control_channel_absent": {"type": "boolean"}, "ephemeral_credentials_absent": {"type": "boolean"}, "offline_inventory": {"$ref": "#/$defs/files"}, "channel_receipt_sha256": {"$ref": "#/$defs/sha256"}, "host_key_fingerprint": {"type": "string", "pattern": "^SHA256:[A-Za-z0-9+/]{43}$"}, "vm_id": {"$ref": "#/$defs/exactName"}, "observation_method": {"enum": ["qmp_serial_offline"]}}
+    },
+    "isolation": {
+      "type": "object", "additionalProperties": false,
+      "required": ["live_inventory", "installed_inventory", "mounts", "sirius_absent", "live_payload_absent"],
+      "properties": {"live_inventory": {"$ref": "#/$defs/files"}, "installed_inventory": {"$ref": "#/$defs/files"}, "mounts": {"$ref": "#/$defs/files"}, "sirius_absent": {"const": true}, "live_payload_absent": {"const": true}}
+    },
+    "mirror": {
+      "type": "object", "additionalProperties": false,
+      "required": ["logical_reference", "physical_endpoint", "fixture_digest", "policy_sha256", "mirror_config_sha256", "guest_dropin_sha256", "tls_ca_sha256", "key_fingerprint", "signer_fingerprint", "attachment_status", "outcome", "crypto_reason", "state_preserved", "requests"],
+      "properties": {
+        "logical_reference": {"type": "string", "pattern": "^ghcr\\.io/[a-z0-9-]+/luminusos(?:-workstation)?@sha256:[0-9a-f]{64}$"},
+        "physical_endpoint": {"type": "string", "format": "uri", "pattern": "^https://"}, "fixture_digest": {"$ref": "#/$defs/digest"},
+        "policy_sha256": {"$ref": "#/$defs/sha256"}, "mirror_config_sha256": {"$ref": "#/$defs/sha256"}, "guest_dropin_sha256": {"$ref": "#/$defs/sha256"}, "tls_ca_sha256": {"$ref": "#/$defs/sha256"}, "key_fingerprint": {"$ref": "#/$defs/sha256"},
+        "signer_fingerprint": {"oneOf": [{"$ref": "#/$defs/sha256"}, {"type": "null"}]},
+        "attachment_status": {"enum": [200, 404]}, "outcome": {"enum": ["signed_pass", "unsigned_rejected", "foreign_key_rejected"]},
+        "crypto_reason": {"enum": ["signature_verified", "signature_missing", "foreign_signature_invalid"]}, "state_preserved": {"const": true}, "requests": {"$ref": "#/$defs/files"}
+      },
+      "allOf": [
+        {"if": {"properties": {"outcome": {"const": "signed_pass"}}}, "then": {"properties": {"crypto_reason": {"const": "signature_verified"}}}},
+        {"if": {"properties": {"outcome": {"const": "unsigned_rejected"}}}, "then": {"properties": {"crypto_reason": {"const": "signature_missing"}}}},
+        {"if": {"properties": {"outcome": {"const": "foreign_key_rejected"}}}, "then": {"properties": {"crypto_reason": {"const": "foreign_signature_invalid"}}}}
+      ]
+    },
+    "transition": {
+      "type": "object", "additionalProperties": false,
+      "required": ["from_digest", "to_digest", "before_boot_id", "after_boot_id", "reference", "status_before", "status_after", "channel_receipt_sha256", "host_key_fingerprint", "vm_id"],
+      "properties": {"from_digest": {"$ref": "#/$defs/digest"}, "to_digest": {"$ref": "#/$defs/digest"}, "before_boot_id": {"type": "string", "format": "uuid"}, "after_boot_id": {"type": "string", "format": "uuid"}, "reference": {"type": "string", "pattern": "^ghcr\\.io/[a-z0-9-]+/luminusos(?:-workstation)?:(?:testing-)?[1-9][0-9]*$"}, "status_before": {"$ref": "#/$defs/files"}, "status_after": {"$ref": "#/$defs/files"}, "channel_receipt_sha256": {"$ref": "#/$defs/sha256"}, "host_key_fingerprint": {"type": "string", "pattern": "^SHA256:[A-Za-z0-9+/]{43}$"}, "vm_id": {"$ref": "#/$defs/exactName"}}
+    },
+    "selinux": {
+      "type": "object", "additionalProperties": false,
+      "required": ["mode", "policy_sha256", "allowed_operation", "denied_operation", "audit"],
+      "properties": {"mode": {"const": "Enforcing"}, "policy_sha256": {"$ref": "#/$defs/sha256"}, "allowed_operation": {"const": "success"}, "denied_operation": {"const": "denied"}, "audit": {"$ref": "#/$defs/files"}}
+    },
+    "firewall": {
+      "type": "object", "additionalProperties": false,
+      "required": ["service_active", "rules_sha256", "allowed_probe", "blocked_probe", "network_evidence"],
+      "properties": {"service_active": {"const": true}, "rules_sha256": {"$ref": "#/$defs/sha256"}, "allowed_probe": {"const": "success"}, "blocked_probe": {"const": "blocked"}, "network_evidence": {"$ref": "#/$defs/files"}}
+    },
+    "firmware": {
+      "type": "object", "additionalProperties": false,
+      "required": ["descriptor_sha256", "code_sha256", "vars_sha256", "shim_sha256", "smm", "enrolled_keys", "guest_secure_boot", "guest_setup_mode", "guest_state"],
+      "properties": {"descriptor_sha256": {"$ref": "#/$defs/sha256"}, "code_sha256": {"$ref": "#/$defs/sha256"}, "vars_sha256": {"$ref": "#/$defs/sha256"}, "shim_sha256": {"$ref": "#/$defs/sha256"}, "smm": {"const": true}, "enrolled_keys": {"const": true}, "guest_secure_boot": {"const": true}, "guest_setup_mode": {"const": false}, "guest_state": {"$ref": "#/$defs/files"}}
+    }
+  }
+}
