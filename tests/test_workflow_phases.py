@@ -11,6 +11,96 @@ def workflow(name):
 
 
 class WorkflowPhasesTest(unittest.TestCase):
+    def test_core_canonical_artifact_requires_a_successful_testing_build(self):
+        core = workflow("containers.yml")["jobs"]["core"]
+        steps = core["steps"]
+        build = next(step for step in steps if step.get("id") == "build")
+        export = next(step for step in steps if step.get("id") == "export-core-oci")
+        upload = next(step for step in steps if step.get("id") == "upload-core-oci")
+        self.assertEqual(core["if"], "inputs.channel != 'stable'")
+        self.assertEqual(
+            export["if"],
+            "inputs.channel == 'testing' && steps.select.outputs.reused != 'true' && steps.build.outcome == 'success'",
+        )
+        self.assertEqual(upload["if"], "steps.export-core-oci.outcome == 'success'")
+        self.assertLess(steps.index(build), steps.index(export))
+        self.assertLess(steps.index(export), steps.index(upload))
+        self.assertEqual(build["with"]["load"], True)
+        self.assertEqual(build["with"]["push"], False)
+        self.assertEqual(build["with"]["platforms"], "linux/amd64")
+        self.assertEqual(export["env"]["IMAGE"], build["with"]["tags"])
+        self.assertEqual(
+            upload["uses"],
+            "actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9",
+        )
+        self.assertEqual(
+            upload["with"],
+            {
+                "name": "core-oci",
+                "path": "core-oci/",
+                "compression-level": 0,
+                "if-no-files-found": "error",
+            },
+        )
+        for step in (build, export, upload):
+            self.assertNotIn("continue-on-error", step)
+        self.assertEqual(core["permissions"], {"contents": "read", "packages": "read"})
+
+    def test_core_canonical_export_has_tools_and_the_build_daemon(self):
+        steps = workflow("containers.yml")["jobs"]["core"]["steps"]
+        setup = next(
+            step
+            for step in steps
+            if "docker/setup-docker-action@" in step.get("uses", "")
+        )
+        tools = next(
+            step for step in steps if "apt-get install -y skopeo" in step.get("run", "")
+        )
+        export = next(step for step in steps if step.get("id") == "export-core-oci")
+        self.assertIs(setup["with"]["set-host"], True)
+        self.assertNotIn("if", tools)
+        self.assertLess(steps.index(setup), steps.index(export))
+        self.assertLess(steps.index(tools), steps.index(export))
+        self.assertEqual(
+            export["run"],
+            'python3 .github/scripts/workflow/oci_layout.py export --image "$IMAGE" --layout core-oci --ref core --docker-host "${DOCKER_HOST:?Docker setup did not expose its socket}"',
+        )
+
+    def test_core_built_oci_outputs_are_separate_and_require_uploaded_artifact(self):
+        data = workflow("containers.yml")
+        core = data["jobs"]["core"]
+        call = data.get("on", data.get(True))["workflow_call"]["outputs"]
+        for name, source in (
+            ("manifest_digest", "steps.export-core-oci.outputs.manifest_digest"),
+            ("skopeo_version", "steps.export-core-oci.outputs.skopeo_version"),
+            ("artifact_id", "steps.upload-core-oci.outputs.artifact-id"),
+        ):
+            self.assertEqual(
+                core["outputs"][f"built_oci_{name}"],
+                "${{ steps.upload-core-oci.outcome == 'success' && "
+                + source
+                + " || '' }}",
+            )
+            self.assertEqual(
+                call[f"core_built_oci_{name}"]["value"],
+                "${{ jobs.core.outputs.built_oci_" + name + " }}",
+            )
+        self.assertEqual(
+            core["outputs"]["digest"], "${{ steps.select.outputs.digest }}"
+        )
+        self.assertEqual(
+            call["core_digest"]["value"], "${{ jobs.core.outputs.digest }}"
+        )
+        self.assertEqual(
+            core["outputs"]["image_id"], "${{ steps.save.outputs.image_id }}"
+        )
+        self.assertTrue(
+            any(
+                step.get("with", {}).get("name") == "core-image"
+                for step in core["steps"]
+            )
+        )
+
     def test_security_bypass_is_manual_auto_testing_only_and_cron_is_false(self):
         auto = workflow("auto-testing.yml")
         triggers = auto.get("on", auto.get(True))

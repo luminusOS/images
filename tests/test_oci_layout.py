@@ -12,6 +12,8 @@ import unittest
 from pathlib import Path
 from unittest import mock
 
+import yaml
+
 SPEC = importlib.util.spec_from_file_location(
     "oci_layout",
     Path(__file__).resolve().parents[1] / ".github/scripts/workflow/oci_layout.py",
@@ -86,6 +88,114 @@ def sample(root):
 
 
 class OciLayoutTests(unittest.TestCase):
+    def test_workflow_export_command_uses_real_helper_and_fails_closed(self):
+        workflow = yaml.safe_load(
+            (
+                Path(__file__).resolve().parents[1] / ".github/workflows/containers.yml"
+            ).read_text()
+        )
+        step = next(
+            step
+            for step in workflow["jobs"]["core"]["steps"]
+            if step.get("id") == "export-core-oci"
+        )
+        script = str(Path(oci.__file__).absolute())
+        command = step["run"].replace(".github/scripts/workflow/oci_layout.py", script)
+        binary = self.root.parent / "bin"
+        binary.mkdir()
+        executable = binary / "skopeo"
+        executable.write_text(
+            f"#!{oci.sys.executable}\n"
+            "import json, os, shutil, sys\n"
+            "from pathlib import Path\n"
+            "if sys.argv[1:] == ['--version']:\n"
+            "    print('skopeo version fixture')\n"
+            "    sys.exit(0)\n"
+            "Path(os.environ['CALL_LOG']).write_text(json.dumps(sys.argv[1:]))\n"
+            "target = sys.argv[-1].removeprefix('oci:').rsplit(':', 1)[0]\n"
+            "if os.environ['FAIL_COPY'] == '1':\n"
+            "    Path(target, 'partial').write_text('incomplete')\n"
+            "    sys.exit(1)\n"
+            "shutil.copytree(os.environ['SOURCE_LAYOUT'], target, dirs_exist_ok=True)\n"
+        )
+        executable.chmod(0o700)
+        for fail in (False, True):
+            with self.subTest(fail=fail):
+                work = self.root.parent / f"work-{fail}"
+                work.mkdir()
+                output = work / "outputs"
+                call_log = work / "calls.json"
+                env = os.environ | {
+                    "PATH": str(binary) + os.pathsep + os.environ["PATH"],
+                    "IMAGE": "local/core:built",
+                    "DOCKER_HOST": "unix:///tmp/opencode/core-build.sock",
+                    "GITHUB_OUTPUT": str(output),
+                    "SOURCE_LAYOUT": str(self.root),
+                    "CALL_LOG": str(call_log),
+                    "FAIL_COPY": str(int(fail)),
+                }
+                result = subprocess.run(
+                    ["bash", "-e", "-o", "pipefail", "-c", command],
+                    cwd=work,
+                    env=env,
+                    capture_output=True,
+                    text=True,
+                    check=False,
+                )
+                self.assertEqual(result.returncode, int(fail), result.stderr)
+                argv = json.loads(call_log.read_text())
+                self.assertEqual(
+                    argv[argv.index("--src-daemon-host") + 1], env["DOCKER_HOST"]
+                )
+                self.assertEqual(argv[-2], "docker-daemon:" + env["IMAGE"])
+                self.assertRegex(argv[-1], r"\Aoci:/proc/self/fd/[0-9]+:core\Z")
+                if fail:
+                    self.assertFalse(output.exists())
+                    self.assertEqual(result.stdout, "")
+                else:
+                    self.assertEqual(
+                        oci.manifest_digest(work / "core-oci", "core"), self.expected
+                    )
+                    self.assertIn(
+                        f"manifest_digest={self.expected}\n", output.read_text()
+                    )
+                    self.assertIn(
+                        "skopeo_version=skopeo version fixture\n", output.read_text()
+                    )
+        missing_host = self.root.parent / "missing-host"
+        missing_host.mkdir()
+        env["DOCKER_HOST"] = ""
+        env["GITHUB_OUTPUT"] = str(missing_host / "outputs")
+        env["CALL_LOG"] = str(missing_host / "calls.json")
+        result = subprocess.run(
+            ["bash", "-e", "-o", "pipefail", "-c", command],
+            cwd=missing_host,
+            env=env,
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        self.assertNotEqual(result.returncode, 0)
+        self.assertFalse((missing_host / "outputs").exists())
+        self.assertFalse((missing_host / "calls.json").exists())
+
+    def test_export_rejects_nonlocal_explicit_daemon_hosts(self):
+        with mock.patch.object(oci.subprocess, "run") as command:
+            for host in (
+                "tcp://remote:2375",
+                "ssh://remote",
+                "unix:///tmp/x\ninjected",
+                "unix:///tmp/../socket",
+            ):
+                with self.subTest(host=host), self.assertRaises(ValueError):
+                    oci.export_layout(
+                        "local/core:built",
+                        self.root.parent / "export",
+                        "core",
+                        docker_host=host,
+                    )
+            command.assert_not_called()
+
     def setUp(self):
         self.directory = tempfile.TemporaryDirectory()
         self.addCleanup(self.directory.cleanup)
