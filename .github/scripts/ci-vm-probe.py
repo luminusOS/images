@@ -131,7 +131,7 @@ def qmp_probe(output, timeout=10):
     return {"kvm": kvm, "state": state}
 
 
-def run_probe(output, expected_uid=None):
+def run_probe(output, expected_uid=None, vsock_inventory_only=False):
     output.mkdir(parents=True, exist_ok=True)
     result = {
         "status": "failed",
@@ -149,6 +149,16 @@ def run_probe(output, expected_uid=None):
             for name in ("GITHUB_SHA", "GITHUB_REF", "GITHUB_RUN_ID", "ImageVersion")
         },
     }
+    if vsock_inventory_only:
+        result.update(
+            mode="vsock-inventory",
+            required=["identity", "vsock-device", "vsock-modules"],
+            transport_validated=False,
+            transport_ready=False,
+            promotable=False,
+            release_validation=False,
+            limitations="Static inventory only; no device open, VM or transport validation.",
+        )
     write_json(output / "manifest.json", result)
     stage = "identity"
     try:
@@ -158,6 +168,8 @@ def run_probe(output, expected_uid=None):
             "groups": os.getgroups(),
             "expected_uid": expected_uid,
         }
+        if vsock_inventory_only and expected_uid is None:
+            raise ValueError("inventory requires expected non-root runner UID")
         if expected_uid is not None:
             identity["expected_gid"] = grp.getgrnam("kvm").gr_gid
             if (
@@ -166,6 +178,49 @@ def run_probe(output, expected_uid=None):
                 or identity["egid"] != identity["expected_gid"]
             ):
                 raise ValueError("expected non-root runner UID and primary kvm GID")
+        if vsock_inventory_only:
+            stage = "vsock-device"
+            path = "/dev/vhost-vsock"
+            device = result["vsock_device"] = {"path": path}
+            try:
+                metadata = os.stat(path)
+                device.update(
+                    file_type=stat.S_IFMT(metadata.st_mode),
+                    character_device=stat.S_ISCHR(metadata.st_mode),
+                    mode=oct(stat.S_IMODE(metadata.st_mode)),
+                    uid=metadata.st_uid,
+                    gid=metadata.st_gid,
+                )
+                try:
+                    device["group"] = grp.getgrgid(metadata.st_gid).gr_name
+                except KeyError as error:
+                    device["group_error"] = f"{type(error).__name__}: {error}"
+            except OSError as error:
+                device["stat_error"] = f"{type(error).__name__}: {error}"
+            device["apparent_access"] = {
+                "read": os.access(path, os.R_OK, effective_ids=True),
+                "write": os.access(path, os.W_OK, effective_ids=True),
+            }
+            getfacl = shutil.which("getfacl")
+            device["acl"] = {"available": bool(getfacl), "required": False}
+            if getfacl:
+                try:
+                    capture(output, "vsock-getfacl", [getfacl, "--", path])
+                except (OSError, subprocess.SubprocessError) as error:
+                    device["acl"]["error"] = f"{type(error).__name__}: {error}"
+            stage = "vsock-modules"
+            result["vsock_modules"] = [
+                line
+                for line in Path("/proc/modules").read_text().splitlines()
+                if line.split() and "vsock" in line.split()[0]
+            ]
+            available = bool(
+                device.get("character_device")
+                and all(device["apparent_access"].values())
+            )
+            result["static_prerequisites_present"] = available
+            result["status"] = "inventoried" if available else "not-ready"
+            return 0 if available else 1
         stage = "resources"
         meminfo = Path("/proc/meminfo").read_text()
         (output / "meminfo.txt").write_text(meminfo)
@@ -262,6 +317,7 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument("output", type=Path)
     parser.add_argument("--expected-uid", type=int, required=True)
+    parser.add_argument("--vsock-inventory-only", action="store_true")
 
     def interrupted(signum, frame):
         raise KeyboardInterrupt(f"received signal {signum}")
@@ -269,6 +325,10 @@ if __name__ == "__main__":
     previous = signal.signal(signal.SIGTERM, interrupted)
     try:
         arguments = parser.parse_args()
-        sys.exit(run_probe(arguments.output, arguments.expected_uid))
+        sys.exit(
+            run_probe(
+                arguments.output, arguments.expected_uid, arguments.vsock_inventory_only
+            )
+        )
     finally:
         signal.signal(signal.SIGTERM, previous)

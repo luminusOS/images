@@ -138,7 +138,11 @@ class ProbeTests(unittest.TestCase):
     def test_workflow_is_manual_readonly_and_uploads_failures(self):
         text = (ROOT / ".github/workflows/vm-capability-probe.yml").read_text()
         workflow = yaml.load(text, Loader=yaml.BaseLoader)
-        self.assertEqual(workflow["on"], {"workflow_dispatch": ""})
+        self.assertEqual(set(workflow["on"]), {"workflow_dispatch"})
+        mode = workflow["on"]["workflow_dispatch"]["inputs"]["probe_mode"]
+        self.assertEqual(mode["type"], "choice")
+        self.assertEqual(mode["default"], "kvm")
+        self.assertEqual(mode["options"], ["kvm", "vsock-inventory"])
         self.assertEqual(workflow["permissions"], {"contents": "read"})
         self.assertEqual(set(workflow["jobs"]), {"probe"})
         job = workflow["jobs"]["probe"]
@@ -152,6 +156,17 @@ class ProbeTests(unittest.TestCase):
         self.assertEqual(job["steps"][-1]["if"], "always()")
         self.assertEqual(job["steps"][-1]["with"]["if-no-files-found"], "error")
         launcher = job["steps"][2]["run"]
+        self.assertEqual(
+            job["steps"][2]["env"], {"PROBE_MODE": "${{ inputs.probe_mode }}"}
+        )
+        self.assertIn("inputs.probe_mode == 'kvm'", job["steps"][1]["if"])
+        self.assertIn('case "$PROBE_MODE" in', launcher)
+        self.assertIn("kvm) probe_args=() ;;", launcher)
+        self.assertIn(
+            "vsock-inventory) probe_args=(--vsock-inventory-only) ;;", launcher
+        )
+        self.assertIn("*) exit 2 ;;", launcher)
+        self.assertIn('"${probe_args[@]}"', launcher)
         for required in (
             'uid="$(id -u)"',
             'test "$uid" -ne 0',
@@ -243,6 +258,139 @@ class ProbeTests(unittest.TestCase):
                 self.assertEqual(
                     set(result["errors"]), {"resources" if accepted else "identity"}
                 )
+
+    def test_cli_requires_expected_uid_in_both_modes(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            for flags in ([], ["--vsock-inventory-only"]):
+                result = subprocess.run(
+                    [sys.executable, SPEC.origin, temporary, *flags],
+                    capture_output=True,
+                    text=True,
+                    timeout=5,
+                    check=False,
+                )
+                self.assertEqual(result.returncode, 2)
+                self.assertIn("--expected-uid", result.stderr)
+
+    def test_vsock_identity_guard_precedes_inventory(self):
+        for uid, gid, expected in (
+            (0, 993, 1001),
+            (1002, 993, 1001),
+            (1001, 1001, 1001),
+            (1001, 993, None),
+            (0, 993, 0),
+        ):
+            with (
+                self.subTest(uid=uid, gid=gid, expected=expected),
+                tempfile.TemporaryDirectory() as temporary,
+            ):
+                with (
+                    patch.object(probe.os, "geteuid", return_value=uid),
+                    patch.object(probe.os, "getegid", return_value=gid),
+                    patch.object(probe.grp, "getgrnam") as group,
+                    patch.object(Path, "read_text", side_effect=AssertionError("read")),
+                    patch.object(
+                        probe.os, "access", side_effect=AssertionError("access")
+                    ),
+                ):
+                    group.return_value.gr_gid = 993
+                    self.assertEqual(
+                        probe.run_probe(Path(temporary), expected, True), 1
+                    )
+                saved = json.loads((Path(temporary) / "manifest.json").read_text())
+                self.assertEqual(set(saved["errors"]), {"identity"})
+
+    def test_vsock_inventory_is_static_and_preserves_failures(self):
+        original_stat, original_read = os.stat, Path.read_text
+        for case in (
+            "present",
+            "missing",
+            "denied",
+            "access",
+            "regular",
+            "modules",
+            "acl",
+        ):
+            with self.subTest(case=case), tempfile.TemporaryDirectory() as temporary:
+                output = Path(temporary)
+
+                def metadata(path, *args, case=case, **kwargs):
+                    if os.fspath(path) != "/dev/vhost-vsock":
+                        return original_stat(path, *args, **kwargs)
+                    if case in ("missing", "denied"):
+                        error = (
+                            FileNotFoundError if case == "missing" else PermissionError
+                        )
+                        raise error(case)
+                    mode = 0o100660 if case == "regular" else 0o20660
+                    return os.stat_result((mode, 0, 0, 1, 0, 993, 0, 0, 0, 0))
+
+                def modules(path, *args, case=case, **kwargs):
+                    if path != Path("/proc/modules"):
+                        return original_read(path, *args, **kwargs)
+                    if case == "modules":
+                        raise PermissionError("modules denied")
+                    return "vsock 1 0 - Live 0\nvhost_vsock 1 0 - Live 0\nother 1 0 - Live 0\n"
+
+                def capture(directory, name, command):
+                    self.assertEqual(
+                        command, ["/usr/bin/getfacl", "--", "/dev/vhost-vsock"]
+                    )
+                    self.assertEqual(name, "vsock-getfacl")
+                    (directory / f"{name}.stdout").write_text("acl evidence\n")
+                    (directory / f"{name}.stderr").write_text("")
+
+                with (
+                    patch.object(probe.os, "geteuid", return_value=1001),
+                    patch.object(probe.os, "getegid", return_value=993),
+                    patch.object(probe.grp, "getgrnam") as group,
+                    patch.object(probe.grp, "getgrgid") as owner,
+                    patch.object(probe.os, "stat", side_effect=metadata),
+                    patch.object(Path, "read_text", modules),
+                    patch.object(probe.os, "access", return_value=case != "access"),
+                    patch.object(
+                        probe.shutil,
+                        "which",
+                        return_value="/usr/bin/getfacl" if case == "acl" else None,
+                    ),
+                    patch.object(
+                        probe.os, "open", side_effect=AssertionError("device open")
+                    ),
+                    patch.object(probe, "check_kvm", side_effect=AssertionError("kvm")),
+                    patch.object(
+                        probe, "secure_firmware", side_effect=AssertionError("firmware")
+                    ),
+                    patch.object(probe, "qmp_probe", side_effect=AssertionError("qmp")),
+                    patch.object(
+                        probe.subprocess, "Popen", side_effect=AssertionError("process")
+                    ),
+                    patch.object(probe, "capture", side_effect=capture) as acl,
+                    patch.dict(os.environ, {"GITHUB_RUN_ID": "inventory-test"}),
+                ):
+                    group.return_value.gr_gid, owner.return_value.gr_name = 993, "kvm"
+                    self.assertEqual(
+                        probe.run_probe(output, 1001, True),
+                        int(case not in ("present", "acl")),
+                    )
+                    self.assertEqual(acl.call_count, int(case == "acl"))
+                result = json.loads((output / "manifest.json").read_text())
+                for field in (
+                    "guest_security_validated",
+                    "transport_validated",
+                    "transport_ready",
+                    "promotable",
+                    "release_validation",
+                ):
+                    self.assertFalse(result[field])
+                self.assertEqual(result["context"]["GITHUB_RUN_ID"], "inventory-test")
+                if case == "modules":
+                    self.assertIn("modules denied", result["errors"]["vsock-modules"])
+                elif case in ("present", "acl"):
+                    self.assertEqual(result["status"], "inventoried")
+                    self.assertEqual(result["vsock_device"]["group"], "kvm")
+                    self.assertEqual(len(result["vsock_modules"]), 2)
+                else:
+                    self.assertEqual(result["status"], "not-ready")
 
     def test_kvm_metadata_survives_denied_open(self):
         original_stat = os.stat
