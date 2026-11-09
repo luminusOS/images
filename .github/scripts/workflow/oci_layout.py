@@ -221,12 +221,21 @@ def checked_manifest(root, ref):
     return descriptor["digest"]
 
 
-def export_layout(image, layout, ref):
+def export_layout(image, layout, ref, *, docker_host=""):
     require(
         isinstance(image, str) and IMAGE.fullmatch(image),
         "expected a local tagged Docker image",
     )
     require(isinstance(ref, str) and TAG.fullmatch(ref), "invalid OCI ref")
+    source_options = []
+    if docker_host:
+        require(
+            isinstance(docker_host, str)
+            and re.fullmatch(r"unix:///[A-Za-z0-9_./-]+", docker_host),
+            "expected a local Unix Docker socket",
+        )
+        safe_path(docker_host[7:])
+        source_options = ["--src-daemon-host", docker_host]
     layout = safe_path(layout)
     require(
         layout.name
@@ -256,6 +265,7 @@ def export_layout(image, layout, ref):
                     "--dest-compress",
                     "--dest-compress-format",
                     "gzip",
+                    *source_options,
                     f"docker-daemon:{image}",
                     f"oci:/proc/self/fd/{destination}:{ref}",
                 ],
@@ -316,10 +326,13 @@ def main():
         action.add_argument("--layout", type=Path, required=True)
         action.add_argument("--ref", required=True)
     export.add_argument("--image", required=True)
+    export.add_argument("--docker-host", default="")
     args = parser.parse_args()
     try:
         result = (
-            export_layout(args.image, args.layout, args.ref)
+            export_layout(
+                args.image, args.layout, args.ref, docker_host=args.docker_host
+            )
             if args.action == "export"
             else {"manifest_digest": manifest_digest(args.layout, args.ref)}
         )

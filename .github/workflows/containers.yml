@@ -30,6 +30,9 @@ on:
       workstation_image: {value: '${{ jobs.metadata.outputs.workstation_image }}'}
       workstation_iso_image: {value: '${{ jobs.metadata.outputs.workstation_iso_image }}'}
       core_digest: {value: '${{ jobs.core.outputs.digest }}'}
+      core_built_oci_manifest_digest: {value: '${{ jobs.core.outputs.built_oci_manifest_digest }}'}
+      core_built_oci_skopeo_version: {value: '${{ jobs.core.outputs.built_oci_skopeo_version }}'}
+      core_built_oci_artifact_id: {value: '${{ jobs.core.outputs.built_oci_artifact_id }}'}
       core_image_id: {value: '${{ jobs.core.outputs.image_id }}'}
       workstation_image_id: {value: '${{ jobs.workstation.outputs.image_id }}'}
       installer_image_id: {value: '${{ jobs.installer.outputs.image_id }}'}
@@ -93,9 +96,13 @@ jobs:
       image_id: '${{ steps.save.outputs.image_id }}'
       archive_sha256: '${{ steps.save.outputs.archive_sha256 }}'
       fingerprint: '${{ steps.hash.outputs.fingerprint }}'
+      built_oci_manifest_digest: '${{ steps.upload-core-oci.outcome == ''success'' && steps.export-core-oci.outputs.manifest_digest || '''' }}'
+      built_oci_skopeo_version: '${{ steps.upload-core-oci.outcome == ''success'' && steps.export-core-oci.outputs.skopeo_version || '''' }}'
+      built_oci_artifact_id: '${{ steps.upload-core-oci.outcome == ''success'' && steps.upload-core-oci.outputs.artifact-id || '''' }}'
     steps:
       - uses: docker/setup-docker-action@e43656e248c0bd0647d3f5c195d116aacf6fcaf4 # v4.7.0
         with:
+          set-host: true
           daemon-config: '{"features":{"containerd-snapshotter":true}}'
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - name: Hash core inputs
@@ -104,8 +111,7 @@ jobs:
           FEDORA_VERSION: '${{ needs.metadata.outputs.fedora_version }}'
           BASE_DIGEST: '${{ needs.metadata.outputs.fedora_bootc_digest }}'
         run: python3 .github/scripts/workflow/core_reuse.py hash
-      - name: Install reuse tools
-        if: inputs.core_ref != '' && !inputs.force_core && github.event_name != 'schedule'
+      - name: Install core image tools
         run: sudo apt-get update && sudo apt-get install -y skopeo
       - uses: sigstore/cosign-installer@d58896d6a1865668819e1d91763c7751a165e159 # v3.9.2
         if: inputs.core_ref != '' && !inputs.force_core && github.event_name != 'schedule'
@@ -129,6 +135,7 @@ jobs:
         with:
           context: .
           file: editions/core/Containerfile
+          platforms: linux/amd64
           load: true
           push: false
           no-cache: '${{ inputs.force_core || github.event_name == ''schedule'' }}'
@@ -144,6 +151,17 @@ jobs:
             org.luminusos.core.fedora=${{ needs.metadata.outputs.fedora_version }}
             org.luminusos.core.inputs-sha256=${{ steps.hash.outputs.fingerprint }}
           tags: '${{ needs.metadata.outputs.core_image }}'
+      - name: Export built core OCI layout
+        id: export-core-oci
+        if: inputs.channel == 'testing' && steps.select.outputs.reused != 'true' && steps.build.outcome == 'success'
+        env:
+          IMAGE: '${{ needs.metadata.outputs.core_image }}'
+        run: python3 .github/scripts/workflow/oci_layout.py export --image "$IMAGE" --layout core-oci --ref core --docker-host "${DOCKER_HOST:?Docker setup did not expose its socket}"
+      - name: Upload built core OCI layout
+        id: upload-core-oci
+        if: steps.export-core-oci.outcome == 'success'
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with: {name: core-oci, path: core-oci/, compression-level: 0, if-no-files-found: error}
       - name: Save core image archive
         id: save
         env:
