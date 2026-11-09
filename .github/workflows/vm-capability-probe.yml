@@ -2,6 +2,15 @@ name: VM capability probe
 
 on:
   workflow_dispatch:
+    inputs:
+      probe_mode:
+        description: Capability probe or static vsock inventory
+        type: choice
+        required: true
+        default: kvm
+        options:
+          - kvm
+          - vsock-inventory
 
 permissions:
   contents: read
@@ -15,6 +24,7 @@ jobs:
         with:
           persist-credentials: false
       - name: Install probe tooling
+        if: ${{ inputs.probe_mode == 'kvm' }}
         timeout-minutes: 8
         run: |
           set -euo pipefail
@@ -28,8 +38,15 @@ jobs:
       - name: Record capabilities, not guest validation
         if: ${{ !cancelled() }}
         timeout-minutes: 2
+        env:
+          PROBE_MODE: ${{ inputs.probe_mode }}
         run: |
           set -euo pipefail
+          case "$PROBE_MODE" in
+            kvm) probe_args=() ;;
+            vsock-inventory) probe_args=(--vsock-inventory-only) ;;
+            *) exit 2 ;;
+          esac
           output="${RUNNER_TEMP}/vm-capability-probe"
           mkdir -p "$output"
           {
@@ -65,7 +82,7 @@ jobs:
               GITHUB_SHA="$GITHUB_SHA" GITHUB_REF="$GITHUB_REF" \
               GITHUB_RUN_ID="$GITHUB_RUN_ID" ImageVersion="${ImageVersion:-}" \
               /usr/bin/python3 .github/scripts/ci-vm-probe.py "$output" \
-              --expected-uid "$uid"
+              --expected-uid "$uid" "${probe_args[@]}"
           } >"$output/launcher.stdout" 2>"$output/launcher.stderr"
       - name: Preserve evidence including failures
         if: always()
