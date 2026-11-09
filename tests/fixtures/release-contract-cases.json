@@ -1,0 +1,187 @@
+{
+  "evidence_notice": "SYNTHETIC: NOT ATTESTATIONS",
+  "evaluation_time": "2026-11-08T12:00:00Z",
+  "trusted_runner": {
+    "official_key_fingerprint": "9999999999999999999999999999999999999999999999999999999999999999",
+    "technical_signer": {"repository": "example/images", "source_sha": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb", "source_ref": "refs/heads/main", "workflow": ".github/workflows/technical-sign.yml", "run_id": 99, "run_attempt": 1},
+    "deadlines": {"preflight": 10, "control_channel": 10, "sirius_install": 10, "first_boot": 10, "live_isolation": 10, "expected_key": 10, "unsigned_rejected": 10, "foreign_key_rejected": 10, "update": 10, "rollback": 10, "selinux_enforcing": 10, "firewall": 10, "secure_boot": 10, "final_boot": 10}
+  },
+  "validation_images": {
+    "update": {
+      "digest": "sha256:eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee", "derived_from": "sha256:2222222222222222222222222222222222222222222222222222222222222222",
+      "logical_reference": "ghcr.io/example/luminusos@sha256:eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee", "signing_key_fingerprint": "9999999999999999999999999999999999999999999999999999999999999999",
+      "producer": {"repository": "example/images", "source_sha": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb", "source_ref": "refs/heads/main", "workflow": ".github/workflows/technical-sign.yml", "run_id": 99, "run_attempt": 1},
+      "producer_evidence": [{"path": "synthetic/B-provenance.json", "sha256": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd", "size_bytes": 100}]
+    },
+    "signed": {
+      "digest": "sha256:eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee", "derived_from": "sha256:eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+      "logical_reference": "ghcr.io/example/luminusos@sha256:eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee", "signing_key_fingerprint": "9999999999999999999999999999999999999999999999999999999999999999",
+      "producer": {"repository": "example/images", "source_sha": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb", "source_ref": "refs/heads/main", "workflow": ".github/workflows/technical-sign.yml", "run_id": 99, "run_attempt": 1},
+      "producer_evidence": [{"path": "synthetic/signed-provenance.json", "sha256": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd", "size_bytes": 100}]
+    },
+    "unsigned": {
+      "digest": "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb", "derived_from": "sha256:eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+      "logical_reference": "ghcr.io/example/luminusos@sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb", "signing_key_fingerprint": null,
+      "producer": {"repository": "example/images", "source_sha": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb", "source_ref": "refs/heads/main", "workflow": ".github/workflows/technical-sign.yml", "run_id": 99, "run_attempt": 1},
+      "producer_evidence": [{"path": "synthetic/unsigned-derivation.json", "sha256": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd", "size_bytes": 100}]
+    },
+    "foreign": {
+      "digest": "sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc", "derived_from": "sha256:eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+      "logical_reference": "ghcr.io/example/luminusos@sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc", "signing_key_fingerprint": "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
+      "producer": {"repository": "example/images", "source_sha": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb", "source_ref": "refs/heads/main", "workflow": ".github/workflows/technical-sign.yml", "run_id": 99, "run_attempt": 1},
+      "producer_evidence": [{"path": "synthetic/foreign-derivation.json", "sha256": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd", "size_bytes": 100}]
+    }
+  },
+  "editions": {
+    "core": {
+      "kind": "edition", "schema_version": 2, "id": "core", "image": "luminusos", "formats": ["oci"],
+      "controls": ["preflight", "control_channel", "first_boot", "expected_key", "unsigned_rejected", "foreign_key_rejected", "update", "rollback", "selinux_enforcing", "firewall", "secure_boot", "final_boot"],
+      "secure_boot": "required", "tpm": "not_required"
+    },
+    "workstation": {
+      "kind": "edition", "schema_version": 2, "id": "workstation", "image": "luminusos-workstation", "formats": ["oci", "iso", "qcow2"],
+      "controls": ["preflight", "control_channel", "sirius_install", "first_boot", "live_isolation", "expected_key", "unsigned_rejected", "foreign_key_rejected", "update", "rollback", "selinux_enforcing", "firewall", "secure_boot", "final_boot"],
+      "secure_boot": "required", "tpm": "not_required"
+    }
+  },
+  "candidate": {
+    "kind": "candidate", "schema_version": 2, "evidence_class": "synthetic",
+    "identity": {
+      "repository": "example/images", "source_sha": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", "source_ref": "refs/heads/main",
+      "run_id": 100, "run_attempt": 1, "fedora": "45", "architecture": "x86_64", "selection": "core", "channel": "testing", "build_version": "45.20261108.1",
+      "base_digest": "sha256:1111111111111111111111111111111111111111111111111111111111111111",
+      "core_digest": "sha256:2222222222222222222222222222222222222222222222222222222222222222",
+      "policy_sha256": "0000000000000000000000000000000000000000000000000000000000000000"
+    }
+  },
+  "components": {
+    "core": {"repository": "ghcr.io/example/luminusos", "digest": "sha256:2222222222222222222222222222222222222222222222222222222222222222"},
+    "workstation": {"repository": "ghcr.io/example/luminusos-workstation", "digest": "sha256:3333333333333333333333333333333333333333333333333333333333333333"},
+    "installer": {"repository": "ghcr.io/example/luminusos-workstation", "digest": "sha256:4444444444444444444444444444444444444444444444444444444444444444"}
+  },
+  "core_dependency": {
+    "mode": "built", "digest": "sha256:2222222222222222222222222222222222222222222222222222222222222222",
+    "evidence_sha256": "5555555555555555555555555555555555555555555555555555555555555555",
+    "source_sha": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", "source_ref": "refs/heads/main", "fedora": "45", "channel": "testing", "architecture": "x86_64",
+    "base_digest": "sha256:1111111111111111111111111111111111111111111111111111111111111111", "policy_sha256": "0000000000000000000000000000000000000000000000000000000000000000"
+  },
+  "artifacts": {
+    "iso": {"path": "luminusos-workstation-testing-45.20261108.1.iso", "sha256": "6666666666666666666666666666666666666666666666666666666666666666", "size_bytes": 100},
+    "qcow2": {"path": "luminusos-workstation-testing-45.20261108.1.qcow2", "sha256": "7777777777777777777777777777777777777777777777777777777777777777", "size_bytes": 100}
+  },
+  "policy": {
+    "kind": "policy", "schema_version": 2, "evidence_class": "synthetic",
+    "exceptions": [{
+      "advisory": "CVE-2026-12345", "package": "example-package", "package_version": "1.0-1.fc45", "edition": "core", "component_scope": "core_payload", "channel": "testing", "fedora": "45",
+      "owner": "synthetic-reviewer", "reason": "Synthetic accepted risk for contract testing only.", "classification": "accepted_risk",
+      "component_type": "rpm", "issued_at": "2026-11-01T00:00:00Z", "expires_at": "2026-11-30T00:00:00Z",
+      "evidence": [{"path": "synthetic/triage.json", "sha256": "8888888888888888888888888888888888888888888888888888888888888888", "size_bytes": 100}]
+    }]
+  },
+  "validation": {
+    "kind": "validation", "schema_version": 2, "evidence_class": "synthetic",
+    "executor": {"repository": "example/images", "source_sha": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb", "source_ref": "refs/heads/main", "workflow": ".github/workflows/validate.yml", "run_id": 101, "run_attempt": 1},
+    "signature": {"subject_sha256": "0000000000000000000000000000000000000000000000000000000000000000", "key_fingerprint": "9999999999999999999999999999999999999999999999999999999999999999", "signature_sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"},
+    "gates": {"quality": "success", "boot": "success", "signature": "success", "sbom": "success", "vulnerability": "success"},
+    "scan": {"decision": "clean", "applied_exceptions": [], "reports": [{"path": "synthetic/scan.json", "sha256": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb", "size_bytes": 100}]}
+  },
+  "receipt": {
+    "kind": "receipt", "schema_version": 2, "evidence_class": "synthetic",
+    "executor": {"repository": "example/images", "source_sha": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb", "source_ref": "refs/heads/main", "workflow": ".github/workflows/validate.yml", "run_id": 101, "run_attempt": 1},
+    "result": "success", "started_at": "2026-11-08T10:00:00Z", "finished_at": "2026-11-08T10:00:01Z", "deadline_seconds": 10,
+    "evidence": [{"path": "synthetic/control.log", "sha256": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc", "size_bytes": 100}]
+  },
+  "observations": {
+    "preflight": {
+      "candidate_inventory": [{"path": "synthetic/inventory.json", "sha256": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd", "size_bytes": 100}],
+      "packages": [{"path": "synthetic/packages.json", "sha256": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd", "size_bytes": 100}],
+      "ssh_templates": [{"path": "synthetic/ssh-template.txt", "sha256": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd", "size_bytes": 100}],
+      "kvm_usable": true, "vsock_usable": true, "transport_authenticated": true, "firmware_compatible": true, "tpm": "not_required",
+      "disk_virtual_bytes": 34359738368, "disk_fully_allocated_bytes": 35000000000, "available_bytes": 60000000000, "required_bytes": 50000000000, "reserve_bytes": 10000000000,
+      "budget_terms": {"disk": 35000000000, "mirror_cache": 2000000000, "fixtures": 1000000000, "extraction_staging": 1000000000, "logs": 1000000000, "reserve": 10000000000},
+      "zip_removed_before_disk": true, "deadlines_checked": true
+    },
+    "control_channel": {
+      "vm_id": "synthetic-vm", "cid": 42, "qemu_pid": 1234, "qmp_identity_sha256": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+      "host_key_fingerprint": "SHA256:AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA", "known_hosts_sha256": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd", "configuration_sha256": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+      "authenticated": true, "host_key_binding": "first_contact_cid_bound", "corroboration": {"method": "unavailable", "evidence": [], "reason": "Synthetic example has no independent host-key observation."}, "tcp_listener": false, "persistent_authorized_keys": false, "selinux_mode": "Enforcing"
+    },
+    "sirius_install": {
+      "iso_sha256": "6666666666666666666666666666666666666666666666666666666666666666", "payload_digest": "sha256:3333333333333333333333333333333333333333333333333333333333333333", "disk_id": "synthetic-disk",
+      "request_sha256": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd", "sirius_rpm_sha256": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd", "sirius_exit_code": 0,
+      "disk_inventory": [{"path": "synthetic/disk.json", "sha256": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd", "size_bytes": 100}]
+    },
+    "first_boot": {"boot_id": "00000000-0000-4000-8000-000000000001", "disk_id": "synthetic-disk", "iso_detached": true, "control_channel_absent": false, "ephemeral_credentials_absent": false, "offline_inventory": [{"path": "synthetic/first-boot.json", "sha256": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd", "size_bytes": 100}]},
+    "final_boot": {"boot_id": "00000000-0000-4000-8000-000000000004", "disk_id": "synthetic-disk", "iso_detached": true, "control_channel_absent": true, "ephemeral_credentials_absent": true, "observation_method": "qmp_serial_offline", "offline_inventory": [{"path": "synthetic/final-boot.json", "sha256": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd", "size_bytes": 100}]},
+    "live_isolation": {"live_inventory": [{"path": "synthetic/live.json", "sha256": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd", "size_bytes": 100}], "installed_inventory": [{"path": "synthetic/installed.json", "sha256": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd", "size_bytes": 100}], "mounts": [{"path": "synthetic/mounts.json", "sha256": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd", "size_bytes": 100}], "sirius_absent": true, "live_payload_absent": true},
+    "expected_key": {
+      "logical_reference": "ghcr.io/example/luminusos@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", "physical_endpoint": "https://127.0.0.1:5443", "fixture_digest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "policy_sha256": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd", "mirror_config_sha256": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd", "guest_dropin_sha256": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd", "tls_ca_sha256": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd", "key_fingerprint": "9999999999999999999999999999999999999999999999999999999999999999",
+      "attachment_status": 200, "outcome": "signed_pass", "crypto_reason": "signature_verified", "state_preserved": true,
+      "requests": [{"path": "synthetic/signed-requests.json", "sha256": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd", "size_bytes": 100}]
+    },
+    "unsigned_rejected": {
+      "logical_reference": "ghcr.io/example/luminusos@sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb", "physical_endpoint": "https://127.0.0.1:5443", "fixture_digest": "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+      "policy_sha256": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd", "mirror_config_sha256": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd", "guest_dropin_sha256": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd", "tls_ca_sha256": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd", "key_fingerprint": "9999999999999999999999999999999999999999999999999999999999999999",
+      "attachment_status": 404, "outcome": "unsigned_rejected", "crypto_reason": "signature_missing", "state_preserved": true,
+      "requests": [{"path": "synthetic/unsigned-requests.json", "sha256": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd", "size_bytes": 100}]
+    },
+    "foreign_key_rejected": {
+      "logical_reference": "ghcr.io/example/luminusos@sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc", "physical_endpoint": "https://127.0.0.1:5443", "fixture_digest": "sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+      "policy_sha256": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd", "mirror_config_sha256": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd", "guest_dropin_sha256": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd", "tls_ca_sha256": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd", "key_fingerprint": "9999999999999999999999999999999999999999999999999999999999999999",
+      "attachment_status": 200, "outcome": "foreign_key_rejected", "crypto_reason": "foreign_signature_invalid", "state_preserved": true,
+      "requests": [{"path": "synthetic/foreign-requests.json", "sha256": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd", "size_bytes": 100}]
+    },
+    "update": {"from_digest": "sha256:2222222222222222222222222222222222222222222222222222222222222222", "to_digest": "sha256:eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee", "before_boot_id": "00000000-0000-4000-8000-000000000001", "after_boot_id": "00000000-0000-4000-8000-000000000002", "reference": "ghcr.io/example/luminusos:testing-45", "status_before": [{"path": "synthetic/update-before.json", "sha256": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd", "size_bytes": 100}], "status_after": [{"path": "synthetic/update-after.json", "sha256": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd", "size_bytes": 100}]},
+    "rollback": {"from_digest": "sha256:eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee", "to_digest": "sha256:2222222222222222222222222222222222222222222222222222222222222222", "before_boot_id": "00000000-0000-4000-8000-000000000002", "after_boot_id": "00000000-0000-4000-8000-000000000003", "reference": "ghcr.io/example/luminusos:testing-45", "status_before": [{"path": "synthetic/rollback-before.json", "sha256": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd", "size_bytes": 100}], "status_after": [{"path": "synthetic/rollback-after.json", "sha256": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd", "size_bytes": 100}]},
+    "selinux_enforcing": {"mode": "Enforcing", "policy_sha256": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd", "allowed_operation": "success", "denied_operation": "denied", "audit": [{"path": "synthetic/selinux.json", "sha256": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd", "size_bytes": 100}]},
+    "firewall": {"service_active": true, "rules_sha256": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd", "allowed_probe": "success", "blocked_probe": "blocked", "network_evidence": [{"path": "synthetic/firewall.json", "sha256": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd", "size_bytes": 100}]},
+    "secure_boot": {"descriptor_sha256": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd", "code_sha256": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd", "vars_sha256": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd", "shim_sha256": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd", "smm": true, "enrolled_keys": true, "guest_secure_boot": true, "guest_setup_mode": false, "guest_state": [{"path": "synthetic/efi.json", "sha256": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd", "size_bytes": 100}]}
+  },
+  "valid_profiles": [
+    {"name": "core-testing", "identity": {"selection": "core", "channel": "testing", "source_ref": "refs/heads/main"}},
+    {"name": "workstation-stable", "identity": {"selection": "workstation", "channel": "stable", "source_ref": "refs/heads/release/45"}, "reuse_core": true},
+    {"name": "all-testing", "identity": {"selection": "all", "channel": "testing", "source_ref": "refs/heads/main"}},
+    {"name": "exact-exception", "identity": {"selection": "core", "channel": "testing", "source_ref": "refs/heads/main"}, "accepted_risk": true}
+  ],
+  "invalid_cases": [
+    {"name": "unknown-edition", "profile": "core-testing", "path": ["candidate", "identity", "selection"], "value": "installer", "stage": "schema"},
+    {"name": "legacy-version", "profile": "core-testing", "path": ["candidate", "schema_version"], "value": 1, "stage": "schema"},
+    {"name": "legacy-envelope", "profile": "core-testing", "path": ["candidate", "version"], "value": 1, "stage": "schema"},
+    {"name": "stable-main", "profile": "workstation-stable", "path": ["candidate", "identity", "source_ref"], "value": "refs/heads/main", "stage": "schema"},
+    {"name": "testing-release-branch", "profile": "core-testing", "path": ["candidate", "identity", "source_ref"], "value": "refs/heads/release/45", "stage": "schema"},
+    {"name": "branch-fedora-crossed", "profile": "workstation-stable", "path": ["candidate", "identity", "source_ref"], "value": "refs/heads/release/44", "stage": "semantic", "error": "source_ref"},
+    {"name": "policy-hash-changed", "profile": "core-testing", "path": ["candidate", "identity", "policy_sha256"], "value": "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff", "stage": "semantic", "error": "policy_sha256"},
+    {"name": "validation-binding-crossed", "profile": "core-testing", "path": ["validation", "binding", "identity", "base_digest"], "value": "sha256:ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff", "stage": "semantic", "error": "validation_binding"},
+    {"name": "signature-subject-crossed", "profile": "core-testing", "path": ["validation", "signature", "subject_sha256"], "value": "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff", "stage": "semantic", "error": "signature_subject"},
+    {"name": "receipt-binding-crossed", "profile": "core-testing", "path": ["validation", "receipts", 0, "binding", "identity", "source_sha"], "value": "ffffffffffffffffffffffffffffffffffffffff", "stage": "semantic", "error": "receipt_binding"},
+    {"name": "missing-receipt", "profile": "core-testing", "path": ["validation", "receipts", 0], "remove": true, "stage": "semantic", "error": "receipt_set"},
+    {"name": "skipped-gate", "profile": "core-testing", "path": ["validation", "gates", "boot"], "value": "skipped", "stage": "schema"},
+    {"name": "skipped-receipt", "profile": "core-testing", "path": ["validation", "receipts", 0, "result"], "value": "skipped", "stage": "schema"},
+    {"name": "wildcard-package", "profile": "core-testing", "path": ["policy", "exceptions", 0, "package"], "value": "*", "stage": "schema"},
+    {"name": "wildcard-advisory", "profile": "core-testing", "path": ["policy", "exceptions", 0, "advisory"], "value": "CVE-*", "stage": "schema"},
+    {"name": "invalid-utc-date", "profile": "core-testing", "path": ["policy", "exceptions", 0, "expires_at"], "value": "2026-11-31T00:00:00Z", "stage": "schema"},
+    {"name": "non-utc-date", "profile": "core-testing", "path": ["policy", "exceptions", 0, "expires_at"], "value": "2026-11-30T00:00:00+01:00", "stage": "schema"},
+    {"name": "uppercase-digest", "profile": "core-testing", "path": ["candidate", "identity", "base_digest"], "value": "sha256:AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA", "stage": "schema"},
+    {"name": "embedded-go-without-binary", "profile": "core-testing", "path": ["policy", "exceptions", 0, "component_type"], "value": "embedded_go", "stage": "schema"},
+    {"name": "unsupported-control", "profile": "core-testing", "path": ["validation", "receipts", 0, "control"], "value": "not_supported", "stage": "schema"},
+    {"name": "observation-wrong-control", "profile": "core-testing", "path": ["validation", "receipts", 0, "observations"], "value": {"mode": "Enforcing"}, "stage": "schema"},
+    {"name": "empty-evidence", "profile": "core-testing", "path": ["validation", "receipts", 0, "evidence"], "value": [], "stage": "schema"},
+    {"name": "path-traversal", "profile": "core-testing", "path": ["validation", "receipts", 0, "evidence", 0, "path"], "value": "../secret", "stage": "schema"},
+    {"name": "diagnostic-scan", "profile": "core-testing", "path": ["validation", "scan", "decision"], "value": "diagnostic", "stage": "schema"},
+    {"name": "missing-vm-support", "profile": "core-testing", "path": ["validation", "receipts", 0, "observations", "vsock_usable"], "value": false, "stage": "schema"},
+    {"name": "core-other-fedora", "profile": "workstation-stable", "path": ["candidate", "core_dependency", "fedora"], "value": "44", "rebind_candidate": true, "stage": "semantic", "error": "core_scope"},
+    {"name": "core-other-channel", "profile": "workstation-stable", "path": ["candidate", "core_dependency", "channel"], "value": "testing", "rebind_candidate": true, "stage": "semantic", "error": "core_scope"},
+    {"name": "core-wrong-digest", "profile": "workstation-stable", "path": ["candidate", "core_dependency", "digest"], "value": "sha256:ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff", "rebind_candidate": true, "stage": "semantic", "error": "core_digest"},
+    {"name": "core-other-policy", "profile": "workstation-stable", "path": ["candidate", "core_dependency", "policy_sha256"], "value": "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff", "rebind_candidate": true, "stage": "semantic", "error": "core_evidence_binding"},
+    {"name": "installed-testing-on-stable", "profile": "workstation-stable", "path": ["candidate", "installed", "workstation", "reference"], "value": "ghcr.io/example/luminusos-workstation:testing-45", "rebind_candidate": true, "stage": "semantic", "error": "installed_identity"},
+    {"name": "disk-insufficient", "profile": "core-testing", "path": ["validation", "receipts", 0, "observations", "available_bytes"], "value": 100, "stage": "semantic", "error": "disk_budget"},
+    {"name": "deadline-exceeded", "profile": "core-testing", "path": ["validation", "receipts", 0, "finished_at"], "value": "2026-11-08T10:00:11Z", "stage": "semantic", "error": "receipt_deadline"},
+    {"name": "final-channel-present", "profile": "core-testing", "path": ["validation", "receipts", 11, "observations", "control_channel_absent"], "value": false, "stage": "schema"},
+    {"name": "firmware-not-executed", "profile": "core-testing", "path": ["validation", "receipts", 10, "observations", "guest_secure_boot"], "value": false, "stage": "schema"},
+    {"name": "receipt-other-run", "profile": "core-testing", "path": ["validation", "receipts", 0, "executor", "run_id"], "value": 999, "stage": "semantic", "error": "receipt_executor"},
+    {"name": "unsigned-transport-failure", "profile": "core-testing", "path": ["validation", "receipts", 4, "observations", "crypto_reason"], "value": "tls_failed", "stage": "schema"},
+    {"name": "unsigned-attachment-present", "profile": "core-testing", "path": ["validation", "receipts", 4, "observations", "attachment_status"], "value": 200, "stage": "schema"},
+    {"name": "duplicate-mirror-digest", "profile": "core-testing", "path": ["validation", "receipts", 4, "observations", "fixture_digest"], "value": "sha256:eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee", "stage": "semantic", "error": "mirror_declared_binding"}
+  ]
+}
