@@ -871,6 +871,8 @@ def extract_archive(archive: Path, output: Path) -> None:
 
 
 def download(repository: str, run_id: int, name: str, output: Path) -> None:
+    matches(repository, REPO, "repository")
+    require(type(run_id) is int and run_id > 0, "invalid artifact run id")
     result = subprocess.run(
         [
             "gh",
@@ -884,20 +886,40 @@ def download(repository: str, run_id: int, name: str, output: Path) -> None:
         text=True,
     )
     pages = json.loads(result.stdout)
-    artifacts = [
-        a
-        for page in pages
-        for a in page.get("artifacts", [])
-        if a.get("name") == name and not a.get("expired")
-    ]
+    require(isinstance(pages, list) and bool(pages), "invalid artifact pages")
+    artifacts = []
+    for page in pages:
+        require(
+            isinstance(page, dict) and isinstance(page.get("artifacts"), list),
+            "invalid artifact page",
+        )
+        for artifact in page["artifacts"]:
+            require(isinstance(artifact, dict), "invalid artifact metadata")
+            if artifact.get("name") == name and artifact.get("expired") is False:
+                artifacts.append(artifact)
     require(
-        len(artifacts) == 1 and type(artifacts[0].get("id")) is int,
+        len(artifacts) == 1
+        and type(artifacts[0].get("id")) is int
+        and artifacts[0]["id"] > 0,
         "expected exactly one artifact",
+    )
+    artifact = artifacts[0]
+    workflow_run = artifact.get("workflow_run")
+    require(
+        isinstance(workflow_run, dict)
+        and type(workflow_run.get("id")) is int
+        and workflow_run["id"] == run_id,
+        "artifact run binding mismatch",
+    )
+    require(
+        isinstance(artifact.get("digest"), str)
+        and DIGEST.fullmatch(artifact["digest"]),
+        "unsupported artifact digest: expected lowercase sha256",
     )
     total_limit = size_limit("RELEASE_MAX_TOTAL_BYTES", MAX_ARCHIVE)
     require(
-        type(artifacts[0].get("size_in_bytes")) is int
-        and 0 < artifacts[0]["size_in_bytes"] <= total_limit,
+        type(artifact.get("size_in_bytes")) is int
+        and 0 < artifact["size_in_bytes"] <= total_limit,
         "invalid artifact size",
     )
     require(
@@ -906,28 +928,38 @@ def download(repository: str, run_id: int, name: str, output: Path) -> None:
         "output directory must be empty",
     )
     output.mkdir(parents=True, exist_ok=True)
-    require_space(output, artifacts[0]["size_in_bytes"])
+    require_space(output, artifact["size_in_bytes"])
     with tempfile.TemporaryDirectory(dir=output.parent) as temp:
         archive = Path(temp) / "artifact.zip"
         with subprocess.Popen(
             [
                 "gh",
                 "api",
-                f"repos/{repository}/actions/artifacts/{artifacts[0]['id']}/zip",
+                f"repos/{repository}/actions/artifacts/{artifact['id']}/zip",
             ],
             stdout=subprocess.PIPE,
         ) as process:
             try:
                 written = 0
+                checksum = hashlib.sha256()
                 with archive.open("wb") as stream:
                     assert process.stdout is not None
                     while chunk := process.stdout.read(CHUNK_SIZE):
                         written += len(chunk)
                         require(written <= total_limit, "archive too large")
+                        require(
+                            written <= artifact["size_in_bytes"],
+                            "artifact exceeds declared size",
+                        )
                         require_space(Path(temp), len(chunk))
                         stream.write(chunk)
+                        checksum.update(chunk)
                 require(process.wait() == 0, "artifact download failed")
-                require(written > 0, "empty artifact download")
+                require(written == artifact["size_in_bytes"], "artifact size mismatch")
+                require(
+                    "sha256:" + checksum.hexdigest() == artifact["digest"],
+                    "artifact digest mismatch",
+                )
             except BaseException:
                 process.kill()
                 process.wait()
