@@ -204,6 +204,7 @@ flowchart TD
 | File | Role |
 | --- | --- |
 | `shared/flatpaks` | Flatpak refs installed into workstation unless `LOS_SKIP_FLATPAKS=1`; related refs are not preinstalled so GPU-specific runtimes are resolved on the installed system. |
+| `editions/workstation/files/system/usr/libexec/luminus-flatpak-remotes` | Boot-time service that adds the Luminus application remote (`luminus` on stable, `luminus-testing` on testing) to the system Flatpak installation. The channel comes from the booted bootc image tag (`testing-*` is testing) unless `/etc/luminus/flatpak-channel` names one. It installs no applications and never changes an existing remote, so updated systems keep their remotes and a remote with the same name and another URL is left alone. The `.flatpakrepo` files under `usr/share/luminus/flatpak` come from the `flatpak-repo` descriptors. |
 | `shared/bootc-image-builder.toml.example` | Template for the gitignored local `shared/bootc-image-builder.toml` used by the direct QEMU install path (test user credentials stay out of git). |
 | `shared/scripts/` | Build-time helper scripts (rpmdb repair, releasever pin, os-release branding, initramfs rebuild, session-modes patch) bind-mounted into every edition build. |
 | `config/versions.env` | Shared Fedora, Aurora Shell, Sirius, and primary Fedora branch defaults consumed by Just and GitHub Actions. |
