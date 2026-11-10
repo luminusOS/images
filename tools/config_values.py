@@ -2,7 +2,7 @@ import re
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
-ASSIGNMENT = re.compile(r"([A-Z][A-Z0-9_]*)=([A-Za-z0-9_.:+@/-]*)", re.ASCII)
+ASSIGNMENT = re.compile(r"([A-Z][A-Z0-9_]*)=([A-Za-z0-9_.:+@/~-]*)", re.ASCII)
 
 
 def read_config(path=ROOT / "config/versions.env"):

@@ -21,15 +21,20 @@ ARG workstation_target_image
 ARG aurora_shell_uuid=aurora-shell@luminusos.github.io
 ARG source_url="https://github.com/LuminusOS/images"
 
+COPY shared/rpm-keys/ /usr/share/luminus/rpm-keys/
+
 RUN --mount=type=cache,target=/var/cache/dnf \
     --mount=type=bind,from=ctx-scripts,source=/scripts,target=/scripts \
     --mount=type=bind,from=python-tools,source=/usr,target=/opt/python,ro \
     env PYTHONHOME=/opt/python LD_LIBRARY_PATH=/opt/python/lib64 /opt/python/bin/python3 /scripts/rpmdb-repair.py && \
+    case "${sirius_version}" in *-rc.*) sirius_channel=testing ;; *) sirius_channel=stable ;; esac && \
     curl -fsSL \
-      "https://github.com/luminusOS/sirius/releases/download/v${sirius_version}/sirius-installer-${sirius_rpm_version}-1.x86_64.rpm" \
+      "https://rpm.luminusos.org/${sirius_channel}/${fedora_version}/x86_64/Packages/sirius-installer-${sirius_version}-1.x86_64.rpm" \
       -o /tmp/sirius-installer.rpm && \
     echo "${sirius_sha256}  /tmp/sirius-installer.rpm" | sha256sum -c - && \
-    dnf -y --releasever="${fedora_version}" install \
+    rpmkeys --import "/usr/share/luminus/rpm-keys/luminus-${sirius_channel}.asc" && \
+    rpmkeys --checksig /tmp/sirius-installer.rpm | grep -q 'digests signatures OK' && \
+    dnf -y --releasever="${fedora_version}" --setopt=localpkg_gpgcheck=1 install \
       bubblewrap \
       dracut-live \
       fuse-overlayfs \
