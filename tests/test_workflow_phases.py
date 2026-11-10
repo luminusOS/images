@@ -11,6 +11,57 @@ def workflow(name):
 
 
 class WorkflowPhasesTest(unittest.TestCase):
+    def test_artifact_read_permissions_cover_only_approved_jobs_and_callers(self):
+        containers = workflow("containers.yml")
+        validation = workflow("build-containers.yml")
+        publication = workflow("publish.yml")
+        read_only = {"contents": "read", "packages": "read", "actions": "read"}
+        for name, job in (
+            ("workstation", containers["jobs"]["workstation"]),
+            ("build-containers", validation["jobs"]["build-containers"]),
+            ("containers", publication["jobs"]["containers"]),
+            ("stable-installer", publication["jobs"]["stable-installer"]),
+        ):
+            with self.subTest(job=name):
+                self.assertEqual(job["permissions"], read_only)
+                self.assertNotIn("secrets", job)
+                self.assertNotIn("GH_TOKEN", job.get("env", {}))
+                for step in job.get("steps", []):
+                    self.assertNotIn("GH_TOKEN", step.get("env", {}))
+                if name != "workstation":
+                    self.assertEqual(job["uses"], "./.github/workflows/containers.yml")
+
+        for data, expected in (
+            (containers, {"workstation"}),
+            (validation, {"build-containers"}),
+            (
+                publication,
+                {"containers", "stable-installer", "stable-source", "release"},
+            ),
+        ):
+            self.assertEqual(
+                {
+                    name
+                    for name, job in data["jobs"].items()
+                    if "actions" in job.get("permissions", {})
+                },
+                expected,
+            )
+        self.assertNotIn("permissions", containers)
+        self.assertNotIn("permissions", validation)
+        self.assertEqual(publication["permissions"], {"contents": "read"})
+        for name in ("core", "installer"):
+            self.assertEqual(
+                containers["jobs"][name]["permissions"],
+                {"contents": "read", "packages": "read"},
+            )
+        auto = workflow("auto-testing.yml")["jobs"]["prepare"]
+        self.assertEqual(auto["uses"], "./.github/workflows/publish.yml")
+        self.assertEqual(
+            auto["permissions"],
+            {"contents": "write", "packages": "write", "actions": "read"},
+        )
+
     def test_workstation_and_installer_export_in_their_build_daemon(self):
         for role, filename, job_name in (
             ("workstation", "containers.yml", "workstation"),
@@ -74,7 +125,10 @@ class WorkflowPhasesTest(unittest.TestCase):
                 for step in (build, export, upload):
                     self.assertNotIn("continue-on-error", step)
                 self.assertEqual(
-                    job["permissions"], {"contents": "read", "packages": "read"}
+                    job["permissions"],
+                    {"contents": "read", "packages": "read", "actions": "read"}
+                    if role == "workstation"
+                    else {"contents": "read", "packages": "read"},
                 )
 
     def test_workstation_and_installer_oci_outputs_require_successful_upload(self):

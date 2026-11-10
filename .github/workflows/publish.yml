@@ -107,6 +107,7 @@ jobs:
     permissions:
       contents: read
       packages: read
+      actions: read
     uses: ./.github/workflows/containers.yml
     with:
       channel: ${{ inputs.channel }}
@@ -269,6 +270,7 @@ jobs:
     permissions:
       contents: read
       packages: read
+      actions: read
     uses: ./.github/workflows/containers.yml
     with:
       channel: stable

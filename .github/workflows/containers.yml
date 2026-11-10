@@ -183,7 +183,7 @@ jobs:
     needs: [metadata, core]
     runs-on: ubuntu-latest
     timeout-minutes: 180
-    permissions: {contents: read, packages: read}
+    permissions: {contents: read, packages: read, actions: read}
     outputs:
       image_id: '${{ steps.save.outputs.image_id }}'
       archive_sha256: '${{ steps.save.outputs.archive_sha256 }}'
