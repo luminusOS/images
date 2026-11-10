@@ -40,5 +40,6 @@ for command in (
     ["systemctl", "enable", "bootc-fetch-apply-updates.timer"],
     ["systemctl", "enable", "elastic-swap.service"],
     ["systemctl", "enable", "systemd-oomd.service"],
+    ["systemctl", "enable", "luminus-flatpak-remotes.service"],
 ):
     run_system(command)

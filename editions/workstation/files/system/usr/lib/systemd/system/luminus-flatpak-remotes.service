@@ -1,0 +1,13 @@
+[Unit]
+Description=Add the Luminus application remote for this update channel
+Documentation=https://luminusos.org
+ConditionPathExists=/usr/bin/flatpak
+ConditionPathExists=/usr/libexec/luminus-flatpak-remotes
+After=local-fs.target
+
+[Service]
+Type=oneshot
+ExecStart=/usr/libexec/luminus-flatpak-remotes
+
+[Install]
+WantedBy=multi-user.target
