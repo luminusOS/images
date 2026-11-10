@@ -1,9 +1,9 @@
 import json
 import os
-from pathlib import Path
 import subprocess
 import tempfile
 import unittest
+from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 SYSTEM = ROOT / "editions/workstation/files/system"
@@ -32,7 +32,9 @@ else:
 
 
 def bootc_stub(image):
-    return "#!/bin/sh\necho '" + json.dumps({"spec": {"image": {"image": image}}}) + "'\n"
+    return (
+        "#!/bin/sh\necho '" + json.dumps({"spec": {"image": {"image": image}}}) + "'\n"
+    )
 
 
 class RemoteMigrationTests(unittest.TestCase):
@@ -43,7 +45,9 @@ class RemoteMigrationTests(unittest.TestCase):
         self.bin.mkdir()
         self.channel_file = Path(self.directory.name) / "flatpak-channel"
 
-    def install(self, remotes, image="ghcr.io/luminusos/luminusos-workstation:testing-45"):
+    def install(
+        self, remotes, image="ghcr.io/luminusos/luminusos-workstation:testing-45"
+    ):
         flatpak = self.bin / "flatpak"
         flatpak.write_text(FLATPAK_STUB)
         flatpak.chmod(0o755)
@@ -53,9 +57,19 @@ class RemoteMigrationTests(unittest.TestCase):
         bootc.chmod(0o755)
 
     def run_script(self):
-        env = {"PATH": f"{self.bin}:/usr/bin:/bin", "LUMINUS_FLATPAK_DATA": str(DATA),
-               "LUMINUS_FLATPAK_CHANNEL_FILE": str(self.channel_file)}
-        return subprocess.run([str(SCRIPT)], env=env, capture_output=True, text=True, timeout=60)
+        env = {
+            "PATH": f"{self.bin}:/usr/bin:/bin",
+            "LUMINUS_FLATPAK_DATA": str(DATA),
+            "LUMINUS_FLATPAK_CHANNEL_FILE": str(self.channel_file),
+        }
+        return subprocess.run(
+            [str(SCRIPT)],
+            env=env,
+            capture_output=True,
+            text=True,
+            timeout=60,
+            check=False,
+        )
 
     def remotes(self):
         return json.loads((self.bin / "remotes.json").read_text())
@@ -68,12 +82,17 @@ class RemoteMigrationTests(unittest.TestCase):
         self.install({})
         result = self.run_script()
         self.assertEqual(result.returncode, 0, result.stderr)
-        self.assertEqual(self.remotes(), {"luminus-testing": "https://flatpak.luminusos.org/testing/"})
+        self.assertEqual(
+            self.remotes(),
+            {"luminus-testing": "https://flatpak.luminusos.org/testing/"},
+        )
 
     def test_a_stable_image_gets_the_stable_remote(self):
         self.install({}, "ghcr.io/luminusos/luminusos-workstation:45")
         self.assertEqual(self.run_script().returncode, 0)
-        self.assertEqual(self.remotes(), {"luminus": "https://flatpak.luminusos.org/stable/"})
+        self.assertEqual(
+            self.remotes(), {"luminus": "https://flatpak.luminusos.org/stable/"}
+        )
 
     def test_an_image_reference_without_a_tag_is_stable(self):
         self.install({}, "localhost:5000/luminusos-workstation")
@@ -90,17 +109,24 @@ class RemoteMigrationTests(unittest.TestCase):
         self.assertEqual(len(self.calls()), 1)
 
     def test_an_updated_system_keeps_its_existing_remotes(self):
-        existing = {"flathub": "https://dl.flathub.org/repo/", "aetheris-origin": "file:///x/bundle"}
+        existing = {
+            "flathub": "https://dl.flathub.org/repo/",
+            "aetheris-origin": "file:///x/bundle",
+        }
         self.install(dict(existing))
         self.assertEqual(self.run_script().returncode, 0)
-        self.assertEqual({k: v for k, v in self.remotes().items() if k in existing}, existing)
+        self.assertEqual(
+            {k: v for k, v in self.remotes().items() if k in existing}, existing
+        )
         self.assertIn("luminus-testing", self.remotes())
 
     def test_a_remote_with_the_same_name_and_another_url_is_not_rewritten(self):
         self.install({"luminus-testing": "https://example.invalid/mine/"})
         result = self.run_script()
         self.assertEqual(result.returncode, 0)
-        self.assertEqual(self.remotes(), {"luminus-testing": "https://example.invalid/mine/"})
+        self.assertEqual(
+            self.remotes(), {"luminus-testing": "https://example.invalid/mine/"}
+        )
         self.assertEqual(self.calls(), [])
         self.assertIn("leaving it unchanged", result.stdout)
 
@@ -134,11 +160,18 @@ class ShippedFilesTests(unittest.TestCase):
             self.assertIn(f"DefaultBranch={channel}\n", text)
             self.assertRegex(text, r"\nGPGKey=[A-Za-z0-9+/=]{200,}\n")
 
-    def test_the_service_never_runs_before_local_filesystems_and_is_enabled_by_the_build(self):
-        unit = (SYSTEM / "usr/lib/systemd/system/luminus-flatpak-remotes.service").read_text()
+    def test_the_service_never_runs_before_local_filesystems_and_is_enabled_by_the_build(
+        self,
+    ):
+        unit = (
+            SYSTEM / "usr/lib/systemd/system/luminus-flatpak-remotes.service"
+        ).read_text()
         self.assertIn("Type=oneshot", unit)
         self.assertIn("ExecStart=/usr/libexec/luminus-flatpak-remotes", unit)
-        self.assertIn("luminus-flatpak-remotes.service", (ROOT / "editions/workstation/build.py").read_text())
+        self.assertIn(
+            "luminus-flatpak-remotes.service",
+            (ROOT / "editions/workstation/build.py").read_text(),
+        )
 
     def test_the_script_is_executable_and_installs_no_applications(self):
         self.assertTrue(os.access(SCRIPT, os.X_OK))

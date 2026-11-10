@@ -66,7 +66,7 @@ def main():
             print(f"remote {name} already points at {remotes[name]}; leaving it unchanged")
         return 0
     result = subprocess.run(["flatpak", "remote-add", "--system", "--if-not-exists", name, str(DATA / FILES[channel])],
-                            capture_output=True, text=True, timeout=120)
+                            capture_output=True, text=True, timeout=120, check=False)
     if result.returncode:
         print(f"cannot add remote {name}: {result.stderr.strip()}", file=sys.stderr)
         return 1
