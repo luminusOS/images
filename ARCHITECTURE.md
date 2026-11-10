@@ -498,7 +498,7 @@ flowchart TD
 
 `bootc-generic-iso` can embed the installer payload as a `containers-storage` blob. `bootc install` can't stream that directly: containers/storage keeps layers already unpacked on disk, so install has to re-diff and re-tar each layer into a large `/var/tmp` staging area (~2.5 GiB compressed) before it can deploy them. On a live ISO, `/var/tmp` has nowhere to go but RAM, which is why installs used to need a dedicated tmpfs and a ~5 GiB RAM gate.
 
-Instead, the payload is embedded in the `-iso` container image itself as an **OCI layout** at `/usr/lib/luminusos/payload.oci`. The build exports it into the build context beforehand (`skopeo copy <payload-image> oci:.test/payload.oci:latest` in the Justfile locally, a workflow step in CI) and `Containerfile.installer` copies it into the live root. OCI layout blobs are already ready-made layer tarballs, so `bootc install --source-imgref oci:/usr/lib/luminusos/payload.oci:latest` (set in `distro.toml`) streams them straight to the target disk, with no re-tar, no large staging area, and no image-builder payload-embedding support required at all.
+Instead, the payload is embedded in the `-iso` container image itself as an **OCI layout** at `/usr/lib/luminusos/payload.oci`. The build prepares `.test/payload.oci` beforehand: testing CI acquires the verified same-run workstation OCI artifact and changes only its index reference to `latest`, preserving the manifest and blobs; local and stable paths export the payload with Skopeo. `Containerfile.installer` copies the layout into the live root. OCI layout blobs are already ready-made layer tarballs, so `bootc install --source-imgref oci:/usr/lib/luminusos/payload.oci:latest` (set in `distro.toml`) streams them straight to the target disk, with no re-tar, no large staging area, and no image-builder payload-embedding support required at all.
 
 The `:latest` suffix is load-bearing: `skopeo copy oci:...` strips it from the on-disk directory name and records it as the `org.opencontainers.image.ref.name` annotation in `index.json`, which is what makes the `:latest` reference resolvable. The container build fails its final verification if the annotation is missing.
 
@@ -562,7 +562,7 @@ The workflow helpers separate three responsibilities:
 
 - `core_reuse.py hash|select` fingerprints core inputs and selects a signed, compatible core image when reuse is requested.
 - `image_archive.py save|load` transports any built image between jobs, verifying the archive SHA-256 before loading and the local image ID afterward. A local image ID is not a registry manifest digest.
-- `installer_payload.py export` prepares the workstation OCI payload: testing uses the locally built image; stable uses the approved workstation manifest digest.
+- `oci_layout.py fetch-payload` acquires the same-run workstation OCI artifact for testing, requires its expected manifest digest, and remaps only the index reference to `latest`. Stable continues to use `installer_payload.py export` with the approved workstation manifest digest.
 
 New editions based on core or workstation should declare their actual parent through explicit job dependencies and verified archive handoffs. Keep edition-specific Containerfiles and build arguments explicit; do not route unrelated edition operations through core reuse or installer helpers. No additional edition definitions or generic dependency engine are needed for the current two editions.
 

@@ -107,20 +107,198 @@ class OciLayoutTests(unittest.TestCase):
             result = oci.main()
         return result, stdout.getvalue(), stderr.getvalue(), output.read_text()
 
+    def download_payload(self, repository, run_id, name, output):
+        self.assertEqual(
+            (repository, run_id, name), ("owner/repo", 123, "workstation-oci")
+        )
+        shutil.copytree(self.root, output)
+        index = json.loads((output / "index.json").read_bytes())
+        index["manifests"][0]["annotations"][REF] = "workstation"
+        (output / "index.json").write_bytes(encoded(index))
+
+    def test_fetch_payload_preserves_manifest_and_blobs_and_remaps_only_index_ref(self):
+        destination = self.root.parent / "payload.oci"
+        index = json.loads((self.root / "index.json").read_bytes())
+        index["annotations"] = {"retained": "index annotation"}
+        index["manifests"][0]["annotations"]["retained"] = "descriptor annotation"
+        (self.root / "index.json").write_bytes(encoded(index))
+        before = {
+            p.relative_to(self.root): p.read_bytes()
+            for p in self.root.rglob("*")
+            if p.is_file()
+        }
+        with (
+            mock.patch.dict(oci.sys.modules, {"release_pipeline": pipeline}),
+            mock.patch.object(
+                pipeline, "download", side_effect=self.download_payload
+            ) as fetch,
+        ):
+            result, stdout, stderr, output = self.run_cli(
+                "fetch-payload",
+                "--repository",
+                "owner/repo",
+                "--run-id",
+                123,
+                "--layout",
+                destination,
+                "--expected-digest",
+                self.expected,
+            )
+        self.assertEqual(result, 0, stderr)
+        fetch.assert_called_once()
+        self.assertEqual(json.loads(stdout), {"manifest_digest": self.expected})
+        self.assertEqual(output, f"unchanged=true\nmanifest_digest={self.expected}\n")
+        self.assertEqual(oci.manifest_digest(destination, "latest"), self.expected)
+        after = {
+            p.relative_to(destination): p.read_bytes()
+            for p in destination.rglob("*")
+            if p.is_file()
+        }
+        index = json.loads(before.pop(Path("index.json")))
+        index["manifests"][0]["annotations"][REF] = "latest"
+        self.assertEqual(json.loads(after.pop(Path("index.json"))), index)
+        self.assertEqual(after, before)
+
+    def test_fetch_payload_rejects_missing_digest_corruption_and_invalid_source(self):
+        for fault in (
+            "missing",
+            "mismatch",
+            "download",
+            "layer",
+            "manifest",
+            "ref",
+            "index",
+            "symlink",
+        ):
+            with self.subTest(fault=fault):
+                destination = self.root.parent / "payload.oci"
+
+                def download(repository, run_id, name, output, fault=fault):
+                    self.download_payload(repository, run_id, name, output)
+                    if fault == "download":
+                        raise ValueError("artifact digest mismatch")
+                    if fault == "layer":
+                        layer = (
+                            output
+                            / "blobs/sha256"
+                            / self.manifest["layers"][0]["digest"][7:]
+                        )
+                        layer.write_bytes(b"corrupt")
+                    if fault == "manifest":
+                        (output / "blobs/sha256" / self.expected[7:]).write_bytes(b"{}")
+                    index_path = output / "index.json"
+                    index = json.loads(index_path.read_bytes())
+                    if fault == "ref":
+                        index["manifests"][0]["annotations"][REF] = "latest"
+                    if fault == "index":
+                        index["manifests"] *= 2
+                    index_path.write_bytes(encoded(index))
+                    if fault == "symlink":
+                        index_path.unlink()
+                        index_path.symlink_to(self.root / "index.json")
+
+                expected = (
+                    ""
+                    if fault == "missing"
+                    else "sha256:" + "0" * 64
+                    if fault == "mismatch"
+                    else self.expected
+                )
+                with (
+                    mock.patch.dict(oci.sys.modules, {"release_pipeline": pipeline}),
+                    mock.patch.object(
+                        pipeline, "download", side_effect=download
+                    ) as fetch,
+                ):
+                    result, stdout, _, output = self.run_cli(
+                        "fetch-payload",
+                        "--repository",
+                        "owner/repo",
+                        "--run-id",
+                        123,
+                        "--layout",
+                        destination,
+                        "--expected-digest",
+                        expected,
+                    )
+                self.assertEqual(result, 1)
+                self.assertEqual(stdout, "")
+                self.assertEqual(output, "unchanged=true\n")
+                self.assertFalse(destination.exists())
+                if fault == "missing":
+                    fetch.assert_not_called()
+
+    def test_payload_index_remap_rejects_symlink_replacement_without_target_writes(
+        self,
+    ):
+        destination = self.root.parent / "payload.oci"
+        sentinel = self.root.parent / "unrelated-index"
+        original_open, original_replace = os.open, os.replace
+        for phase in ("open", "replace"):
+            with self.subTest(phase=phase):
+                sentinel.write_bytes(b"preserve\n")
+
+                def open_index(name, *args, phase=phase, **kwargs):
+                    if phase == "open" and name == ".index-remap":
+                        path = Path(f"/proc/self/fd/{kwargs['dir_fd']}") / name
+                        path.symlink_to(sentinel)
+                    return original_open(name, *args, **kwargs)
+
+                def replace_index(source, target, phase=phase, **kwargs):
+                    if phase == "replace":
+                        path = Path(f"/proc/self/fd/{kwargs['src_dir_fd']}") / source
+                        path.unlink()
+                        path.symlink_to(sentinel)
+                    return original_replace(source, target, **kwargs)
+
+                with (
+                    mock.patch.dict(oci.sys.modules, {"release_pipeline": pipeline}),
+                    mock.patch.object(
+                        pipeline, "download", side_effect=self.download_payload
+                    ),
+                    mock.patch.object(oci.os, "open", side_effect=open_index),
+                    mock.patch.object(oci.os, "replace", side_effect=replace_index),
+                ):
+                    result, stdout, _, output = self.run_cli(
+                        "fetch-payload",
+                        "--repository",
+                        "owner/repo",
+                        "--run-id",
+                        123,
+                        "--layout",
+                        destination,
+                        "--expected-digest",
+                        self.expected,
+                    )
+                self.assertEqual(result, 1)
+                self.assertEqual(stdout, "")
+                self.assertEqual(output, "unchanged=true\n")
+                self.assertFalse(destination.exists())
+                self.assertEqual(sentinel.read_bytes(), b"preserve\n")
+
     def test_fetch_core_cli_delegates_download_and_checks_real_layout(self):
-        destination = self.root.parent / "core-oci"
+        self.assert_authenticated_acquisition("fetch-core", "core", "core")
+
+    def test_fetch_payload_delegates_authenticated_download_with_real_zip(self):
+        self.assert_authenticated_acquisition("fetch-payload", "workstation", "latest")
+
+    def assert_authenticated_acquisition(self, action, ref, destination_ref):
+        destination = self.root.parent / f"{ref}-oci"
         before = set(self.root.parent.iterdir())
         buffer = io.BytesIO()
         with zipfile.ZipFile(buffer, "w") as archive:
             for path in self.root.rglob("*"):
                 if path.is_file():
-                    archive.writestr(
-                        path.relative_to(self.root).as_posix(), path.read_bytes()
-                    )
+                    raw = path.read_bytes()
+                    if path.name == "index.json":
+                        index = json.loads(raw)
+                        index["manifests"][0]["annotations"][REF] = ref
+                        raw = encoded(index)
+                    archive.writestr(path.relative_to(self.root).as_posix(), raw)
         raw = buffer.getvalue()
         artifact = {
             "id": 456,
-            "name": "core-oci",
+            "name": f"{ref}-oci",
             "expired": False,
             "workflow_run": {"id": 123},
             "size_in_bytes": len(raw),
@@ -155,7 +333,7 @@ class OciLayoutTests(unittest.TestCase):
             ) as stream,
         ):
             result, stdout, stderr, output = self.run_cli(
-                "fetch-core",
+                action,
                 "--repository",
                 "owner/repo",
                 "--run-id",
@@ -167,7 +345,7 @@ class OciLayoutTests(unittest.TestCase):
             )
         self.assertEqual(result, 0, stderr)
         fetch.assert_called_once()
-        self.assertEqual(fetch.call_args.args[:3], ("owner/repo", 123, "core-oci"))
+        self.assertEqual(fetch.call_args.args[:3], ("owner/repo", 123, f"{ref}-oci"))
         stream.assert_called_once_with(
             ["gh", "api", "repos/owner/repo/actions/artifacts/456/zip"],
             stdout=subprocess.PIPE,
@@ -175,7 +353,9 @@ class OciLayoutTests(unittest.TestCase):
         authorize.assert_not_called()
         self.assertEqual(json.loads(stdout), {"manifest_digest": self.expected})
         self.assertEqual(output, f"unchanged=true\nmanifest_digest={self.expected}\n")
-        self.assertEqual(oci.manifest_digest(destination, "core"), self.expected)
+        self.assertEqual(
+            oci.manifest_digest(destination, destination_ref), self.expected
+        )
         self.assertEqual(
             set(self.root.parent.iterdir()) - before,
             {destination, self.root.parent / "cli-outputs"},
@@ -272,7 +452,12 @@ class OciLayoutTests(unittest.TestCase):
                 download.assert_not_called()
 
     def test_fetch_core_rejects_staged_directory_replacement_at_rename(self):
-        parent = self.root.parent / "handoff" / "requested"
+        for action in ("fetch-core", "fetch-payload"):
+            with self.subTest(action=action):
+                self.assert_staged_replacement_rejected(action)
+
+    def assert_staged_replacement_rejected(self, action):
+        parent = self.root.parent / action / "requested"
         parent.mkdir(parents=True)
         destination = parent / "core-oci"
         rename = os.rename
@@ -288,6 +473,10 @@ class OciLayoutTests(unittest.TestCase):
             replacements.append(
                 store_manifest(replacement, manifest, encoded(manifest) + b" \n")
             )
+            ref = "latest" if action == "fetch-payload" else "core"
+            index = json.loads((replacement / "index.json").read_bytes())
+            index["manifests"][0]["annotations"][REF] = ref
+            (replacement / "index.json").write_bytes(encoded(index))
             rename(source, target, **kwargs)
 
         with (
@@ -295,16 +484,16 @@ class OciLayoutTests(unittest.TestCase):
             mock.patch.object(
                 pipeline,
                 "download",
-                side_effect=lambda repo, run, name, output: shutil.copytree(
-                    self.root, output
-                ),
+                side_effect=self.download_payload
+                if action == "fetch-payload"
+                else lambda repo, run, name, output: shutil.copytree(self.root, output),
             ),
             mock.patch.object(
                 oci.os, "rename", side_effect=replace_then_rename
             ) as handoff,
         ):
             result, stdout, _, output = self.run_cli(
-                "fetch-core",
+                action,
                 "--repository",
                 "owner/repo",
                 "--run-id",
@@ -319,12 +508,18 @@ class OciLayoutTests(unittest.TestCase):
         self.assertEqual(result, 1)
         self.assertEqual(stdout, "")
         self.assertEqual(output, "unchanged=true\n")
-        self.assertEqual(oci.manifest_digest(destination, "core"), replacements[0])
+        ref = "latest" if action == "fetch-payload" else "core"
+        self.assertEqual(oci.manifest_digest(destination, ref), replacements[0])
 
     def test_fetch_core_rejects_parent_relocation_at_rename_without_unsafe_cleanup(
         self,
     ):
-        sandbox = self.root.parent / "handoff"
+        for action in ("fetch-core", "fetch-payload"):
+            with self.subTest(action=action):
+                self.assert_parent_relocation_rejected(action)
+
+    def assert_parent_relocation_rejected(self, action):
+        sandbox = self.root.parent / action
         parent = sandbox / "requested"
         parent.mkdir(parents=True)
         moved = sandbox / "moved"
@@ -350,16 +545,16 @@ class OciLayoutTests(unittest.TestCase):
             mock.patch.object(
                 pipeline,
                 "download",
-                side_effect=lambda repo, run, name, output: shutil.copytree(
-                    self.root, output
-                ),
+                side_effect=self.download_payload
+                if action == "fetch-payload"
+                else lambda repo, run, name, output: shutil.copytree(self.root, output),
             ),
             mock.patch.object(
                 oci.os, "rename", side_effect=relocate_then_rename
             ) as handoff,
         ):
             result, stdout, _, output = self.run_cli(
-                "fetch-core",
+                action,
                 "--repository",
                 "owner/repo",
                 "--run-id",
@@ -375,7 +570,8 @@ class OciLayoutTests(unittest.TestCase):
         self.assertEqual(output, "unchanged=true\n")
         self.assertEqual(unrelated[0].read_text(), "preserve\n")
         self.assertFalse(destination.exists())
-        self.assertEqual(oci.manifest_digest(moved / "core-oci", "core"), self.expected)
+        ref = "latest" if action == "fetch-payload" else "core"
+        self.assertEqual(oci.manifest_digest(moved / "core-oci", ref), self.expected)
 
     def ancestry_fixture(
         self, core_rootfs=None, workstation_rootfs=None, shorter=False

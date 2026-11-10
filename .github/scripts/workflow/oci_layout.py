@@ -235,6 +235,14 @@ def expected_digest(value):
 
 
 def fetch_core(repository, run_id, layout, expected):
+    return fetch_layout(repository, run_id, layout, expected, "core", "core")
+
+
+def fetch_payload(repository, run_id, layout, expected):
+    return fetch_layout(repository, run_id, layout, expected, "workstation", "latest")
+
+
+def fetch_layout(repository, run_id, layout, expected, ref, destination_ref):
     expected_digest(expected)
     layout = safe_path(layout)
     with directory(layout.parent) as parent:
@@ -242,14 +250,41 @@ def fetch_core(repository, run_id, layout, expected):
         from release_pipeline import download
 
         with tempfile.TemporaryDirectory(dir=f"/proc/self/fd/{parent}") as temp:
-            staged = Path(temp) / "core-oci"
+            staged = Path(temp) / f"{ref}-oci"
             with subdirectory(parent, Path(temp).name) as source:
-                download(repository, run_id, "core-oci", staged)
+                download(repository, run_id, f"{ref}-oci", staged)
                 with subdirectory(source, staged.name) as validated:
                     require(
-                        checked_manifest(validated, "core") == expected,
-                        "core OCI manifest digest mismatch",
+                        checked_manifest(validated, ref) == expected,
+                        f"{ref} OCI manifest digest mismatch",
                     )
+                    if destination_ref != ref:
+                        index = document(
+                            contents(validated, "index.json", MAX_JSON_BYTES)
+                        )
+                        index["manifests"][0]["annotations"][REF] = destination_ref
+                        descriptor = os.open(
+                            ".index-remap",
+                            os.O_WRONLY
+                            | os.O_CREAT
+                            | os.O_EXCL
+                            | os.O_NOFOLLOW
+                            | os.O_CLOEXEC,
+                            0o600,
+                            dir_fd=validated,
+                        )
+                        with os.fdopen(descriptor, "wb") as stream:
+                            stream.write(json.dumps(index).encode("utf-8"))
+                        os.replace(
+                            ".index-remap",
+                            "index.json",
+                            src_dir_fd=validated,
+                            dst_dir_fd=validated,
+                        )
+                        require(
+                            checked_manifest(validated, destination_ref) == expected,
+                            f"{ref} OCI manifest digest mismatch",
+                        )
                     require(
                         not os.path.lexists(layout), "OCI destination must not exist"
                     )
@@ -262,8 +297,8 @@ def fetch_core(repository, run_id, layout, expected):
                             "OCI installed directory changed",
                         )
                         require(
-                            checked_manifest(installed, "core") == expected,
-                            "core OCI manifest digest mismatch",
+                            checked_manifest(installed, destination_ref) == expected,
+                            f"{ref} OCI manifest digest mismatch",
                         )
                     with directory(layout.parent) as current:
                         require(
@@ -410,10 +445,12 @@ def main():
     export.add_argument("--image", required=True)
     export.add_argument("--docker-host", default="")
     fetch = actions.add_parser("fetch-core")
-    fetch.add_argument("--repository", required=True)
-    fetch.add_argument("--run-id", type=int, required=True)
-    fetch.add_argument("--layout", type=Path, required=True)
-    fetch.add_argument("--expected-digest", required=True)
+    payload = actions.add_parser("fetch-payload")
+    for acquisition in (fetch, payload):
+        acquisition.add_argument("--repository", required=True)
+        acquisition.add_argument("--run-id", type=int, required=True)
+        acquisition.add_argument("--layout", type=Path, required=True)
+        acquisition.add_argument("--expected-digest", required=True)
     prefix = actions.add_parser("ancestry")
     prefix.add_argument("--core-layout", type=Path, required=True)
     prefix.add_argument("--layout", type=Path, required=True)
@@ -427,6 +464,10 @@ def main():
             )
         elif args.action == "fetch-core":
             result = fetch_core(
+                args.repository, args.run_id, args.layout, args.expected_digest
+            )
+        elif args.action == "fetch-payload":
+            result = fetch_payload(
                 args.repository, args.run_id, args.layout, args.expected_digest
             )
         elif args.action == "ancestry":

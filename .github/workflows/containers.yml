@@ -293,5 +293,6 @@ jobs:
       target_tag: ${{ needs.metadata.outputs.target_tag }}
       workstation_iso_image: ${{ needs.metadata.outputs.workstation_iso_image }}
       workstation_digest: ${{ inputs.workstation_digest }}
+      workstation_built_oci_manifest_digest: ${{ needs.workstation.outputs.built_oci_manifest_digest }}
       workstation_archive_sha256: ${{ needs.workstation.outputs.archive_sha256 }}
       workstation_image_id: ${{ needs.workstation.outputs.image_id }}
