@@ -5,6 +5,7 @@ import io
 import json
 import stat
 import subprocess
+import tarfile
 import tempfile
 import unittest
 import zipfile
@@ -88,7 +89,46 @@ def run_document():
     }
 
 
-def core_reader_sample(directory):
+def core_oci_sample(payload=b"core payload"):
+    buffer = io.BytesIO()
+    with tarfile.open(fileobj=buffer, mode="w") as archive:
+        info = tarfile.TarInfo("payload")
+        info.size = len(payload)
+        archive.addfile(info, io.BytesIO(payload))
+    layer = buffer.getvalue()
+    files = {}
+
+    def blob(raw, media):
+        digest = "sha256:" + hashlib.sha256(raw).hexdigest()
+        files["blobs/sha256/" + digest[7:]] = raw
+        return {"mediaType": media, "digest": digest, "size": len(raw)}
+
+    layer_descriptor = blob(layer, "application/vnd.oci.image.layer.v1.tar")
+    config = json.dumps(
+        {
+            "architecture": "amd64",
+            "os": "linux",
+            "rootfs": {"type": "layers", "diff_ids": [layer_descriptor["digest"]]},
+        }
+    ).encode()
+    manifest = json.dumps(
+        {
+            "schemaVersion": 2,
+            "mediaType": "application/vnd.oci.image.manifest.v1+json",
+            "config": blob(config, "application/vnd.oci.image.config.v1+json"),
+            "layers": [layer_descriptor],
+        }
+    ).encode()
+    descriptor = blob(manifest, "application/vnd.oci.image.manifest.v1+json")
+    descriptor["annotations"] = {"org.opencontainers.image.ref.name": "core"}
+    files["index.json"] = json.dumps(
+        {"schemaVersion": 2, "manifests": [descriptor]}
+    ).encode()
+    files["oci-layout"] = b'{"imageLayoutVersion":"1.0.0"}'
+    return files, descriptor["digest"]
+
+
+def core_reader_sample(directory, core_digest="sha256:" + "2" * 64):
     evidence = directory / "fixture-B.json"
     evidence.write_text('{"notice":"synthetic unit-test bytes, not provenance"}\n')
     descriptor = {
@@ -109,7 +149,7 @@ def core_reader_sample(directory):
         "channel": "testing",
         "build_version": "45.20261109.1",
         "base_digest": "sha256:" + "1" * 64,
-        "core_digest": "sha256:" + "2" * 64,
+        "core_digest": core_digest,
         "policy_sha256": "3" * 64,
     }
     inputs = {}
@@ -637,7 +677,8 @@ class ReleasePipelineTests(unittest.TestCase):
 
     def test_core_v2_fetch_is_read_only_and_requires_source_context(self):
         path, key, _ = self.sample
-        document = core_reader_sample(self.tmp_path)
+        files, core_digest = core_oci_sample()
+        document = core_reader_sample(self.tmp_path, core_digest)
         context = self.core_context(document)
         path.write_text(json.dumps(document))
         args = [
@@ -654,10 +695,18 @@ class ReleasePipelineTests(unittest.TestCase):
         ]
         outputs = self.tmp_path / "outputs"
         outputs.write_text("unchanged=true\n")
+
+        def download(repository, run_id, name, directory):
+            if name == "core-oci":
+                for filename, raw in files.items():
+                    target = directory / filename
+                    target.parent.mkdir(parents=True, exist_ok=True)
+                    target.write_bytes(raw)
+
         with (
             mock.patch.object(pipeline.sys, "argv", args),
             mock.patch.object(pipeline, "run_info", return_value=run_document()),
-            mock.patch.object(pipeline, "download"),
+            mock.patch.object(pipeline, "download", side_effect=download),
             mock.patch.object(pipeline, "verify"),
             mock.patch.dict(pipeline.os.environ, {"GITHUB_OUTPUT": str(outputs)}),
             mock.patch.object(
@@ -699,6 +748,210 @@ class ReleasePipelineTests(unittest.TestCase):
                 )
                 factory.assert_called_once()
         self.assertEqual(outputs.read_text(), "unchanged=true\n")
+
+    def fetch_core_artifact(self, fault=None):
+        path, key, _ = self.sample
+        files, core_digest = core_oci_sample()
+        document = core_reader_sample(self.tmp_path, core_digest)
+        if fault == "proof":
+            (self.tmp_path / "core/core-build.json").write_text("tampered")
+        if fault == "synthetic":
+            document["evidence_class"] = "synthetic"
+        elif fault == "reused":
+            document["core_dependency"]["mode"] = "reused"
+        elif fault in ("workstation", "all"):
+            document["identity"]["selection"] = fault
+        path.write_text(json.dumps(document))
+        if fault == "different-layout":
+            files, _ = core_oci_sample(b"different payload")
+        index = json.loads(files["index.json"])
+        manifest_name = "blobs/sha256/" + index["manifests"][0]["digest"][7:]
+        manifest = json.loads(files[manifest_name])
+        if fault == "manifest":
+            files[manifest_name] = files[manifest_name].replace(
+                b"schemaVersion", b"schemaVersioN"
+            )
+        elif fault == "config":
+            name = "blobs/sha256/" + manifest["config"]["digest"][7:]
+            files[name] = files[name].replace(b"amd64", b"arm64")
+        elif fault == "layer":
+            name = "blobs/sha256/" + manifest["layers"][0]["digest"][7:]
+            files[name] = b"X" + files[name][1:]
+        elif fault == "ref":
+            files["index.json"] = files["index.json"].replace(b'"core"', b'"other"')
+        elif fault == "platform":
+            index["manifests"][0]["platform"] = {"os": "linux", "architecture": "arm64"}
+            files["index.json"] = json.dumps(index).encode()
+
+        def zipped(entries):
+            buffer = io.BytesIO()
+            with zipfile.ZipFile(buffer, "w") as bundle:
+                for name, raw in entries.items():
+                    bundle.writestr(name, raw)
+            return buffer.getvalue()
+
+        candidate_zip = zipped(
+            {
+                name: (self.tmp_path / name).read_bytes()
+                for name in (
+                    "candidate.json",
+                    "candidate.json.sig",
+                    "core/core-build.json",
+                    "fixture-B.json",
+                )
+            }
+        )
+        core_zip = zipped(files)
+        metadata = []
+        for identifier, name, data in (
+            (10, "release-candidate", candidate_zip),
+            (11, "core-oci", core_zip),
+        ):
+            metadata.append(
+                {
+                    "id": identifier,
+                    "name": name,
+                    "expired": False,
+                    "size_in_bytes": len(data),
+                    "digest": "sha256:" + hashlib.sha256(data).hexdigest(),
+                    "workflow_run": {
+                        "id": 123,
+                        "repository_id": 456,
+                        "head_sha": "a" * 40,
+                    },
+                }
+            )
+        if fault == "zip":
+            core_zip = core_zip[:-1] + bytes([core_zip[-1] ^ 1])
+        elif fault == "missing":
+            metadata.pop()
+        elif fault == "rebound":
+            metadata[-1]["workflow_run"]["id"] = 124
+        output = self.tmp_path / f"fetched-{fault or 'success'}"
+        args = [
+            "release_pipeline",
+            "fetch-candidate",
+            "--repository",
+            "owner/repo",
+            "--run-id",
+            "123",
+            "--output",
+            str(output),
+            "--public-key",
+            str(key),
+        ]
+        if fault != "missing-context":
+            args.extend(
+                [
+                    "--source-root",
+                    str(self.tmp_path / "source"),
+                    "--fedora",
+                    "45",
+                    "--base-digest",
+                    document["identity"]["base_digest"],
+                    "--policy-sha256",
+                    document["identity"]["policy_sha256"],
+                    "--channel",
+                    "testing",
+                ]
+            )
+        events = []
+        processes = []
+
+        def command(argv, **kwargs):
+            if argv[:2] == ["gh", "api"]:
+                if argv[-1] == "repos/owner/repo/actions/runs/123":
+                    return mock.Mock(
+                        stdout=json.dumps(run_document() | {"run_attempt": 1})
+                    )
+                self.assertEqual(
+                    argv[-1], "repos/owner/repo/actions/runs/123/artifacts?per_page=100"
+                )
+                return mock.Mock(stdout=json.dumps([{"artifacts": metadata}]))
+            if argv[0] == "git":
+                return mock.Mock(stdout="a" * 40 + "\n" if "rev-parse" in argv else "")
+            self.assertEqual(argv[:2], ["cosign", "verify-blob"])
+            events.append("signature")
+            if fault == "signature":
+                raise subprocess.CalledProcessError(1, argv)
+            return mock.Mock(stdout="")
+
+        def popen(argv, **kwargs):
+            identifier = int(argv[-1].split("/")[-2])
+            self.assertIn(identifier, (10, 11))
+            events.append("candidate-download" if identifier == 10 else "core-download")
+            process = mock.MagicMock()
+            process.stdout = io.BytesIO(candidate_zip if identifier == 10 else core_zip)
+            process.wait.return_value = 0
+            process.__enter__.return_value = process
+            processes.append(process)
+            return process
+
+        outputs = self.tmp_path / "outputs"
+        outputs.write_text("unchanged=true\n")
+        before = set(self.tmp_path.iterdir())
+        with (
+            mock.patch.object(pipeline.sys, "argv", args),
+            mock.patch.object(pipeline.subprocess, "run", side_effect=command),
+            mock.patch.object(pipeline.subprocess, "Popen", side_effect=popen),
+            mock.patch.dict(pipeline.os.environ, {"GITHUB_OUTPUT": str(outputs)}),
+            mock.patch.object(
+                pipeline.sys, "stdout", new_callable=io.StringIO
+            ) as stdout,
+            mock.patch.object(
+                pipeline.sys, "stderr", new_callable=io.StringIO
+            ) as stderr,
+        ):
+            result = pipeline.main()
+        self.assertEqual(outputs.read_text(), "unchanged=true\n")
+        self.assertEqual(set(self.tmp_path.iterdir()) - before, {output})
+        for process in processes:
+            process.wait.assert_called()
+        return result, stdout.getvalue(), stderr.getvalue(), events
+
+    def test_core_fetch_checks_real_oci_artifact_before_read_only_success(self):
+        result, stdout, stderr, events = self.fetch_core_artifact()
+        self.assertEqual(result, 0, stderr)
+        self.assertEqual(
+            json.loads(stdout),
+            {"schema_version": 2, "selection": "core", "read_only": True},
+        )
+        self.assertEqual(events, ["candidate-download", "signature", "core-download"])
+
+    def test_core_fetch_rejects_unbound_or_invalid_oci_before_success(self):
+        for fault, error in (
+            ("different-layout", "core OCI manifest digest mismatch"),
+            ("zip", "artifact digest mismatch"),
+            ("missing", "expected exactly one artifact"),
+            ("rebound", "artifact run binding mismatch"),
+            ("manifest", "OCI blob digest mismatch"),
+            ("config", "OCI blob digest mismatch"),
+            ("layer", "OCI blob digest mismatch"),
+            ("ref", "OCI ref mismatch"),
+            ("platform", "OCI platform must be linux/amd64"),
+        ):
+            with self.subTest(fault=fault):
+                result, stdout, stderr, events = self.fetch_core_artifact(fault)
+                self.assertEqual(result, 1)
+                self.assertEqual(stdout, "")
+                self.assertIn(error, stderr)
+                self.assertIn("signature", events)
+
+    def test_core_fetch_rejects_candidate_before_downloading_oci(self):
+        for fault in (
+            "signature",
+            "missing-context",
+            "proof",
+            "synthetic",
+            "reused",
+            "workstation",
+            "all",
+        ):
+            with self.subTest(fault=fault):
+                result, stdout, _, events = self.fetch_core_artifact(fault)
+                self.assertEqual(result, 1)
+                self.assertEqual(stdout, "")
+                self.assertNotIn("core-download", events)
 
     def test_load_rejects_duplicate_keys(self):
         path = self.tmp_path / "duplicate.json"

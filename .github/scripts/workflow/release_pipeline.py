@@ -1132,6 +1132,19 @@ def main() -> int:
                 )
             c = candidate(path, a.public_key, context=context)
             if c.get("schema_version") == 2:
+                spec = importlib.util.spec_from_file_location(
+                    "release_oci_layout", Path(__file__).with_name("oci_layout.py")
+                )
+                oci = importlib.util.module_from_spec(spec)
+                spec.loader.exec_module(oci)
+                with tempfile.TemporaryDirectory(dir=a.output.parent) as temp:
+                    layout = Path(temp) / "core-oci"
+                    download(a.repository, a.run_id, "core-oci", layout)
+                    require(
+                        oci.manifest_digest(layout, "core")
+                        == c["components"]["core"]["digest"],
+                        "core OCI manifest digest mismatch",
+                    )
                 print(
                     json.dumps(
                         {"schema_version": 2, "selection": "core", "read_only": True}
