@@ -404,7 +404,14 @@ def validate_core_candidate(
         },
         "candidate identity",
     )
-    require(identity["selection"] == "core", "v2 workstation/all reader requires T5")
+    require(
+        identity["selection"] in ("core", "workstation", "all"), "invalid selection"
+    )
+    editions = (
+        {"core", "workstation"}
+        if identity["selection"] == "all"
+        else {identity["selection"]}
+    )
     matches(identity["repository"], REPO, "repository")
     matches(identity["source_sha"], COMMIT, "source sha")
     for field in ("run_id", "run_attempt"):
@@ -435,28 +442,57 @@ def validate_core_candidate(
     owner = identity["repository"].split("/")[0].lower()
     matches(owner, re.compile(r"[a-z0-9-]+\Z"), "image namespace")
     repository = f"ghcr.io/{owner}/luminusos"
-    components = object_fields(c["components"], {"core"}, "core components")
-    image = object_fields(components["core"], {"repository", "digest"}, "core image")
-    require(
-        image == {"repository": repository, "digest": identity["core_digest"]},
-        "core image identity mismatch",
+    component_names = editions | ({"installer"} if "workstation" in editions else set())
+    components = object_fields(c["components"], component_names, "candidate components")
+    for name, image in components.items():
+        object_fields(image, {"repository", "digest"}, f"{name} image")
+        require(
+            image["repository"]
+            == repository + ("" if name == "core" else "-workstation"),
+            f"{name} image repository mismatch",
+        )
+        matches(image["digest"], DIGEST, f"{name} image digest")
+        if name == "core":
+            require(
+                image["digest"] == identity["core_digest"],
+                "core image identity mismatch",
+            )
+    artifacts = object_fields(
+        c["artifacts"],
+        {"iso", "qcow2"} if "workstation" in editions else set(),
+        "candidate artifacts",
     )
-    object_fields(c["artifacts"], set(), "core artifacts")
-    installed = object_fields(c["installed"], {"core"}, "installed editions")["core"]
+    for name, entry in artifacts.items():
+        object_fields(entry, {"path", "sha256", "size_bytes"}, f"{name} artifact")
+        matches(
+            entry["path"],
+            re.compile(
+                r"[A-Za-z0-9_-][A-Za-z0-9._-]*(?:/[A-Za-z0-9_-][A-Za-z0-9._-]*)*\Z"
+            ),
+            "artifact path",
+        )
+        require(
+            type(entry["size_bytes"]) is int and 0 < entry["size_bytes"] <= MAX_FILE,
+            "invalid artifact size",
+        )
+        path = checked_file(directory, entry["path"], entry["sha256"], True)
+        require(path.stat().st_size == entry["size_bytes"], "artifact size mismatch")
+    installed = object_fields(c["installed"], editions, "installed editions")
     target = ("testing-" if identity["channel"] == "testing" else "") + identity[
         "fedora"
     ]
-    require(
-        installed
-        == {
-            "edition": "core",
-            "channel": identity["channel"],
-            "fedora": identity["fedora"],
-            "reference": f"{repository}:{target}",
-            "digest": identity["core_digest"],
-        },
-        "installed identity mismatch",
-    )
+    for edition in editions:
+        require(
+            installed[edition]
+            == {
+                "edition": edition,
+                "channel": identity["channel"],
+                "fedora": identity["fedora"],
+                "reference": f"{components[edition]['repository']}:{target}",
+                "digest": components[edition]["digest"],
+            },
+            "installed identity mismatch",
+        )
     dependency = object_fields(
         c["core_dependency"],
         {
@@ -562,9 +598,23 @@ def validate_core_candidate(
             f"core build {field} mismatch",
         )
     matches(official_key_fingerprint, SHA, "official key fingerprint")
-    inputs = object_fields(c["validation_images"], {"core"}, "validation editions")[
-        "core"
-    ]
+    validation_images = object_fields(
+        c["validation_images"], editions, "validation editions"
+    )
+    for edition in editions:
+        validate_candidate_images(
+            validation_images[edition],
+            directory,
+            context,
+            components[edition]["repository"],
+            components[edition]["digest"],
+            official_key_fingerprint,
+        )
+
+
+def validate_candidate_images(
+    inputs, directory, context, repository, deployed_digest, official_key_fingerprint
+):
     object_fields(
         inputs, {"update", "signed", "unsigned", "foreign"}, "validation images"
     )
@@ -651,8 +701,8 @@ def validate_core_candidate(
             checked_file(directory, entry["path"], entry["sha256"], True)
     b_digest = inputs["update"]["digest"]
     require(
-        b_digest != identity["core_digest"]
-        and inputs["update"]["derived_from"] == identity["core_digest"]
+        b_digest != deployed_digest
+        and inputs["update"]["derived_from"] == deployed_digest
         and inputs["signed"]["digest"] == b_digest
         and all(
             inputs[role]["derived_from"] == b_digest
@@ -1137,17 +1187,56 @@ def main() -> int:
                 )
                 oci = importlib.util.module_from_spec(spec)
                 spec.loader.exec_module(oci)
-                with tempfile.TemporaryDirectory(dir=a.output.parent) as temp:
-                    layout = Path(temp) / "core-oci"
-                    download(a.repository, a.run_id, "core-oci", layout)
-                    require(
-                        oci.manifest_digest(layout, "core")
-                        == c["components"]["core"]["digest"],
-                        "core OCI manifest digest mismatch",
+                core_diff_ids = None
+                for name in ("core", "workstation", "installer"):
+                    if name != "core" and name not in c["components"]:
+                        continue
+                    expected = (
+                        c["core_dependency"]["digest"]
+                        if name == "core"
+                        else c["components"][name]["digest"]
                     )
+                    with tempfile.TemporaryDirectory(dir=a.output.parent) as temp:
+                        layout = Path(temp) / f"{name}-oci"
+                        download(a.repository, a.run_id, f"{name}-oci", layout)
+                        with oci.directory(layout) as root:
+                            actual, config, _ = oci.checked_image(root, name)
+                        require(
+                            actual == expected, f"{name} OCI manifest digest mismatch"
+                        )
+                        if name == "core":
+                            if "workstation" in c["components"]:
+                                core_diff_ids = oci.declared_diff_ids(
+                                    layout, name, expected
+                                )
+                        elif name == "workstation":
+                            workstation_diff_ids = oci.declared_diff_ids(
+                                layout, name, expected
+                            )
+                            require(
+                                workstation_diff_ids[: len(core_diff_ids)]
+                                == core_diff_ids,
+                                "OCI declared core diff_ids prefix mismatch",
+                            )
+                            metadata = config.get("config")
+                            require(
+                                isinstance(metadata, dict),
+                                "invalid workstation config metadata",
+                            )
+                            labels = metadata.get("Labels")
+                            require(
+                                isinstance(labels, dict)
+                                and labels.get("org.opencontainers.image.base.digest")
+                                == c["identity"]["base_digest"],
+                                "workstation base digest mismatch",
+                            )
                 print(
                     json.dumps(
-                        {"schema_version": 2, "selection": "core", "read_only": True}
+                        {
+                            "schema_version": 2,
+                            "selection": c["identity"]["selection"],
+                            "read_only": True,
+                        }
                     )
                 )
                 return 0
