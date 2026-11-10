@@ -279,7 +279,7 @@ jobs:
     name: Build installer image
     if: always() && inputs.build_installer && needs.metadata.result == 'success' && (inputs.channel == 'stable' || needs.workstation.result == 'success')
     needs: [metadata, workstation]
-    permissions: {contents: read, packages: read}
+    permissions: {contents: read, packages: read, actions: read}
     uses: ./.github/workflows/installer.yml
     with:
       channel: ${{ inputs.channel }}

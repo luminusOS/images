@@ -1058,7 +1058,10 @@ class ContainerWorkflowTests(unittest.TestCase):
     def test_reusable_installer_workflow_is_read_only_and_uses_approved_payload(self):
         workflow = self.load_workflow("installer.yml")
         build = workflow["jobs"]["build"]
-        self.assertEqual(build["permissions"], {"contents": "read", "packages": "read"})
+        self.assertEqual(
+            build["permissions"],
+            {"contents": "read", "packages": "read", "actions": "read"},
+        )
         self.assertEqual(
             workflow["on"]["workflow_call"]["outputs"]["image_id"]["value"],
             "${{ jobs.build.outputs.image_id }}",
