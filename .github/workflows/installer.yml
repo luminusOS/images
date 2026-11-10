@@ -19,6 +19,9 @@ on:
     outputs:
       image_id: {value: '${{ jobs.build.outputs.image_id }}'}
       archive_sha256: {value: '${{ jobs.build.outputs.archive_sha256 }}'}
+      built_oci_manifest_digest: {value: '${{ jobs.build.outputs.built_oci_manifest_digest }}'}
+      built_oci_skopeo_version: {value: '${{ jobs.build.outputs.built_oci_skopeo_version }}'}
+      built_oci_artifact_id: {value: '${{ jobs.build.outputs.built_oci_artifact_id }}'}
 
 jobs:
   build:
@@ -29,6 +32,9 @@ jobs:
     outputs:
       image_id: '${{ steps.save.outputs.image_id }}'
       archive_sha256: '${{ steps.save.outputs.archive_sha256 }}'
+      built_oci_manifest_digest: '${{ steps.upload-installer-oci.outcome == ''success'' && steps.export-installer-oci.outputs.manifest_digest || '''' }}'
+      built_oci_skopeo_version: '${{ steps.upload-installer-oci.outcome == ''success'' && steps.export-installer-oci.outputs.skopeo_version || '''' }}'
+      built_oci_artifact_id: '${{ steps.upload-installer-oci.outcome == ''success'' && steps.upload-installer-oci.outputs.artifact-id || '''' }}'
     steps:
       - uses: docker/setup-docker-action@e43656e248c0bd0647d3f5c195d116aacf6fcaf4 # v4.7.0
         with:
@@ -57,10 +63,12 @@ jobs:
       - uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
         with: {driver: docker}
       - name: Build workstation ISO live root
+        id: build
         uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
         with:
           context: .
           file: editions/workstation/Containerfile.installer
+          platforms: linux/amd64
           load: true
           push: false
           cache-from: type=gha,scope=installer-${{ inputs.fedora_version }}-${{ runner.arch }}
@@ -74,6 +82,17 @@ jobs:
             workstation_image=${{ inputs.workstation_image }}
             workstation_target_image=ghcr.io/${{ inputs.image_namespace }}/luminusos-workstation:${{ inputs.target_tag }}
           tags: '${{ inputs.workstation_iso_image }}'
+      - name: Export built installer OCI layout
+        id: export-installer-oci
+        if: inputs.channel == 'testing' && steps.build.outcome == 'success'
+        env:
+          IMAGE: '${{ inputs.workstation_iso_image }}'
+        run: python3 .github/scripts/workflow/oci_layout.py export --image "$IMAGE" --layout installer-oci --ref installer --docker-host "${DOCKER_HOST:?Docker setup did not expose its socket}"
+      - name: Upload built installer OCI layout
+        id: upload-installer-oci
+        if: steps.export-installer-oci.outcome == 'success'
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with: {name: installer-oci, path: installer-oci/, compression-level: 0, if-no-files-found: error}
       - name: Save installer image archive
         id: save
         env:
