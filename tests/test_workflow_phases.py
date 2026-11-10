@@ -27,7 +27,10 @@ class WorkflowPhasesTest(unittest.TestCase):
                 self.assertNotIn("secrets", job)
                 self.assertNotIn("GH_TOKEN", job.get("env", {}))
                 for step in job.get("steps", []):
-                    self.assertNotIn("GH_TOKEN", step.get("env", {}))
+                    if name == "workstation" and step.get("id") == "fetch-core-oci":
+                        self.assertEqual(step["env"]["GH_TOKEN"], "${{ github.token }}")
+                    else:
+                        self.assertNotIn("GH_TOKEN", step.get("env", {}))
                 if name != "workstation":
                     self.assertEqual(job["uses"], "./.github/workflows/containers.yml")
 
@@ -61,6 +64,105 @@ class WorkflowPhasesTest(unittest.TestCase):
             auto["permissions"],
             {"contents": "write", "packages": "write", "actions": "read"},
         )
+        self.assertNotIn("GH_TOKEN", containers.get("env", {}))
+        for name, job in containers["jobs"].items():
+            self.assertNotIn("GH_TOKEN", job.get("env", {}))
+            self.assertNotIn("github.token", str(job.get("env", {})))
+            for step in job.get("steps", []):
+                if (name, step.get("id")) != ("workstation", "fetch-core-oci"):
+                    self.assertNotIn("GH_TOKEN", step.get("env", {}))
+                    self.assertNotIn("github.token", str(step))
+                    self.assertNotIn("secrets.GITHUB_TOKEN", str(step))
+
+    def test_workstation_consumes_canonical_core_only_for_testing_built_core(self):
+        jobs = workflow("containers.yml")["jobs"]
+        canonical = "inputs.channel == 'testing' && needs.core.outputs.reused != 'true'"
+        legacy = "inputs.channel != 'testing' || needs.core.outputs.reused == 'true'"
+        self.assertEqual(
+            jobs["core"]["outputs"]["reused"], "${{ steps.select.outputs.reused }}"
+        )
+        self.assertEqual(jobs["workstation"]["if"], "inputs.channel != 'stable'")
+        steps = jobs["workstation"]["steps"]
+        fetch = next(step for step in steps if step.get("id") == "fetch-core-oci")
+        self.assertEqual(fetch["if"], canonical)
+        self.assertEqual(
+            fetch["env"],
+            {
+                "GH_TOKEN": "${{ github.token }}",
+                "EXPECTED_DIGEST": "${{ needs.core.outputs.built_oci_manifest_digest }}",
+            },
+        )
+        self.assertEqual(
+            fetch["run"],
+            'python3 .github/scripts/workflow/oci_layout.py fetch-core --repository "$GITHUB_REPOSITORY" '
+            '--run-id "$GITHUB_RUN_ID" --layout "$RUNNER_TEMP/core-oci" --expected-digest "$EXPECTED_DIGEST"',
+        )
+        download = next(
+            step for step in steps if step.get("with", {}).get("name") == "core-image"
+        )
+        load = next(step for step in steps if step.get("name") == "Load core image")
+        for step in (download, load):
+            self.assertEqual(step["if"], legacy)
+        build = next(step for step in steps if step.get("id") == "build")
+        self.assertEqual(
+            build["with"]["build-contexts"],
+            "${{ "
+            + canonical
+            + " && format('luminusos-core-context.invalid/core=oci-layout://{0}/core-oci@{1}', runner.temp, needs.core.outputs.built_oci_manifest_digest) || '' }}",
+        )
+        self.assertEqual(
+            build["with"]["build-args"].splitlines()[0],
+            "core_image=${{ "
+            + canonical
+            + " && 'luminusos-core-context.invalid/core' || needs.metadata.outputs.core_image }}",
+        )
+        self.assertLess(steps.index(fetch), steps.index(build))
+        self.assertNotIn("continue-on-error", fetch)
+        self.assertNotIn("always()", build.get("if", ""))
+        self.assertFalse(
+            any(step.get("with", {}).get("name") == "core-oci" for step in steps)
+        )
+        setup = next(
+            step
+            for step in steps
+            if "docker/setup-buildx-action@" in step.get("uses", "")
+        )
+        self.assertEqual(setup["with"]["driver"], "docker")
+
+    def test_workstation_ancestry_gates_canonical_upload(self):
+        steps = workflow("containers.yml")["jobs"]["workstation"]["steps"]
+        ancestry = next(
+            step for step in steps if step.get("id") == "check-core-ancestry"
+        )
+        export = next(
+            step for step in steps if step.get("id") == "export-workstation-oci"
+        )
+        upload = next(
+            step for step in steps if step.get("id") == "upload-workstation-oci"
+        )
+        self.assertEqual(
+            ancestry["if"],
+            "inputs.channel == 'testing' && needs.core.outputs.reused != 'true' && steps.export-workstation-oci.outcome == 'success'",
+        )
+        self.assertEqual(
+            ancestry["env"],
+            {
+                "CORE_DIGEST": "${{ needs.core.outputs.built_oci_manifest_digest }}",
+                "WORKSTATION_DIGEST": "${{ steps.export-workstation-oci.outputs.manifest_digest }}",
+            },
+        )
+        self.assertEqual(
+            ancestry["run"],
+            'python3 .github/scripts/workflow/oci_layout.py ancestry --core-layout "$RUNNER_TEMP/core-oci" '
+            '--layout workstation-oci --core-digest "$CORE_DIGEST" --expected-digest "$WORKSTATION_DIGEST"',
+        )
+        self.assertEqual(
+            upload["if"],
+            "success() && steps.export-workstation-oci.outcome == 'success' && (needs.core.outputs.reused == 'true' || steps.check-core-ancestry.outcome == 'success')",
+        )
+        self.assertLess(steps.index(export), steps.index(ancestry))
+        self.assertLess(steps.index(ancestry), steps.index(upload))
+        self.assertNotIn("continue-on-error", ancestry)
 
     def test_workstation_and_installer_export_in_their_build_daemon(self):
         for role, filename, job_name in (
@@ -104,7 +206,10 @@ class WorkflowPhasesTest(unittest.TestCase):
                     '--docker-host "${DOCKER_HOST:?Docker setup did not expose its socket}"',
                 )
                 self.assertEqual(
-                    upload["if"], f"steps.export-{role}-oci.outcome == 'success'"
+                    upload["if"],
+                    "success() && steps.export-workstation-oci.outcome == 'success' && (needs.core.outputs.reused == 'true' || steps.check-core-ancestry.outcome == 'success')"
+                    if role == "workstation"
+                    else f"steps.export-{role}-oci.outcome == 'success'",
                 )
                 self.assertEqual(
                     upload["uses"],

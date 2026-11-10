@@ -7,6 +7,8 @@ import re
 import stat
 import subprocess
 import sys
+import tempfile
+import zipfile
 from contextlib import contextmanager
 from pathlib import Path
 
@@ -183,6 +185,10 @@ def manifest_digest(layout, ref):
 
 
 def checked_manifest(root, ref):
+    return checked_image(root, ref)[0]
+
+
+def checked_image(root, ref):
     metadata = document(contents(root, "oci-layout", MAX_JSON_BYTES))
     fields(metadata, {"imageLayoutVersion"})
     require(metadata["imageLayoutVersion"] == "1.0.0", "unsupported OCI layout version")
@@ -218,7 +224,83 @@ def checked_manifest(root, ref):
     )
     for layer in manifest["layers"]:
         blob(root, layer, LAYERS)
-    return descriptor["digest"]
+    return descriptor["digest"], config, len(manifest["layers"])
+
+
+def expected_digest(value):
+    require(
+        isinstance(value, str) and DIGEST.fullmatch(value),
+        "invalid expected OCI digest",
+    )
+
+
+def fetch_core(repository, run_id, layout, expected):
+    expected_digest(expected)
+    layout = safe_path(layout)
+    with directory(layout.parent) as parent:
+        require(not os.path.lexists(layout), "OCI destination must not exist")
+        from release_pipeline import download
+
+        with tempfile.TemporaryDirectory(dir=f"/proc/self/fd/{parent}") as temp:
+            staged = Path(temp) / "core-oci"
+            with subdirectory(parent, Path(temp).name) as source:
+                download(repository, run_id, "core-oci", staged)
+                with subdirectory(source, staged.name) as validated:
+                    require(
+                        checked_manifest(validated, "core") == expected,
+                        "core OCI manifest digest mismatch",
+                    )
+                    require(
+                        not os.path.lexists(layout), "OCI destination must not exist"
+                    )
+                    os.rename(
+                        staged.name, layout.name, src_dir_fd=source, dst_dir_fd=parent
+                    )
+                    with subdirectory(parent, layout.name) as installed:
+                        require(
+                            os.path.samestat(os.fstat(installed), os.fstat(validated)),
+                            "OCI installed directory changed",
+                        )
+                        require(
+                            checked_manifest(installed, "core") == expected,
+                            "core OCI manifest digest mismatch",
+                        )
+                    with directory(layout.parent) as current:
+                        require(
+                            os.path.samestat(os.fstat(current), os.fstat(parent)),
+                            "OCI destination parent changed",
+                        )
+    return {"manifest_digest": expected}
+
+
+def declared_diff_ids(layout, ref, expected):
+    expected_digest(expected)
+    with directory(layout) as root:
+        digest, config, layer_count = checked_image(root, ref)
+    require(digest == expected, "OCI manifest digest mismatch")
+    rootfs = config.get("rootfs")
+    fields(rootfs, {"type", "diff_ids"})
+    require(rootfs["type"] == "layers", "invalid OCI rootfs type")
+    diff_ids = rootfs["diff_ids"]
+    require(
+        isinstance(diff_ids, list)
+        and 0 < len(diff_ids) == layer_count <= MAX_LAYERS
+        and all(
+            isinstance(value, str) and DIGEST.fullmatch(value) for value in diff_ids
+        ),
+        "invalid OCI declared diff_ids",
+    )
+    return diff_ids
+
+
+def ancestry(core_layout, layout, core_digest, digest):
+    core = declared_diff_ids(core_layout, "core", core_digest)
+    workstation = declared_diff_ids(layout, "workstation", digest)
+    require(
+        workstation[: len(core)] == core,
+        "OCI declared core diff_ids prefix mismatch",
+    )
+    return {"declared_diff_ids_prefix": "true"}
 
 
 def export_layout(image, layout, ref, *, docker_host=""):
@@ -327,15 +409,32 @@ def main():
         action.add_argument("--ref", required=True)
     export.add_argument("--image", required=True)
     export.add_argument("--docker-host", default="")
+    fetch = actions.add_parser("fetch-core")
+    fetch.add_argument("--repository", required=True)
+    fetch.add_argument("--run-id", type=int, required=True)
+    fetch.add_argument("--layout", type=Path, required=True)
+    fetch.add_argument("--expected-digest", required=True)
+    prefix = actions.add_parser("ancestry")
+    prefix.add_argument("--core-layout", type=Path, required=True)
+    prefix.add_argument("--layout", type=Path, required=True)
+    prefix.add_argument("--core-digest", required=True)
+    prefix.add_argument("--expected-digest", required=True)
     args = parser.parse_args()
     try:
-        result = (
-            export_layout(
+        if args.action == "export":
+            result = export_layout(
                 args.image, args.layout, args.ref, docker_host=args.docker_host
             )
-            if args.action == "export"
-            else {"manifest_digest": manifest_digest(args.layout, args.ref)}
-        )
+        elif args.action == "fetch-core":
+            result = fetch_core(
+                args.repository, args.run_id, args.layout, args.expected_digest
+            )
+        elif args.action == "ancestry":
+            result = ancestry(
+                args.core_layout, args.layout, args.core_digest, args.expected_digest
+            )
+        else:
+            result = {"manifest_digest": manifest_digest(args.layout, args.ref)}
         outputs(result)
         return 0
     except (
@@ -343,6 +442,7 @@ def main():
         ValueError,
         subprocess.CalledProcessError,
         RecursionError,
+        zipfile.BadZipFile,
     ) as error:
         print(f"OCI layout rejected: {error}", file=sys.stderr)
         return 1
