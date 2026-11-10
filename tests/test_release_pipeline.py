@@ -89,7 +89,7 @@ def run_document():
     }
 
 
-def core_oci_sample(payload=b"core payload"):
+def core_oci_sample(payload=b"core payload", *, ref="core", prefix=(), base=None):
     buffer = io.BytesIO()
     with tarfile.open(fileobj=buffer, mode="w") as archive:
         info = tarfile.TarInfo("payload")
@@ -108,7 +108,15 @@ def core_oci_sample(payload=b"core payload"):
         {
             "architecture": "amd64",
             "os": "linux",
-            "rootfs": {"type": "layers", "diff_ids": [layer_descriptor["digest"]]},
+            "rootfs": {
+                "type": "layers",
+                "diff_ids": [*prefix, layer_descriptor["digest"]],
+            },
+            **(
+                {"config": {"Labels": {"org.opencontainers.image.base.digest": base}}}
+                if base
+                else {}
+            ),
         }
     ).encode()
     manifest = json.dumps(
@@ -116,11 +124,11 @@ def core_oci_sample(payload=b"core payload"):
             "schemaVersion": 2,
             "mediaType": "application/vnd.oci.image.manifest.v1+json",
             "config": blob(config, "application/vnd.oci.image.config.v1+json"),
-            "layers": [layer_descriptor],
+            "layers": [layer_descriptor] * (len(prefix) + 1),
         }
     ).encode()
     descriptor = blob(manifest, "application/vnd.oci.image.manifest.v1+json")
-    descriptor["annotations"] = {"org.opencontainers.image.ref.name": "core"}
+    descriptor["annotations"] = {"org.opencontainers.image.ref.name": ref}
     files["index.json"] = json.dumps(
         {"schemaVersion": 2, "manifests": [descriptor]}
     ).encode()
@@ -255,6 +263,323 @@ def core_reader_sample(directory, core_digest="sha256:" + "2" * 64):
 
 
 class ReleasePipelineTests(unittest.TestCase):
+    def multiedition_sample(self, selection):
+        files, digest = core_oci_sample()
+        document = core_reader_sample(self.tmp_path, digest)
+        config = next(json.loads(raw) for raw in files.values() if b'"rootfs"' in raw)
+        layouts = {"core": files}
+        document["identity"]["selection"] = selection
+        if selection == "core":
+            return document, layouts
+        for name in ("workstation", "installer"):
+            layouts[name], digest = core_oci_sample(
+                name.encode(),
+                ref=name,
+                prefix=config["rootfs"]["diff_ids"] if name == "workstation" else (),
+                base=document["identity"]["base_digest"],
+            )
+            document["components"][name] = {
+                "repository": "ghcr.io/owner/luminusos-workstation",
+                "digest": digest,
+            }
+        document["installed"]["workstation"] = {
+            "edition": "workstation",
+            "channel": "testing",
+            "fedora": "45",
+            "reference": "ghcr.io/owner/luminusos-workstation:testing-45",
+            "digest": document["components"]["workstation"]["digest"],
+        }
+        inputs = copy.deepcopy(document["validation_images"]["core"])
+        for role, item in inputs.items():
+            item["logical_reference"] = item["logical_reference"].replace(
+                "/luminusos@", "/luminusos-workstation@"
+            )
+            if role == "update":
+                item["derived_from"] = document["components"]["workstation"]["digest"]
+        document["validation_images"]["workstation"] = inputs
+        for name in ("iso", "qcow2"):
+            path = self.tmp_path / f"disk.{name}"
+            path.write_bytes(name.encode())
+            document["artifacts"][name] = {
+                "path": path.name,
+                "sha256": pipeline.digest(path),
+                "size_bytes": path.stat().st_size,
+            }
+        if selection == "workstation":
+            for field in ("components", "installed", "validation_images"):
+                del document[field]["core"]
+        return document, layouts
+
+    def test_multiedition_closed_candidates(self):
+        for selection in ("core", "workstation", "all"):
+            with self.subTest(selection=selection):
+                document, _ = self.multiedition_sample(selection)
+                self.validate_core(
+                    document, self.tmp_path, context=self.core_context(document)
+                )
+
+    def test_multiedition_rejects_rebound_nonpublic_selector_and_core_component(self):
+        document, _ = self.multiedition_sample("workstation")
+        context = self.core_context(document)
+        document["identity"]["selection"] = "installer"
+        document["components"].pop("workstation")
+        installed = document["installed"].pop("workstation")
+        installed.update(
+            edition="installer", digest=document["components"]["installer"]["digest"]
+        )
+        document["installed"]["installer"] = installed
+        inputs = document["validation_images"].pop("workstation")
+        inputs["update"]["derived_from"] = installed["digest"]
+        document["validation_images"]["installer"] = inputs
+        document["artifacts"] = {}
+        with self.assertRaises(ValueError):
+            self.validate_core(document, self.tmp_path, context=context)
+        document, _ = self.multiedition_sample("all")
+        changed_digest = "sha256:" + "b" * 64
+        document["components"]["core"]["digest"] = changed_digest
+        document["installed"]["core"]["digest"] = changed_digest
+        document["validation_images"]["core"]["update"]["derived_from"] = changed_digest
+        with self.assertRaises(ValueError):
+            self.validate_core(
+                document, self.tmp_path, context=self.core_context(document)
+            )
+
+    def test_multiedition_component_fields_and_existing_artifact_path_are_closed(self):
+        for selection in ("core", "workstation", "all"):
+            document, _ = self.multiedition_sample(selection)
+            context = self.core_context(document)
+            for component in document["components"]:
+                changed = copy.deepcopy(document)
+                changed["components"][component]["extra"] = "unexpected"
+                with (
+                    self.subTest(selection=selection, component=component),
+                    self.assertRaises(ValueError),
+                ):
+                    self.validate_core(changed, self.tmp_path, context=context)
+            if selection != "core":
+                path = self.tmp_path / "bad:name"
+                path.write_bytes(b"iso")
+                document["artifacts"]["iso"] = {
+                    "path": path.name,
+                    "sha256": pipeline.digest(path),
+                    "size_bytes": 3,
+                }
+                with self.assertRaises(ValueError):
+                    self.validate_core(document, self.tmp_path, context=context)
+
+    def test_multiedition_rejects_closed_sets_and_artifact_mutations(self):
+        for selection in ("workstation", "all"):
+            document, _ = self.multiedition_sample(selection)
+            context = self.core_context(document)
+            for field in ("components", "artifacts", "installed", "validation_images"):
+                for operation in ("missing", "extra"):
+                    changed = copy.deepcopy(document)
+                    if operation == "missing":
+                        changed[field].pop(next(iter(changed[field])))
+                    else:
+                        changed[field]["unexpected"] = {}
+                    with (
+                        self.subTest(
+                            selection=selection, field=field, operation=operation
+                        ),
+                        self.assertRaises(ValueError),
+                    ):
+                        self.validate_core(changed, self.tmp_path, context=context)
+            for name in ("iso", "qcow2"):
+                for field, value in (
+                    ("size_bytes", True),
+                    ("size_bytes", 0),
+                    ("size_bytes", 999),
+                    ("size_bytes", pipeline.MAX_FILE + 1),
+                    ("size_bytes", float(len(name))),
+                    ("sha256", "0" * 64),
+                    ("path", "absent"),
+                    ("path", "../outside"),
+                    ("path", "bad:name"),
+                    ("extra", 1),
+                ):
+                    changed = copy.deepcopy(document)
+                    changed["artifacts"][name][field] = value
+                    with (
+                        self.subTest(
+                            selection=selection, artifact=name, field=field, value=value
+                        ),
+                        self.assertRaises(ValueError),
+                    ):
+                        self.validate_core(changed, self.tmp_path, context=context)
+
+    def test_multiedition_identity_producers_and_guards_remain_mandatory(self):
+        for selection in ("workstation", "all"):
+            document, _ = self.multiedition_sample(selection)
+            context = self.core_context(document)
+            mutations = [
+                (("identity", "selection"), "other"),
+                (("identity", "run_attempt"), 2),
+                (("identity", "source_sha"), "b" * 40),
+                (("identity", "policy_sha256"), "b" * 64),
+                (("identity", "core_digest"), "sha256:" + "b" * 64),
+                (("core_dependency", "digest"), "sha256:" + "b" * 64),
+                (("core_dependency", "mode"), "reused"),
+                (("core_dependency", "evidence_sha256"), "b" * 64),
+                (("evidence_class",), "synthetic"),
+            ]
+            for component in document["components"]:
+                mutations.extend(
+                    [
+                        (
+                            ("components", component, "repository"),
+                            "ghcr.io/other/luminusos",
+                        ),
+                        (("components", component, "digest"), "invalid"),
+                    ]
+                )
+            if selection == "all":
+                mutations.append(
+                    (("components", "core", "digest"), "sha256:" + "b" * 64)
+                )
+            for edition in document["installed"]:
+                for field in ("edition", "channel", "fedora", "reference", "digest"):
+                    mutations.append((("installed", edition, field), "wrong"))
+                for role in ("update", "signed", "unsigned", "foreign"):
+                    for field, value in (
+                        ("run_attempt", 2),
+                        ("source_sha", "b" * 40),
+                        ("workflow", ".github/workflows/build-containers.yml"),
+                    ):
+                        mutations.append(
+                            (
+                                ("validation_images", edition, role, "producer", field),
+                                value,
+                            )
+                        )
+                    mutations.append(
+                        (("validation_images", edition, role, "producer_evidence"), [])
+                    )
+                mutations.extend(
+                    [
+                        (
+                            ("validation_images", edition, "update", "derived_from"),
+                            "sha256:" + "b" * 64,
+                        ),
+                        (
+                            (
+                                "validation_images",
+                                edition,
+                                "signed",
+                                "signing_key_fingerprint",
+                            ),
+                            "b" * 64,
+                        ),
+                    ]
+                )
+            for path, value in mutations:
+                changed = copy.deepcopy(document)
+                target = changed
+                for field in path[:-1]:
+                    target = target[field]
+                target[path[-1]] = value
+                with (
+                    self.subTest(selection=selection, path=path),
+                    self.assertRaises(ValueError),
+                ):
+                    self.validate_core(changed, self.tmp_path, context=context)
+            for validator in (pipeline.binding,):
+                with self.assertRaisesRegex(ValueError, "T5"):
+                    validator(document)
+            with self.assertRaisesRegex(ValueError, "T5"):
+                pipeline.validate_validation(Path("absent"), self.sample[1], document)
+            with self.assertRaises(ValueError):
+                pipeline.core_context(
+                    run_document()
+                    | {
+                        "run_attempt": 1,
+                        "path": ".github/workflows/build-containers.yml",
+                    },
+                    self.tmp_path / "source",
+                    {
+                        field: context[field]
+                        for field in (
+                            "fedora",
+                            "channel",
+                            "architecture",
+                            "base_digest",
+                            "policy_sha256",
+                        )
+                    },
+                )
+
+    def test_multiedition_artifacts_require_nonempty_regular_bytes(self):
+        document, _ = self.multiedition_sample("all")
+        context = self.core_context(document)
+        for name in ("iso", "qcow2"):
+            path = self.tmp_path / document["artifacts"][name]["path"]
+            original = path.read_bytes()
+            path.write_bytes(b"")
+            changed = copy.deepcopy(document)
+            changed["artifacts"][name]["sha256"] = pipeline.digest(path)
+            with self.assertRaises(ValueError):
+                self.validate_core(changed, self.tmp_path, context=context)
+            path.write_bytes(original)
+            target = self.tmp_path / f"target-{name}"
+            target.write_bytes(original)
+            path.unlink()
+            path.symlink_to(target)
+            with self.assertRaises(ValueError):
+                self.validate_core(document, self.tmp_path, context=context)
+            path.unlink()
+            path.write_bytes(original)
+
+    def test_multiedition_rebound_core_proof_and_official_key_rejected(self):
+        for selection in ("workstation", "all"):
+            for field, value in (
+                ("run_attempt", 2),
+                ("source_sha", "b" * 40),
+                ("inputs_sha256", "b" * 64),
+            ):
+                document, _ = self.multiedition_sample(selection)
+                context = self.core_context(document)
+                proof_path = self.tmp_path / "core/core-build.json"
+                proof = pipeline.load(proof_path)
+                proof[field] = value
+                proof_path.write_text(json.dumps(proof))
+                document["core_dependency"]["evidence_sha256"] = pipeline.digest(
+                    proof_path
+                )
+                with (
+                    self.subTest(selection=selection, field=field),
+                    self.assertRaises(ValueError),
+                ):
+                    self.validate_core(document, self.tmp_path, context=context)
+            document, _ = self.multiedition_sample(selection)
+            with self.assertRaises(ValueError):
+                pipeline.validate_candidate(
+                    document,
+                    self.tmp_path,
+                    context=self.core_context(document),
+                    official_key_fingerprint="b" * 64,
+                )
+
+    def test_multiedition_update_B_must_differ_from_edition_A(self):
+        for selection in ("workstation", "all"):
+            document, _ = self.multiedition_sample(selection)
+            context = self.core_context(document)
+            for edition, inputs in document["validation_images"].items():
+                changed = copy.deepcopy(document)
+                inputs = changed["validation_images"][edition]
+                deployed = changed["components"][edition]["digest"]
+                for role in ("update", "signed"):
+                    inputs[role]["digest"] = deployed
+                    inputs[role]["logical_reference"] = (
+                        f"{changed['components'][edition]['repository']}@{deployed}"
+                    )
+                for role in ("signed", "unsigned", "foreign"):
+                    inputs[role]["derived_from"] = deployed
+                with (
+                    self.subTest(selection=selection, edition=edition),
+                    self.assertRaises(ValueError),
+                ):
+                    self.validate_core(changed, self.tmp_path, context=context)
+
     def validate_core(self, document, directory, *, context=None):
         pipeline.validate_candidate(
             document,
@@ -749,10 +1074,10 @@ class ReleasePipelineTests(unittest.TestCase):
                 factory.assert_called_once()
         self.assertEqual(outputs.read_text(), "unchanged=true\n")
 
-    def fetch_core_artifact(self, fault=None):
+    def fetch_core_artifact(self, fault=None, *, selection="core"):
         path, key, _ = self.sample
-        files, core_digest = core_oci_sample()
-        document = core_reader_sample(self.tmp_path, core_digest)
+        document, layouts = self.multiedition_sample(selection)
+        files = layouts["core"]
         if fault == "proof":
             (self.tmp_path / "core/core-build.json").write_text("tampered")
         if fault == "synthetic":
@@ -782,6 +1107,71 @@ class ReleasePipelineTests(unittest.TestCase):
         elif fault == "platform":
             index["manifests"][0]["platform"] = {"os": "linux", "architecture": "arm64"}
             files["index.json"] = json.dumps(index).encode()
+        layouts["core"] = files
+        if fault and ":" in fault:
+            component, problem = fault.split(":")
+            entries = layouts[component]
+            if problem in ("prefix", "base", "metadata", "labels"):
+                config = next(
+                    json.loads(raw)
+                    for raw in layouts["core"].values()
+                    if b'"rootfs"' in raw
+                )
+                layouts[component], digest = core_oci_sample(
+                    component.encode(),
+                    ref=component,
+                    prefix=("sha256:" + "f" * 64,)
+                    if problem == "prefix"
+                    else config["rootfs"]["diff_ids"],
+                    base="sha256:" + "f" * 64
+                    if problem == "base"
+                    else document["identity"]["base_digest"],
+                )
+                document["components"][component]["digest"] = digest
+                document["installed"][component]["digest"] = digest
+                document["validation_images"][component]["update"]["derived_from"] = (
+                    digest
+                )
+                if problem in ("metadata", "labels"):
+                    entries = layouts[component]
+                    index = json.loads(entries["index.json"])
+                    manifest = json.loads(entries["blobs/sha256/" + digest[7:]])
+                    config = json.loads(
+                        entries["blobs/sha256/" + manifest["config"]["digest"][7:]]
+                    )
+                    if problem == "metadata":
+                        config["config"] = []
+                    else:
+                        config["config"]["Labels"] = []
+                    raw = json.dumps(config).encode()
+                    config_digest = "sha256:" + hashlib.sha256(raw).hexdigest()
+                    entries["blobs/sha256/" + config_digest[7:]] = raw
+                    manifest["config"].update(digest=config_digest, size=len(raw))
+                    raw = json.dumps(manifest).encode()
+                    digest = "sha256:" + hashlib.sha256(raw).hexdigest()
+                    entries["blobs/sha256/" + digest[7:]] = raw
+                    index["manifests"][0].update(digest=digest, size=len(raw))
+                    entries["index.json"] = json.dumps(index).encode()
+                    document["components"][component]["digest"] = digest
+                    document["installed"][component]["digest"] = digest
+                    document["validation_images"][component]["update"][
+                        "derived_from"
+                    ] = digest
+            elif problem == "digest":
+                document["components"][component]["digest"] = "sha256:" + "e" * 64
+                if component == "workstation":
+                    document["installed"][component]["digest"] = "sha256:" + "e" * 64
+                    document["validation_images"][component]["update"][
+                        "derived_from"
+                    ] = "sha256:" + "e" * 64
+            elif problem == "ref":
+                entries["index.json"] = entries["index.json"].replace(
+                    component.encode(), b"other"
+                )
+            elif problem == "blob":
+                blob_name = next(name for name in entries if name.startswith("blobs/"))
+                entries[blob_name] = b"corrupt"
+            path.write_text(json.dumps(document))
 
         def zipped(entries):
             buffer = io.BytesIO()
@@ -799,14 +1189,22 @@ class ReleasePipelineTests(unittest.TestCase):
                     "core/core-build.json",
                     "fixture-B.json",
                 )
+                + tuple(item["path"] for item in document["artifacts"].values())
             }
         )
         core_zip = zipped(files)
+        bundles = {10: candidate_zip, 11: core_zip}
+        for identifier, component in ((12, "workstation"), (13, "installer")):
+            if component in layouts:
+                bundles[identifier] = zipped(layouts[component])
         metadata = []
-        for identifier, name, data in (
-            (10, "release-candidate", candidate_zip),
-            (11, "core-oci", core_zip),
-        ):
+        for identifier, data in bundles.items():
+            name = {
+                10: "release-candidate",
+                11: "core-oci",
+                12: "workstation-oci",
+                13: "installer-oci",
+            }[identifier]
             metadata.append(
                 {
                     "id": identifier,
@@ -823,11 +1221,25 @@ class ReleasePipelineTests(unittest.TestCase):
             )
         if fault == "zip":
             core_zip = core_zip[:-1] + bytes([core_zip[-1] ^ 1])
+            bundles[11] = core_zip
         elif fault == "missing":
             metadata.pop()
         elif fault == "rebound":
             metadata[-1]["workflow_run"]["id"] = 124
-        output = self.tmp_path / f"fetched-{fault or 'success'}"
+        if fault and ":" in fault:
+            component, problem = fault.split(":")
+            identifier = {"workstation": 12, "installer": 13}[component]
+            if problem == "zip":
+                bundles[identifier] += b"bad"
+            elif problem == "missing":
+                metadata = [item for item in metadata if item["id"] != identifier]
+            elif problem == "duplicate":
+                metadata.append(
+                    copy.deepcopy(
+                        next(item for item in metadata if item["id"] == identifier)
+                    )
+                )
+        output = self.tmp_path / f"fetched-{selection}-{fault or 'success'}"
         args = [
             "release_pipeline",
             "fetch-candidate",
@@ -867,6 +1279,16 @@ class ReleasePipelineTests(unittest.TestCase):
                 self.assertEqual(
                     argv[-1], "repos/owner/repo/actions/runs/123/artifacts?per_page=100"
                 )
+                self.assertLessEqual(
+                    len(
+                        [
+                            path
+                            for path in self.tmp_path.iterdir()
+                            if path.is_dir() and path.name.startswith("tmp")
+                        ]
+                    ),
+                    1,
+                )
                 return mock.Mock(stdout=json.dumps([{"artifacts": metadata}]))
             if argv[0] == "git":
                 return mock.Mock(stdout="a" * 40 + "\n" if "rev-parse" in argv else "")
@@ -878,10 +1300,17 @@ class ReleasePipelineTests(unittest.TestCase):
 
         def popen(argv, **kwargs):
             identifier = int(argv[-1].split("/")[-2])
-            self.assertIn(identifier, (10, 11))
-            events.append("candidate-download" if identifier == 10 else "core-download")
+            self.assertIn(identifier, bundles)
+            events.append(
+                {
+                    10: "candidate-download",
+                    11: "core-download",
+                    12: "workstation-download",
+                    13: "installer-download",
+                }[identifier]
+            )
             process = mock.MagicMock()
-            process.stdout = io.BytesIO(candidate_zip if identifier == 10 else core_zip)
+            process.stdout = io.BytesIO(bundles[identifier])
             process.wait.return_value = 0
             process.__enter__.return_value = process
             processes.append(process)
@@ -917,6 +1346,59 @@ class ReleasePipelineTests(unittest.TestCase):
             {"schema_version": 2, "selection": "core", "read_only": True},
         )
         self.assertEqual(events, ["candidate-download", "signature", "core-download"])
+
+    def test_multiedition_fetch_real_zips_and_read_only_selection(self):
+        for selection in ("workstation", "all"):
+            with self.subTest(selection=selection):
+                result, stdout, stderr, events = self.fetch_core_artifact(
+                    selection=selection
+                )
+                self.assertEqual(result, 0, stderr)
+                self.assertEqual(
+                    json.loads(stdout),
+                    {"schema_version": 2, "selection": selection, "read_only": True},
+                )
+                self.assertEqual(
+                    events,
+                    [
+                        "candidate-download",
+                        "signature",
+                        "core-download",
+                        "workstation-download",
+                        "installer-download",
+                    ],
+                )
+
+    def test_multiedition_fetch_rejects_component_and_transport_faults(self):
+        for component in ("workstation", "installer"):
+            for problem in ("missing", "duplicate", "zip", "ref", "blob", "digest") + (
+                ("prefix", "base", "metadata", "labels")
+                if component == "workstation"
+                else ()
+            ):
+                with self.subTest(component=component, problem=problem):
+                    result, stdout, _, _ = self.fetch_core_artifact(
+                        f"{component}:{problem}", selection="all"
+                    )
+                    self.assertEqual(result, 1)
+                    self.assertEqual(stdout, "")
+
+    def test_multiedition_fetch_authentication_guards_precede_oci_downloads(self):
+        for selection in ("workstation", "all"):
+            for fault in (
+                "signature",
+                "missing-context",
+                "proof",
+                "synthetic",
+                "reused",
+            ):
+                with self.subTest(selection=selection, fault=fault):
+                    result, stdout, _, events = self.fetch_core_artifact(
+                        fault, selection=selection
+                    )
+                    self.assertEqual(result, 1)
+                    self.assertEqual(stdout, "")
+                    self.assertNotIn("core-download", events)
 
     def test_core_fetch_rejects_unbound_or_invalid_oci_before_success(self):
         for fault, error in (
