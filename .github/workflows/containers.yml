@@ -99,6 +99,7 @@ jobs:
     permissions: {contents: read, packages: read}
     outputs:
       digest: '${{ steps.select.outputs.digest }}'
+      reused: '${{ steps.select.outputs.reused }}'
       image_id: '${{ steps.save.outputs.image_id }}'
       archive_sha256: '${{ steps.save.outputs.archive_sha256 }}'
       fingerprint: '${{ steps.hash.outputs.fingerprint }}'
@@ -198,9 +199,18 @@ jobs:
           set-host: true
           daemon-config: '{"features":{"containerd-snapshotter":true}}'
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Fetch verified canonical core OCI layout
+        id: fetch-core-oci
+        if: inputs.channel == 'testing' && needs.core.outputs.reused != 'true'
+        env:
+          GH_TOKEN: '${{ github.token }}'
+          EXPECTED_DIGEST: '${{ needs.core.outputs.built_oci_manifest_digest }}'
+        run: python3 .github/scripts/workflow/oci_layout.py fetch-core --repository "$GITHUB_REPOSITORY" --run-id "$GITHUB_RUN_ID" --layout "$RUNNER_TEMP/core-oci" --expected-digest "$EXPECTED_DIGEST"
       - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        if: inputs.channel != 'testing' || needs.core.outputs.reused == 'true'
         with: {name: core-image}
       - name: Load core image
+        if: inputs.channel != 'testing' || needs.core.outputs.reused == 'true'
         env:
           IMAGE: '${{ needs.metadata.outputs.core_image }}'
           ARCHIVE: core-image.tar
@@ -221,8 +231,9 @@ jobs:
           no-cache: '${{ inputs.force_core || github.event_name == ''schedule'' }}'
           cache-from: type=gha,scope=workstation-${{ needs.metadata.outputs.fedora_version }}-${{ runner.arch }}
           cache-to: type=gha,scope=workstation-${{ needs.metadata.outputs.fedora_version }}-${{ runner.arch }},mode=max
+          build-contexts: '${{ inputs.channel == ''testing'' && needs.core.outputs.reused != ''true'' && format(''luminusos-core-context.invalid/core=oci-layout://{0}/core-oci@{1}'', runner.temp, needs.core.outputs.built_oci_manifest_digest) || '''' }}'
           build-args: |
-            core_image=${{ needs.metadata.outputs.core_image }}
+            core_image=${{ inputs.channel == 'testing' && needs.core.outputs.reused != 'true' && 'luminusos-core-context.invalid/core' || needs.metadata.outputs.core_image }}
             fedora_bootc_base=quay.io/fedora/fedora-bootc:${{ needs.metadata.outputs.fedora_version }}@${{ needs.metadata.outputs.fedora_bootc_digest }}
             fedora_version=${{ needs.metadata.outputs.fedora_version }}
             fedora_bootc_digest=${{ needs.metadata.outputs.fedora_bootc_digest }}
@@ -243,9 +254,16 @@ jobs:
         env:
           IMAGE: '${{ needs.metadata.outputs.workstation_image }}'
         run: python3 .github/scripts/workflow/oci_layout.py export --image "$IMAGE" --layout workstation-oci --ref workstation --docker-host "${DOCKER_HOST:?Docker setup did not expose its socket}"
+      - name: Verify declared core ancestry
+        id: check-core-ancestry
+        if: inputs.channel == 'testing' && needs.core.outputs.reused != 'true' && steps.export-workstation-oci.outcome == 'success'
+        env:
+          CORE_DIGEST: '${{ needs.core.outputs.built_oci_manifest_digest }}'
+          WORKSTATION_DIGEST: '${{ steps.export-workstation-oci.outputs.manifest_digest }}'
+        run: python3 .github/scripts/workflow/oci_layout.py ancestry --core-layout "$RUNNER_TEMP/core-oci" --layout workstation-oci --core-digest "$CORE_DIGEST" --expected-digest "$WORKSTATION_DIGEST"
       - name: Upload built workstation OCI layout
         id: upload-workstation-oci
-        if: steps.export-workstation-oci.outcome == 'success'
+        if: success() && steps.export-workstation-oci.outcome == 'success' && (needs.core.outputs.reused == 'true' || steps.check-core-ancestry.outcome == 'success')
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with: {name: workstation-oci, path: workstation-oci/, compression-level: 0, if-no-files-found: error}
       - name: Save workstation image archive

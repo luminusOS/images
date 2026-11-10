@@ -5,10 +5,12 @@ import importlib.util
 import io
 import json
 import os
+import shutil
 import subprocess
 import tarfile
 import tempfile
 import unittest
+import zipfile
 from pathlib import Path
 from unittest import mock
 
@@ -20,6 +22,11 @@ SPEC = importlib.util.spec_from_file_location(
 )
 oci = importlib.util.module_from_spec(SPEC)
 SPEC.loader.exec_module(oci)
+PIPELINE_SPEC = importlib.util.spec_from_file_location(
+    "release_pipeline", Path(oci.__file__).with_name("release_pipeline.py")
+)
+pipeline = importlib.util.module_from_spec(PIPELINE_SPEC)
+PIPELINE_SPEC.loader.exec_module(pipeline)
 
 MANIFEST = "application/vnd.oci.image.manifest.v1+json"
 CONFIG = "application/vnd.oci.image.config.v1+json"
@@ -88,6 +95,467 @@ def sample(root):
 
 
 class OciLayoutTests(unittest.TestCase):
+    def run_cli(self, *arguments):
+        output = self.root.parent / "cli-outputs"
+        output.write_text("unchanged=true\n")
+        with (
+            mock.patch.object(oci.sys, "argv", ["oci_layout", *map(str, arguments)]),
+            mock.patch.dict(os.environ, {"GITHUB_OUTPUT": str(output)}),
+            mock.patch.object(oci.sys, "stdout", new_callable=io.StringIO) as stdout,
+            mock.patch.object(oci.sys, "stderr", new_callable=io.StringIO) as stderr,
+        ):
+            result = oci.main()
+        return result, stdout.getvalue(), stderr.getvalue(), output.read_text()
+
+    def test_fetch_core_cli_delegates_download_and_checks_real_layout(self):
+        destination = self.root.parent / "core-oci"
+        before = set(self.root.parent.iterdir())
+        buffer = io.BytesIO()
+        with zipfile.ZipFile(buffer, "w") as archive:
+            for path in self.root.rglob("*"):
+                if path.is_file():
+                    archive.writestr(
+                        path.relative_to(self.root).as_posix(), path.read_bytes()
+                    )
+        raw = buffer.getvalue()
+        artifact = {
+            "id": 456,
+            "name": "core-oci",
+            "expired": False,
+            "workflow_run": {"id": 123},
+            "size_in_bytes": len(raw),
+            "digest": "sha256:" + hashlib.sha256(raw).hexdigest(),
+        }
+
+        def command(argv, **kwargs):
+            self.assertEqual(
+                argv,
+                [
+                    "gh",
+                    "api",
+                    "--paginate",
+                    "--slurp",
+                    "repos/owner/repo/actions/runs/123/artifacts?per_page=100",
+                ],
+            )
+            return mock.Mock(stdout=json.dumps([{"artifacts": [artifact]}]))
+
+        process = mock.MagicMock()
+        process.__enter__.return_value = process
+        process.stdout = io.BytesIO(raw)
+        process.wait.return_value = 0
+
+        with (
+            mock.patch.dict(oci.sys.modules, {"release_pipeline": pipeline}),
+            mock.patch.object(pipeline, "download", wraps=pipeline.download) as fetch,
+            mock.patch.object(pipeline, "authorize_run") as authorize,
+            mock.patch.object(pipeline.subprocess, "run", side_effect=command),
+            mock.patch.object(
+                pipeline.subprocess, "Popen", return_value=process
+            ) as stream,
+        ):
+            result, stdout, stderr, output = self.run_cli(
+                "fetch-core",
+                "--repository",
+                "owner/repo",
+                "--run-id",
+                123,
+                "--layout",
+                destination,
+                "--expected-digest",
+                self.expected,
+            )
+        self.assertEqual(result, 0, stderr)
+        fetch.assert_called_once()
+        self.assertEqual(fetch.call_args.args[:3], ("owner/repo", 123, "core-oci"))
+        stream.assert_called_once_with(
+            ["gh", "api", "repos/owner/repo/actions/artifacts/456/zip"],
+            stdout=subprocess.PIPE,
+        )
+        authorize.assert_not_called()
+        self.assertEqual(json.loads(stdout), {"manifest_digest": self.expected})
+        self.assertEqual(output, f"unchanged=true\nmanifest_digest={self.expected}\n")
+        self.assertEqual(oci.manifest_digest(destination, "core"), self.expected)
+        self.assertEqual(
+            set(self.root.parent.iterdir()) - before,
+            {destination, self.root.parent / "cli-outputs"},
+        )
+
+    def test_fetch_core_cli_rejects_expected_digest_before_download(self):
+        for expected in ("", "sha256:" + "A" * 64, "sha256:bad", "bad\ninjected=true"):
+            with (
+                self.subTest(expected=expected),
+                mock.patch.dict(oci.sys.modules, {"release_pipeline": pipeline}),
+                mock.patch.object(pipeline, "download") as download,
+            ):
+                result, stdout, stderr, output = self.run_cli(
+                    "fetch-core",
+                    "--repository",
+                    "owner/repo",
+                    "--run-id",
+                    123,
+                    "--layout",
+                    self.root.parent / "core-oci",
+                    "--expected-digest",
+                    expected,
+                )
+                self.assertEqual(result, 1)
+                self.assertIn("invalid expected OCI digest", stderr)
+                self.assertEqual(stdout, "")
+                self.assertEqual(output, "unchanged=true\n")
+                download.assert_not_called()
+
+    def test_fetch_core_cli_cleans_failure_and_never_publishes_partial_layout(self):
+        for fault in ("digest", "download", "invalid-layout"):
+            with self.subTest(fault=fault):
+                destination = self.root.parent / "core-oci"
+                before = set(self.root.parent.iterdir())
+
+                def download(repository, run_id, name, output, fault=fault):
+                    shutil.copytree(self.root, output)
+                    if fault == "download":
+                        raise ValueError("artifact run binding mismatch")
+                    if fault == "invalid-layout":
+                        (output / "oci-layout").write_text("{}")
+
+                with (
+                    mock.patch.dict(oci.sys.modules, {"release_pipeline": pipeline}),
+                    mock.patch.object(pipeline, "download", side_effect=download),
+                ):
+                    result, stdout, stderr, output = self.run_cli(
+                        "fetch-core",
+                        "--repository",
+                        "owner/repo",
+                        "--run-id",
+                        123,
+                        "--layout",
+                        destination,
+                        "--expected-digest",
+                        "sha256:" + "0" * 64 if fault == "digest" else self.expected,
+                    )
+                self.assertEqual(result, 1)
+                self.assertEqual(stdout, "")
+                self.assertEqual(output, "unchanged=true\n")
+                self.assertFalse(destination.exists())
+                self.assertEqual(
+                    set(self.root.parent.iterdir()) - before,
+                    {self.root.parent / "cli-outputs"} - before,
+                )
+                if fault == "digest":
+                    self.assertIn("core OCI manifest digest mismatch", stderr)
+
+    def test_fetch_core_cli_rejects_stale_or_symlinked_destination(self):
+        stale = self.root.parent / "stale"
+        stale.mkdir()
+        alias = self.root.parent / "alias"
+        alias.symlink_to(self.root.parent, target_is_directory=True)
+        for path in (stale, alias / "core-oci", alias):
+            with (
+                self.subTest(path=path),
+                mock.patch.dict(oci.sys.modules, {"release_pipeline": pipeline}),
+                mock.patch.object(pipeline, "download") as download,
+            ):
+                result, stdout, _, output = self.run_cli(
+                    "fetch-core",
+                    "--repository",
+                    "owner/repo",
+                    "--run-id",
+                    123,
+                    "--layout",
+                    path,
+                    "--expected-digest",
+                    self.expected,
+                )
+                self.assertEqual(result, 1)
+                self.assertEqual(stdout, "")
+                self.assertEqual(output, "unchanged=true\n")
+                download.assert_not_called()
+
+    def test_fetch_core_rejects_staged_directory_replacement_at_rename(self):
+        parent = self.root.parent / "handoff" / "requested"
+        parent.mkdir(parents=True)
+        destination = parent / "core-oci"
+        rename = os.rename
+        replacements = []
+
+        def replace_then_rename(source, target, **kwargs):
+            source_fd = kwargs["src_dir_fd"]
+            rename(
+                source, "validated-aside", src_dir_fd=source_fd, dst_dir_fd=source_fd
+            )
+            replacement = Path(f"/proc/self/fd/{source_fd}") / source
+            manifest, _ = sample(replacement)
+            replacements.append(
+                store_manifest(replacement, manifest, encoded(manifest) + b" \n")
+            )
+            rename(source, target, **kwargs)
+
+        with (
+            mock.patch.dict(oci.sys.modules, {"release_pipeline": pipeline}),
+            mock.patch.object(
+                pipeline,
+                "download",
+                side_effect=lambda repo, run, name, output: shutil.copytree(
+                    self.root, output
+                ),
+            ),
+            mock.patch.object(
+                oci.os, "rename", side_effect=replace_then_rename
+            ) as handoff,
+        ):
+            result, stdout, _, output = self.run_cli(
+                "fetch-core",
+                "--repository",
+                "owner/repo",
+                "--run-id",
+                123,
+                "--layout",
+                destination,
+                "--expected-digest",
+                self.expected,
+            )
+        handoff.assert_called_once()
+        self.assertNotEqual(replacements[0], self.expected)
+        self.assertEqual(result, 1)
+        self.assertEqual(stdout, "")
+        self.assertEqual(output, "unchanged=true\n")
+        self.assertEqual(oci.manifest_digest(destination, "core"), replacements[0])
+
+    def test_fetch_core_rejects_parent_relocation_at_rename_without_unsafe_cleanup(
+        self,
+    ):
+        sandbox = self.root.parent / "handoff"
+        parent = sandbox / "requested"
+        parent.mkdir(parents=True)
+        moved = sandbox / "moved"
+        destination = parent / "core-oci"
+        rename = os.rename
+        unrelated = []
+
+        def relocate_then_rename(source, target, **kwargs):
+            temporary_name = Path(
+                os.readlink(f"/proc/self/fd/{kwargs['src_dir_fd']}")
+            ).name
+            rename(parent, moved)
+            parent.mkdir()
+            replacement = parent / temporary_name
+            replacement.mkdir()
+            sentinel = replacement / "unrelated"
+            sentinel.write_text("preserve\n")
+            unrelated.append(sentinel)
+            rename(source, target, **kwargs)
+
+        with (
+            mock.patch.dict(oci.sys.modules, {"release_pipeline": pipeline}),
+            mock.patch.object(
+                pipeline,
+                "download",
+                side_effect=lambda repo, run, name, output: shutil.copytree(
+                    self.root, output
+                ),
+            ),
+            mock.patch.object(
+                oci.os, "rename", side_effect=relocate_then_rename
+            ) as handoff,
+        ):
+            result, stdout, _, output = self.run_cli(
+                "fetch-core",
+                "--repository",
+                "owner/repo",
+                "--run-id",
+                123,
+                "--layout",
+                destination,
+                "--expected-digest",
+                self.expected,
+            )
+        handoff.assert_called_once()
+        self.assertEqual(result, 1)
+        self.assertEqual(stdout, "")
+        self.assertEqual(output, "unchanged=true\n")
+        self.assertEqual(unrelated[0].read_text(), "preserve\n")
+        self.assertFalse(destination.exists())
+        self.assertEqual(oci.manifest_digest(moved / "core-oci", "core"), self.expected)
+
+    def ancestry_fixture(
+        self, core_rootfs=None, workstation_rootfs=None, shorter=False
+    ):
+        child = self.root.parent / "workstation-oci"
+        manifest, _ = sample(child)
+        config = json.loads(self.blob_path(self.manifest["config"]).read_bytes())
+        core_config = copy.deepcopy(config)
+        if core_rootfs is not None:
+            core_config["rootfs"] = core_rootfs
+        if shorter:
+            self.manifest["layers"] *= 2
+            core_config["rootfs"]["diff_ids"] *= 2
+        self.manifest["config"] = blob(self.root, encoded(core_config), CONFIG)
+        core_digest = store_manifest(self.root, self.manifest)
+        if not shorter:
+            manifest["layers"] *= 2
+            config["rootfs"]["diff_ids"] *= 2
+        if workstation_rootfs is not None:
+            config["rootfs"] = workstation_rootfs
+        manifest["config"] = blob(child, encoded(config), CONFIG)
+        child_digest = store_manifest(child, manifest)
+        index = json.loads((child / "index.json").read_bytes())
+        index["manifests"][0]["annotations"][REF] = "workstation"
+        (child / "index.json").write_bytes(encoded(index))
+        return child, core_digest, child_digest
+
+    def test_ancestry_cli_accepts_declared_core_prefix(self):
+        child, core_digest, child_digest = self.ancestry_fixture()
+        result, stdout, stderr, output = self.run_cli(
+            "ancestry",
+            "--core-layout",
+            self.root,
+            "--layout",
+            child,
+            "--core-digest",
+            core_digest,
+            "--expected-digest",
+            child_digest,
+        )
+        self.assertEqual(result, 0, stderr)
+        self.assertEqual(json.loads(stdout), {"declared_diff_ids_prefix": "true"})
+        self.assertEqual(output, "unchanged=true\ndeclared_diff_ids_prefix=true\n")
+
+    def test_workflow_ancestry_command_runs_real_cli_before_success_output(self):
+        child, core_digest, child_digest = self.ancestry_fixture()
+        workspace = self.root.parent / "workspace"
+        workspace.mkdir()
+        shutil.copytree(child, workspace / "workstation-oci")
+        runner_temp = self.root.parent / "runner-temp"
+        runner_temp.mkdir()
+        shutil.copytree(self.root, runner_temp / "core-oci")
+        data = yaml.safe_load(
+            (
+                Path(oci.__file__).parents[3] / ".github/workflows/containers.yml"
+            ).read_text()
+        )
+        step = next(
+            step
+            for step in data["jobs"]["workstation"]["steps"]
+            if step.get("id") == "check-core-ancestry"
+        )
+        command = step["run"].replace(
+            ".github/scripts/workflow/oci_layout.py", str(Path(oci.__file__).absolute())
+        )
+        output = workspace / "process-output"
+        for expected, status in ((core_digest, 0), ("sha256:" + "0" * 64, 1)):
+            with self.subTest(expected=expected):
+                output.write_text("unchanged=true\n")
+                result = subprocess.run(
+                    ["bash", "-e", "-o", "pipefail", "-c", command],
+                    cwd=workspace,
+                    env=os.environ
+                    | {
+                        "GITHUB_WORKSPACE": str(workspace),
+                        "RUNNER_TEMP": str(runner_temp),
+                        "CORE_DIGEST": expected,
+                        "WORKSTATION_DIGEST": child_digest,
+                        "GITHUB_OUTPUT": str(output),
+                    },
+                    capture_output=True,
+                    text=True,
+                    check=False,
+                )
+                self.assertEqual(result.returncode, status, result.stderr)
+                if status:
+                    self.assertEqual(result.stdout, "")
+                    self.assertEqual(output.read_text(), "unchanged=true\n")
+                else:
+                    self.assertEqual(
+                        json.loads(result.stdout), {"declared_diff_ids_prefix": "true"}
+                    )
+
+    def test_ancestry_cli_rejects_malformed_short_and_different_prefix(self):
+        invalid = (
+            {},
+            {"type": "other", "diff_ids": ["sha256:" + "0" * 64]},
+            {"type": "layers", "diff_ids": "not-an-array"},
+            {"type": "layers", "diff_ids": []},
+            {"type": "layers", "diff_ids": [True]},
+            {"type": "layers", "diff_ids": ["sha256:" + "A" * 64]},
+            {"type": "layers", "diff_ids": ["sha256:" + "0" * 64] * 3},
+            {
+                "type": "layers",
+                "diff_ids": ["sha256:" + "0" * 64] * (oci.MAX_LAYERS + 1),
+            },
+        )
+        for side in ("core", "workstation"):
+            for rootfs in invalid:
+                with self.subTest(side=side, rootfs=rootfs):
+                    child, core_digest, child_digest = self.ancestry_fixture(
+                        **{side + "_rootfs": rootfs}
+                    )
+                    result, stdout, _, output = self.run_cli(
+                        "ancestry",
+                        "--core-layout",
+                        self.root,
+                        "--layout",
+                        child,
+                        "--core-digest",
+                        core_digest,
+                        "--expected-digest",
+                        child_digest,
+                    )
+                    self.assertEqual(result, 1)
+                    self.assertEqual(stdout, "")
+                    self.assertEqual(output, "unchanged=true\n")
+                    self.manifest, self.expected = sample(self.root)
+        for shorter in (False, True):
+            with self.subTest(shorter=shorter):
+                child, core_digest, child_digest = self.ancestry_fixture(
+                    shorter=shorter,
+                    workstation_rootfs=None
+                    if shorter
+                    else {
+                        "type": "layers",
+                        "diff_ids": ["sha256:" + "0" * 64] * 2,
+                    },
+                )
+                result, stdout, stderr, output = self.run_cli(
+                    "ancestry",
+                    "--core-layout",
+                    self.root,
+                    "--layout",
+                    child,
+                    "--core-digest",
+                    core_digest,
+                    "--expected-digest",
+                    child_digest,
+                )
+                self.assertEqual(result, 1)
+                self.assertIn("OCI declared core diff_ids prefix mismatch", stderr)
+                self.assertEqual(stdout, "")
+                self.assertEqual(output, "unchanged=true\n")
+
+    def test_ancestry_cli_rechecks_expected_manifests_and_nofollow(self):
+        child, core_digest, child_digest = self.ancestry_fixture()
+        alias = self.root.parent / "alias"
+        alias.symlink_to(self.root, target_is_directory=True)
+        for core, expected_core, expected_child in (
+            (self.root, "sha256:" + "0" * 64, child_digest),
+            (self.root, core_digest, "sha256:" + "0" * 64),
+            (alias, core_digest, child_digest),
+        ):
+            with self.subTest(core=core, expected_core=expected_core):
+                result, stdout, _, output = self.run_cli(
+                    "ancestry",
+                    "--core-layout",
+                    core,
+                    "--layout",
+                    child,
+                    "--core-digest",
+                    expected_core,
+                    "--expected-digest",
+                    expected_child,
+                )
+                self.assertEqual(result, 1)
+                self.assertEqual(stdout, "")
+                self.assertEqual(output, "unchanged=true\n")
+
     def test_workflow_export_command_uses_real_helper_and_fails_closed(self):
         workflow = yaml.safe_load(
             (
