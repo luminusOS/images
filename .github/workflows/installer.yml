@@ -14,6 +14,7 @@ on:
       target_tag: {type: string, required: true}
       workstation_iso_image: {type: string, required: true}
       workstation_digest: {type: string, default: ""}
+      workstation_built_oci_manifest_digest: {type: string, default: ""}
       workstation_archive_sha256: {type: string, default: ""}
       workstation_image_id: {type: string, default: ""}
     outputs:
@@ -41,6 +42,15 @@ jobs:
           daemon-config: '{"features":{"containerd-snapshotter":true}}'
           set-host: true
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Fetch verified canonical workstation payload
+        id: fetch-workstation-payload
+        if: inputs.channel == 'testing'
+        env:
+          GH_TOKEN: '${{ github.token }}'
+          EXPECTED_DIGEST: '${{ inputs.workstation_built_oci_manifest_digest }}'
+        run: |
+          mkdir -p .test
+          python3 .github/scripts/workflow/oci_layout.py fetch-payload --repository "$GITHUB_REPOSITORY" --run-id "$GITHUB_RUN_ID" --layout .test/payload.oci --expected-digest "$EXPECTED_DIGEST"
       - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         if: inputs.channel == 'testing'
         with: {name: workstation-image}
@@ -55,6 +65,7 @@ jobs:
       - name: Install skopeo
         run: sudo apt-get update && sudo apt-get install -y skopeo
       - name: Export installer payload
+        if: inputs.channel == 'stable'
         env:
           IMAGE: '${{ inputs.workstation_image }}'
           CHANNEL: '${{ inputs.channel }}'

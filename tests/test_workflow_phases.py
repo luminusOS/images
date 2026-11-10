@@ -30,7 +30,10 @@ class WorkflowPhasesTest(unittest.TestCase):
                 self.assertNotIn("secrets", job)
                 self.assertNotIn("GH_TOKEN", job.get("env", {}))
                 for step in job.get("steps", []):
-                    if name == "workstation" and step.get("id") == "fetch-core-oci":
+                    if (name, step.get("id")) in (
+                        ("workstation", "fetch-core-oci"),
+                        ("installer-build", "fetch-workstation-payload"),
+                    ):
                         self.assertEqual(step["env"]["GH_TOKEN"], "${{ github.token }}")
                     else:
                         self.assertNotIn("GH_TOKEN", step.get("env", {}))
@@ -63,7 +66,12 @@ class WorkflowPhasesTest(unittest.TestCase):
             {"contents": "read", "packages": "read"},
         )
         self.assertNotIn("GH_TOKEN", installer.get("env", {}))
-        self.assertNotIn("github.token", str(installer))
+        self.assertNotIn("github.token", str(installer.get("env", {})))
+        self.assertNotIn("github.token", str(installer["jobs"]["build"].get("env", {})))
+        for step in installer["jobs"]["build"]["steps"]:
+            if step.get("id") != "fetch-workstation-payload":
+                self.assertNotIn("github.token", str(step))
+                self.assertNotIn("GH_TOKEN", step.get("env", {}))
         self.assertNotIn("secrets.GITHUB_TOKEN", str(installer))
         auto = workflow("auto-testing.yml")["jobs"]["prepare"]
         self.assertEqual(auto["uses"], "./.github/workflows/publish.yml")
@@ -552,6 +560,59 @@ class WorkflowPhasesTest(unittest.TestCase):
             jobs["installer"]["permissions"],
             {"contents": "read", "packages": "read", "actions": "read"},
         )
+
+    def test_testing_installer_payload_uses_only_authenticated_canonical_workstation(
+        self,
+    ):
+        caller = workflow("containers.yml")["jobs"]["installer"]
+        installer = workflow("installer.yml")
+        inputs = installer.get("on", installer.get(True))["workflow_call"]["inputs"]
+        self.assertEqual(
+            inputs["workstation_built_oci_manifest_digest"],
+            {"type": "string", "default": ""},
+        )
+        self.assertEqual(
+            caller["with"]["workstation_built_oci_manifest_digest"],
+            "${{ needs.workstation.outputs.built_oci_manifest_digest }}",
+        )
+        self.assertEqual(
+            caller["with"]["workstation_digest"], "${{ inputs.workstation_digest }}"
+        )
+        steps = installer["jobs"]["build"]["steps"]
+        fetch = next(
+            step for step in steps if step.get("id") == "fetch-workstation-payload"
+        )
+        self.assertEqual(fetch["if"], "inputs.channel == 'testing'")
+        self.assertEqual(
+            fetch["env"],
+            {
+                "GH_TOKEN": "${{ github.token }}",
+                "EXPECTED_DIGEST": "${{ inputs.workstation_built_oci_manifest_digest }}",
+            },
+        )
+        self.assertEqual(
+            fetch["run"],
+            'mkdir -p .test\npython3 .github/scripts/workflow/oci_layout.py fetch-payload --repository "$GITHUB_REPOSITORY" --run-id "$GITHUB_RUN_ID" --layout .test/payload.oci --expected-digest "$EXPECTED_DIGEST"\n',
+        )
+        export = next(
+            step for step in steps if step.get("name") == "Export installer payload"
+        )
+        self.assertEqual(export["if"], "inputs.channel == 'stable'")
+        self.assertEqual(
+            export["run"],
+            "python3 .github/scripts/workflow/installer_payload.py export",
+        )
+        self.assertEqual(
+            export["env"]["WORKSTATION_DIGEST"], "${{ inputs.workstation_digest }}"
+        )
+        load = next(
+            step for step in steps if step.get("name") == "Load workstation image"
+        )
+        build = next(step for step in steps if step.get("id") == "build")
+        self.assertLess(steps.index(fetch), steps.index(load))
+        self.assertLess(steps.index(fetch), steps.index(build))
+        self.assertNotIn("continue-on-error", fetch)
+        self.assertNotIn("always()", build.get("if", ""))
 
     def test_dispatch_inputs_and_candidate_autodetection(self):
         publish = workflow("publish.yml")
