@@ -556,7 +556,7 @@ flowchart TD
 
 ## Container CI Responsibilities
 
-`.github/workflows/build-containers.yml` (Image Build Validation) is the read-only build validation entry point. `containers.yml` (Image Build Orchestration) resolves metadata and explicitly orchestrates core → workstation → installer. `installer.yml` (Installer Image Build) owns the live-root construction and payload preparation. The installer is a live root for workstation, not a separate edition. Aggregate titles describe operations rather than enumerating editions; leaf jobs identify the image being built. Renaming visible job titles requires migrating any matching required-check contexts in repository protections.
+`.github/workflows/build-containers.yml` (Image Build Validation) is the read-only build validation entry point. Its manual dispatch accepts `build_installer`, a boolean defaulting to `false`; only an explicit manual opt-in enables the installer, and `publish: false` remains enforced. Push and pull-request validation do not enable the installer. `containers.yml` (Image Build Orchestration) resolves metadata and explicitly orchestrates core → workstation → installer. `installer.yml` (Installer Image Build) owns the live-root construction and payload preparation. The installer is a live root for workstation, not a separate edition. Aggregate titles describe operations rather than enumerating editions; leaf jobs identify the image being built. Renaming visible job titles requires migrating any matching required-check contexts in repository protections.
 
 The workflow helpers separate three responsibilities:
 

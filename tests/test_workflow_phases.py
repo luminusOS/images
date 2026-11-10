@@ -11,6 +11,29 @@ def workflow(name):
 
 
 class WorkflowPhasesTest(unittest.TestCase):
+    def test_installer_validation_requires_explicit_boolean_manual_opt_in(self):
+        validation = workflow("build-containers.yml")
+        triggers = validation.get("on", validation.get(True))
+        self.assertEqual(set(triggers), {"push", "pull_request", "workflow_dispatch"})
+        inputs = triggers["workflow_dispatch"]["inputs"]
+        self.assertEqual(set(inputs), {"fedora_version", "build_installer"})
+        self.assertEqual(
+            inputs["build_installer"],
+            {
+                "description": "Build the installer image (validation only, nothing is published)",
+                "type": "boolean",
+                "required": False,
+                "default": False,
+            },
+        )
+        caller = validation["jobs"]["build-containers"]
+        self.assertEqual(
+            caller["with"]["build_installer"],
+            "${{ github.event_name == 'workflow_dispatch' && inputs.build_installer == true }}",
+        )
+        self.assertIs(caller["with"]["publish"], False)
+        self.assertEqual(caller["with"]["builder_mode"], "local")
+
     def test_artifact_read_permissions_cover_only_approved_jobs_and_callers(self):
         containers = workflow("containers.yml")
         installer = workflow("installer.yml")
