@@ -22,6 +22,7 @@ jobs:
     permissions:
       contents: read
       packages: read
+      actions: read
     uses: ./.github/workflows/containers.yml
     with:
       fedora_version: ${{ inputs.fedora_version || '' }}

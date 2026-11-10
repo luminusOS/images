@@ -993,7 +993,8 @@ class ContainerWorkflowTests(unittest.TestCase):
         workflow = self.load_workflow("build-containers.yml")
         caller = workflow["jobs"]["build-containers"]
         self.assertEqual(
-            caller["permissions"], {"contents": "read", "packages": "read"}
+            caller["permissions"],
+            {"contents": "read", "packages": "read", "actions": "read"},
         )
         self.assertNotIn("secrets", caller)
         self.assertEqual(caller["with"]["publish"], "false")
