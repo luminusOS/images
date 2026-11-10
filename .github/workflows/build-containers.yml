@@ -11,6 +11,11 @@ on:
         description: "Fedora version to build (validation only, nothing is published)"
         required: false
         default: ""
+      build_installer:
+        description: "Build the installer image (validation only, nothing is published)"
+        type: boolean
+        required: false
+        default: false
 
 concurrency:
   group: build-containers-${{ github.ref }}-${{ github.event_name }}
@@ -28,3 +33,4 @@ jobs:
       fedora_version: ${{ inputs.fedora_version || '' }}
       builder_mode: local
       publish: false
+      build_installer: ${{ github.event_name == 'workflow_dispatch' && inputs.build_installer == true }}
