@@ -141,8 +141,8 @@ class ConfigurationTests(unittest.TestCase):
         for pattern in (
             r"^FEDORA_BOOTC_DIGEST=sha256:[0-9a-f]{64}$",
             r"^AURORA_SHELL_SHA256=[0-9a-f]{64}$",
-            r"^SIRIUS_VERSION=[0-9]+\.[0-9]+\.[0-9]+$",
-            r"^SIRIUS_RPM_VERSION=[0-9]+\.[0-9]+\.[0-9]+$",
+            r"^SIRIUS_VERSION=[0-9]+\.[0-9]+\.[0-9]+(-rc\.[0-9]+)?$",
+            r"^SIRIUS_RPM_VERSION=[0-9]+\.[0-9]+\.[0-9]+(~rc\.[0-9]+)?$",
             r"^ELASTIC_SWAP_VERSION=[0-9]+\.[0-9]+\.[0-9]+$",
             r"^ELASTIC_SWAP_SHA256=[0-9a-f]{64}$",
         ):

@@ -75,7 +75,9 @@ def metadata(env, config, supported, base_digest, today, sequence=0):
     checksum = env.get("SIRIUS_SHA256", "") if override else config["SIRIUS_SHA256"]
     if not re.fullmatch(r"[0-9a-f]{64}", checksum):
         raise ValueError("sirius_version override requires sirius_sha256")
-    if override and not re.fullmatch(r"[0-9]+\.[0-9]+\.[0-9]+", override):
+    if override and not re.fullmatch(
+        r"[0-9]+\.[0-9]+\.[0-9]+(?:-rc\.[0-9]+)?", override
+    ):
         raise ValueError("invalid sirius_version")
     tag = f"testing-{version}"
     target = fedora if config["UPDATE_CHANNEL"] == "stable" else f"testing-{fedora}"
@@ -96,7 +98,8 @@ def metadata(env, config, supported, base_digest, today, sequence=0):
         "workstation_image": workstation,
         "workstation_iso_image": f"{registry}/luminusos-workstation:{candidate_tag}-iso",
         "sirius_version": override or config["SIRIUS_VERSION"],
-        "sirius_rpm_version": override or config["SIRIUS_RPM_VERSION"],
+        "sirius_rpm_version": override.replace("-rc.", "~rc.")
+        or config["SIRIUS_RPM_VERSION"],
         "sirius_sha256": checksum,
         "publish_channel": str(fedora == supported["LATEST_RELEASE"]).lower(),
     }

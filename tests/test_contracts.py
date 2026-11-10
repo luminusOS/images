@@ -133,7 +133,7 @@ class RepositoryContracts(unittest.TestCase):
                 publish, re.compile(rf'{key}:\n(?:.*\n){{0,3}}\s*default: ""')
             )
         self.assertIn(
-            '"sirius_rpm_version": override or config["SIRIUS_RPM_VERSION"]', metadata
+            '"sirius_rpm_version": override.replace("-rc.", "~rc.")', metadata
         )
         self.assertIn("sirius_version override requires sirius_sha256", metadata)
         self.assertIn("publish: false", build)
