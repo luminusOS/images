@@ -1,4 +1,5 @@
 import copy
+import hashlib
 import importlib.util
 import io
 import json
@@ -51,6 +52,26 @@ def sample(tmp_path):
     path.write_text(json.dumps(document))
     (tmp_path / "candidate.json.sig").write_text("signature")
     return path, key, document
+
+
+def artifact_sample():
+    buffer = io.BytesIO()
+    with zipfile.ZipFile(buffer, "w") as archive:
+        archive.writestr("candidate.json", "data")
+    data = buffer.getvalue()
+    return data, {
+        "name": "release-candidate",
+        "id": 10,
+        "expired": False,
+        "size_in_bytes": len(data),
+        "digest": "sha256:" + hashlib.sha256(data).hexdigest(),
+        "workflow_run": {
+            "id": 123,
+            "repository_id": 456,
+            "head_repository_id": 456,
+            "head_sha": "a" * 40,
+        },
+    }
 
 
 def run_document():
@@ -915,31 +936,19 @@ class ReleasePipelineTests(unittest.TestCase):
 
     def test_download_streams_authenticated_gh_artifact(self):
         tmp_path = self.tmp_path
-        archive = tmp_path / "input.zip"
-        with zipfile.ZipFile(archive, "w") as z:
-            z.writestr("candidate.json", "data")
-        data = archive.read_bytes()
-        result = mock.Mock(
-            stdout=json.dumps(
-                [
-                    {
-                        "artifacts": [
-                            {
-                                "name": "release-candidate",
-                                "id": 10,
-                                "expired": False,
-                                "size_in_bytes": len(data),
-                            }
-                        ]
-                    }
-                ]
-            )
-        )
+        data, artifact = artifact_sample()
+        result = mock.Mock(stdout=json.dumps([{"artifacts": [artifact]}]))
         process = mock.MagicMock()
         process.stdout = io.BytesIO(data)
         process.wait.return_value = 0
         process.__enter__.return_value = process
         with (
+            mock.patch.object(pipeline, "CHUNK_SIZE", 7),
+            mock.patch.object(
+                pipeline.hashlib,
+                "file_digest",
+                side_effect=AssertionError("ZIP reread"),
+            ),
             mock.patch.object(pipeline.subprocess, "run", return_value=result),
             mock.patch.object(
                 pipeline.subprocess, "Popen", return_value=process
@@ -954,18 +963,145 @@ class ReleasePipelineTests(unittest.TestCase):
         ]
         assert popen.call_args.kwargs["stdout"] == subprocess.PIPE
 
+    def test_download_rejects_digest_or_size_mismatch_before_extraction(self):
+        data, artifact = artifact_sample()
+        existing_names = {path.name for path in self.tmp_path.iterdir()}
+        for changes, payload in (
+            ({"digest": "sha256:" + "0" * 64}, data),
+            ({"size_in_bytes": len(data) + 1}, data),
+            ({"size_in_bytes": len(data) - 1}, data),
+            ({}, data[:-1]),
+            ({}, data + b"extra"),
+            ({}, b""),
+        ):
+            with self.subTest(changes=changes, actual_size=len(payload)):
+                process = mock.MagicMock()
+                process.stdout = io.BytesIO(payload)
+                process.wait.return_value = 0
+                process.__enter__.return_value = process
+                result = mock.Mock(
+                    stdout=json.dumps([{"artifacts": [artifact | changes]}])
+                )
+                with (
+                    mock.patch.object(pipeline.subprocess, "run", return_value=result),
+                    mock.patch.object(
+                        pipeline.subprocess, "Popen", return_value=process
+                    ),
+                    mock.patch.object(pipeline, "extract_archive") as extract,
+                    self.assertRaises(ValueError),
+                ):
+                    pipeline.download(
+                        "owner/repo", 123, "release-candidate", self.tmp_path / "out"
+                    )
+                extract.assert_not_called()
+                process.kill.assert_called_once()
+                process.wait.assert_called()
+                self.assertFalse(any((self.tmp_path / "out").iterdir()))
+                self.assertEqual(
+                    {path.name for path in self.tmp_path.iterdir()},
+                    existing_names | {"out"},
+                )
+
+    def test_download_rejects_invalid_artifact_metadata_before_streaming(self):
+        _, artifact = artifact_sample()
+        cases = []
+        for field, values in (
+            (
+                "digest",
+                [
+                    None,
+                    True,
+                    1,
+                    "",
+                    "sha512:" + "a" * 64,
+                    "sha256:" + "A" * 64,
+                    "sha256:" + "a" * 63,
+                    "sha256:" + "a" * 65,
+                    "sha256:" + "a" * 64 + "\n",
+                ],
+            ),
+            ("id", [None, True, 0, -1, "10"]),
+            ("size_in_bytes", [None, True, 0, -1, "1"]),
+            ("expired", [None, 0, "false", True]),
+            ("workflow_run", [None, [], {}, {"id": True}, {"id": "123"}, {"id": 124}]),
+        ):
+            for value in values:
+                cases.append(artifact | {field: value})
+            changed = dict(artifact)
+            changed.pop(field)
+            cases.append(changed)
+        for index, changed in enumerate(cases):
+            output = self.tmp_path / f"out-{index}"
+            with self.subTest(artifact=changed):
+                result = mock.Mock(stdout=json.dumps([{"artifacts": [changed]}]))
+                with (
+                    mock.patch.object(pipeline.subprocess, "run", return_value=result),
+                    mock.patch.object(pipeline.subprocess, "Popen") as popen,
+                    mock.patch.object(pipeline, "extract_archive") as extract,
+                    self.assertRaises(ValueError),
+                ):
+                    pipeline.download("owner/repo", 123, "release-candidate", output)
+                popen.assert_not_called()
+                extract.assert_not_called()
+                self.assertFalse(output.exists())
+
+    def test_download_rejects_invalid_paginated_metadata(self):
+        _, artifact = artifact_sample()
+        for pages in (
+            None,
+            {},
+            [],
+            [None],
+            [{"artifacts": None}],
+            [{"artifacts": {}}],
+            [{"artifacts": [None]}],
+            [{"artifacts": [artifact, artifact]}],
+        ):
+            with self.subTest(pages=pages):
+                with (
+                    mock.patch.object(
+                        pipeline.subprocess,
+                        "run",
+                        return_value=mock.Mock(stdout=json.dumps(pages)),
+                    ),
+                    mock.patch.object(pipeline.subprocess, "Popen") as popen,
+                    mock.patch.object(pipeline, "extract_archive") as extract,
+                    self.assertRaises(ValueError),
+                ):
+                    pipeline.download(
+                        "owner/repo", 123, "release-candidate", self.tmp_path / "out"
+                    )
+                popen.assert_not_called()
+                extract.assert_not_called()
+
+    def test_download_stops_at_declared_size_before_global_limit(self):
+        data, artifact = artifact_sample()
+        result = mock.Mock(
+            stdout=json.dumps([{"artifacts": [artifact | {"size_in_bytes": 1}]}])
+        )
+        process = mock.MagicMock()
+        process.stdout = mock.Mock(wraps=io.BytesIO(data))
+        process.__enter__.return_value = process
+        with (
+            mock.patch.object(pipeline, "CHUNK_SIZE", 2),
+            mock.patch.object(pipeline.subprocess, "run", return_value=result),
+            mock.patch.object(pipeline.subprocess, "Popen", return_value=process),
+            mock.patch.object(pipeline, "extract_archive") as extract,
+            self.assertRaisesRegex(ValueError, "declared size"),
+        ):
+            pipeline.download(
+                "owner/repo", 123, "release-candidate", self.tmp_path / "out"
+            )
+        process.stdout.read.assert_called_once_with(2)
+        process.kill.assert_called_once()
+        process.wait.assert_called()
+        extract.assert_not_called()
+
     def test_download_stops_stream_exceeding_limit(self):
         tmp_path = self.tmp_path
+        _, artifact = artifact_sample()
         result = mock.Mock(
-            stdout=json.dumps(
-                [
-                    {
-                        "artifacts": [
-                            {"name": "release-candidate", "id": 10, "size_in_bytes": 1}
-                        ]
-                    }
-                ]
-            )
+            stdout=json.dumps([{"artifacts": [artifact | {"size_in_bytes": 1}]}])
         )
         process = mock.MagicMock()
         process.stdout = io.BytesIO(b"excessive")
