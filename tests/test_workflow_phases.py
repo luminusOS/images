@@ -11,6 +11,148 @@ def workflow(name):
 
 
 class WorkflowPhasesTest(unittest.TestCase):
+    def test_workstation_and_installer_export_in_their_build_daemon(self):
+        for role, filename, job_name in (
+            ("workstation", "containers.yml", "workstation"),
+            ("installer", "installer.yml", "build"),
+        ):
+            with self.subTest(role=role):
+                job = workflow(filename)["jobs"][job_name]
+                steps = job["steps"]
+                build = next(step for step in steps if step.get("id") == "build")
+                export = next(
+                    step for step in steps if step.get("id") == f"export-{role}-oci"
+                )
+                upload = next(
+                    step for step in steps if step.get("id") == f"upload-{role}-oci"
+                )
+                setup = next(
+                    step
+                    for step in steps
+                    if "docker/setup-docker-action@" in step.get("uses", "")
+                )
+                tools = next(
+                    step
+                    for step in steps
+                    if "apt-get install -y skopeo" in step.get("run", "")
+                )
+                self.assertIs(setup["with"]["set-host"], True)
+                self.assertNotIn("if", tools)
+                self.assertEqual(build["with"]["platforms"], "linux/amd64")
+                self.assertIs(build["with"]["load"], True)
+                self.assertIs(build["with"]["push"], False)
+                self.assertEqual(export["env"]["IMAGE"], build["with"]["tags"])
+                self.assertEqual(
+                    export["if"],
+                    "inputs.channel == 'testing' && steps.build.outcome == 'success'",
+                )
+                self.assertEqual(
+                    export["run"],
+                    'python3 .github/scripts/workflow/oci_layout.py export --image "$IMAGE" '
+                    f"--layout {role}-oci --ref {role} "
+                    '--docker-host "${DOCKER_HOST:?Docker setup did not expose its socket}"',
+                )
+                self.assertEqual(
+                    upload["if"], f"steps.export-{role}-oci.outcome == 'success'"
+                )
+                self.assertEqual(
+                    upload["uses"],
+                    "actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9",
+                )
+                self.assertEqual(
+                    upload["with"],
+                    {
+                        "name": f"{role}-oci",
+                        "path": f"{role}-oci/",
+                        "compression-level": 0,
+                        "if-no-files-found": "error",
+                    },
+                )
+                for prerequisite in (setup, tools, build):
+                    self.assertLess(steps.index(prerequisite), steps.index(export))
+                self.assertLess(steps.index(export), steps.index(upload))
+                for step in (build, export, upload):
+                    self.assertNotIn("continue-on-error", step)
+                self.assertEqual(
+                    job["permissions"], {"contents": "read", "packages": "read"}
+                )
+
+    def test_workstation_and_installer_oci_outputs_require_successful_upload(self):
+        containers = workflow("containers.yml")
+        installer = workflow("installer.yml")
+        outer = containers.get("on", containers.get(True))["workflow_call"]["outputs"]
+        inner = installer.get("on", installer.get(True))["workflow_call"]["outputs"]
+        for role, job in (
+            ("workstation", containers["jobs"]["workstation"]),
+            ("installer", installer["jobs"]["build"]),
+        ):
+            for name, source in (
+                ("manifest_digest", f"steps.export-{role}-oci.outputs.manifest_digest"),
+                ("skopeo_version", f"steps.export-{role}-oci.outputs.skopeo_version"),
+                ("artifact_id", f"steps.upload-{role}-oci.outputs.artifact-id"),
+            ):
+                with self.subTest(role=role, output=name):
+                    self.assertEqual(
+                        job["outputs"][f"built_oci_{name}"],
+                        "${{ steps.upload-"
+                        + role
+                        + "-oci.outcome == 'success' && "
+                        + source
+                        + " || '' }}",
+                    )
+                    self.assertEqual(
+                        outer[f"{role}_built_oci_{name}"]["value"],
+                        "${{ jobs." + role + ".outputs.built_oci_" + name + " }}",
+                    )
+                    if role == "installer":
+                        self.assertEqual(
+                            inner[f"built_oci_{name}"]["value"],
+                            "${{ jobs.build.outputs.built_oci_" + name + " }}",
+                        )
+
+    def test_new_oci_artifacts_preserve_legacy_archives_and_installer_selection(self):
+        containers = workflow("containers.yml")
+        caller = containers["jobs"]["installer"]
+        self.assertEqual(caller["uses"], "./.github/workflows/installer.yml")
+        self.assertEqual(caller["needs"], ["metadata", "workstation"])
+        self.assertEqual(
+            caller["if"],
+            "always() && inputs.build_installer && needs.metadata.result == 'success' && (inputs.channel == 'stable' || needs.workstation.result == 'success')",
+        )
+        self.assertEqual(caller["with"]["channel"], "${{ inputs.channel }}")
+        installer = workflow("installer.yml")
+        channel = installer.get("on", installer.get(True))["workflow_call"]["inputs"][
+            "channel"
+        ]
+        self.assertEqual(channel, {"type": "string", "required": True})
+        self.assertEqual(
+            containers["jobs"]["workstation"]["if"], "inputs.channel != 'stable'"
+        )
+        for role, job in (
+            ("workstation", containers["jobs"]["workstation"]),
+            ("installer", installer["jobs"]["build"]),
+        ):
+            with self.subTest(role=role):
+                self.assertEqual(
+                    job["outputs"]["image_id"], "${{ steps.save.outputs.image_id }}"
+                )
+                self.assertEqual(
+                    job["outputs"]["archive_sha256"],
+                    "${{ steps.save.outputs.archive_sha256 }}",
+                )
+                save = next(step for step in job["steps"] if step.get("id") == "save")
+                self.assertEqual(
+                    save["run"],
+                    "python3 .github/scripts/workflow/image_archive.py save",
+                )
+                self.assertEqual(save["env"]["ARCHIVE"], f"{role}-image.tar")
+                self.assertTrue(
+                    any(
+                        step.get("with", {}).get("name") == f"{role}-image"
+                        for step in job["steps"]
+                    )
+                )
+
     def test_core_canonical_artifact_requires_a_successful_testing_build(self):
         core = workflow("containers.yml")["jobs"]["core"]
         steps = core["steps"]
