@@ -1,4 +1,5 @@
 import argparse
+import copy
 import hashlib
 import json
 import math
@@ -9,7 +10,7 @@ import subprocess
 import sys
 import tempfile
 import zipfile
-from contextlib import contextmanager
+from contextlib import ExitStack, contextmanager
 from pathlib import Path
 
 MANIFEST = "application/vnd.oci.image.manifest.v1+json"
@@ -31,6 +32,8 @@ MAX_LAYER_BYTES = 20 * 1024**3
 MAX_LAYERS = 256
 CHUNK_BYTES = 1024 * 1024
 DIRECTORY_FLAGS = os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW | os.O_CLOEXEC
+NEGATIVE_SUBJECT = "io.luminusos.test.negative-subject"
+NEGATIVE_KINDS = ("unsigned", "foreign-key")
 
 
 def require(condition, message):
@@ -67,7 +70,7 @@ def subdirectory(parent, name):
         os.close(descriptor)
 
 
-def contents(parent, name, limit, expected=None, collect=True):
+def contents(parent, name, limit, expected=None, collect=True, sink=None):
     descriptor = os.open(
         name,
         os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK | os.O_CLOEXEC,
@@ -88,6 +91,8 @@ def contents(parent, name, limit, expected=None, collect=True):
                 total <= info.st_size and total <= limit, "OCI file grew during read"
             )
             checksum.update(chunk)
+            if sink is not None:
+                sink.write(chunk)
             if collect:
                 chunks.append(chunk)
         require(total == info.st_size, "OCI file size changed during read")
@@ -232,6 +237,196 @@ def expected_digest(value):
         isinstance(value, str) and DIGEST.fullmatch(value),
         "invalid expected OCI digest",
     )
+
+
+def negative_base(root, ref, expected):
+    expected_digest(expected)
+    require(isinstance(ref, str) and TAG.fullmatch(ref), "invalid OCI ref")
+    raw_index = contents(root, "index.json", MAX_JSON_BYTES)
+    require(checked_manifest(root, ref) == expected, "B OCI manifest digest mismatch")
+    require(
+        contents(root, "index.json", MAX_JSON_BYTES) == raw_index, "B index changed"
+    )
+    index = document(raw_index)
+    require(index["manifests"][0]["digest"] == expected, "B index changed")
+    manifest = blob(root, index["manifests"][0], {MANIFEST}, json_blob=True)
+    require(
+        NEGATIVE_SUBJECT not in manifest.get("annotations", {}),
+        "B already has negative subject annotation",
+    )
+    return index, manifest
+
+
+def negative_documents(index, manifest, kind):
+    require(kind in NEGATIVE_KINDS, "invalid negative subject kind")
+    derived = copy.deepcopy(manifest)
+    derived.setdefault("annotations", {})[NEGATIVE_SUBJECT] = kind
+    raw = json.dumps(derived, separators=(",", ":"), ensure_ascii=True).encode()
+    digest = "sha256:" + hashlib.sha256(raw).hexdigest()
+    result = copy.deepcopy(index)
+    descriptor = result["manifests"][0]
+    descriptor.update(digest=digest, size=len(raw))
+    descriptor["annotations"][REF] = "negative-" + kind
+    return result, raw, digest
+
+
+def checked_negative_subject(source, ref, expected, subject, kind):
+    index, manifest = negative_base(source, ref, expected)
+    wanted_index, raw, digest = negative_documents(index, manifest, kind)
+    require(digest != expected, "negative subject must differ from B")
+    require(
+        checked_manifest(subject, "negative-" + kind) == digest,
+        "negative subject manifest relation mismatch",
+    )
+    require(
+        document(contents(subject, "index.json", MAX_JSON_BYTES)) == wanted_index,
+        "negative subject index relation mismatch",
+    )
+    with (
+        subdirectory(subject, "blobs") as blobs,
+        subdirectory(blobs, "sha256") as hashes,
+    ):
+        require(
+            contents(hashes, digest[7:], MAX_JSON_BYTES) == raw,
+            "negative subject manifest bytes mismatch",
+        )
+        require(
+            set(os.listdir(hashes))
+            == {
+                digest[7:],
+                *(d["digest"][7:] for d in [manifest["config"], *manifest["layers"]]),
+            },
+            "unexpected negative subject blobs",
+        )
+    require(
+        set(os.listdir(subject)) == {"blobs", "index.json", "oci-layout"},
+        "unexpected negative subject files",
+    )
+    with subdirectory(subject, "blobs") as blobs:
+        require(set(os.listdir(blobs)) == {"sha256"}, "unexpected blob directories")
+    return digest
+
+
+def verify_negative_subject(source, ref, expected, subject, kind):
+    """Verify a local byte derivation, not signatures, provenance or runtime state."""
+    with directory(source) as base, directory(subject) as derived:
+        return checked_negative_subject(base, ref, expected, derived, kind)
+
+
+@contextmanager
+def new_oci_file(parent, name):
+    descriptor = os.open(
+        name,
+        os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW | os.O_CLOEXEC,
+        0o600,
+        dir_fd=parent,
+    )
+    with os.fdopen(descriptor, "wb") as stream:
+        yield stream
+
+
+def write_negative_subject(source, destination, index, manifest, kind):
+    derived_index, raw, digest = negative_documents(index, manifest, kind)
+    os.mkdir("blobs", mode=0o700, dir_fd=destination)
+    with subdirectory(destination, "blobs") as blobs:
+        os.mkdir("sha256", mode=0o700, dir_fd=blobs)
+        with subdirectory(blobs, "sha256") as hashes:
+            with (
+                subdirectory(source, "blobs") as source_blobs,
+                subdirectory(source_blobs, "sha256") as source_hashes,
+            ):
+                copied = set()
+                for descriptor in [manifest["config"], *manifest["layers"]]:
+                    name = descriptor["digest"][7:]
+                    if name in copied:
+                        continue
+                    with new_oci_file(hashes, name) as stream:
+                        contents(
+                            source_hashes,
+                            name,
+                            MAX_LAYER_BYTES,
+                            descriptor,
+                            collect=False,
+                            sink=stream,
+                        )
+                    copied.add(name)
+            with new_oci_file(hashes, digest[7:]) as stream:
+                stream.write(raw)
+    for name, raw in (
+        ("index.json", json.dumps(derived_index).encode()),
+        ("oci-layout", contents(source, "oci-layout", MAX_JSON_BYTES)),
+    ):
+        with new_oci_file(destination, name) as stream:
+            stream.write(raw)
+
+
+def derive_negative_subjects(source, ref, expected, unsigned, foreign_key):
+    """Create two local subjects. Failures retain partial directories; never retry over them.
+
+    Neither subject carries signatures. No result is returned until both verify.
+    Files are exclusively created through retained directory FDs, never replaced
+    or cleaned up by path after a failure.
+    """
+    source = safe_path(source)
+    paths = [safe_path(path) for path in (unsigned, foreign_key)]
+    require(paths[0] != paths[1], "negative destinations must differ")
+    for path in paths:
+        require(
+            source != path and source not in path.parents,
+            "destination must be outside B",
+        )
+        require(
+            path.name and not any(c in str(path) for c in ":\r\n\x00"),
+            "invalid OCI destination",
+        )
+    with (
+        directory(source) as base,
+        directory(paths[0].parent) as first_parent,
+        directory(paths[1].parent) as second_parent,
+    ):
+        index, manifest = negative_base(base, ref, expected)
+        parents = (first_parent, second_parent)
+        for parent, path in zip(parents, paths):
+            require(
+                path.name not in os.listdir(parent), "OCI destination must not exist"
+            )
+        with ExitStack() as stack:
+            destinations = []
+            identities = []
+            for parent, path in zip(parents, paths):
+                os.mkdir(path.name, mode=0o700, dir_fd=parent)
+                identity = os.stat(path.name, dir_fd=parent, follow_symlinks=False)
+                destination = stack.enter_context(subdirectory(parent, path.name))
+                require(
+                    os.path.samestat(identity, os.fstat(destination)),
+                    "OCI destination changed",
+                )
+                destinations.append(destination)
+                identities.append(identity)
+            for destination, kind in zip(destinations, NEGATIVE_KINDS):
+                write_negative_subject(base, destination, index, manifest, kind)
+            result = {}
+            for parent, path, destination, identity, kind in zip(
+                parents, paths, destinations, identities, NEGATIVE_KINDS
+            ):
+                with directory(path) as current:
+                    require(
+                        os.path.samestat(os.fstat(current), identity),
+                        "OCI destination changed",
+                    )
+                    result[kind] = checked_negative_subject(
+                        base, ref, expected, current, kind
+                    )
+                with directory(path.parent) as current_parent:
+                    require(
+                        os.path.samestat(os.fstat(current_parent), os.fstat(parent)),
+                        "OCI destination parent changed",
+                    )
+            require(
+                len({expected, *result.values()}) == 3,
+                "negative subject digests must differ",
+            )
+            return result
 
 
 def fetch_core(repository, run_id, layout, expected):
