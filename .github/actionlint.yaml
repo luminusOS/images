@@ -1,3 +1,6 @@
 self-hosted-runner:
   labels:
     - luminusos-validation
+    # GitHub-hosted label absent from actionlint's built-in runner list.
+    # https://github.com/actions/runner-images/issues/14747
+    - ubuntu-26.04
