@@ -7,7 +7,6 @@ on:
       fedora_version: {type: string, required: true}
       sirius_version: {type: string, required: true}
       sirius_rpm_version: {type: string, required: true}
-      sirius_sha256: {type: string, required: true}
       build_version: {type: string, required: true}
       workstation_image: {type: string, required: true}
       image_namespace: {type: string, required: true}
@@ -88,7 +87,6 @@ jobs:
             fedora_version=${{ inputs.fedora_version }}
             sirius_version=${{ inputs.sirius_version }}
             sirius_rpm_version=${{ inputs.sirius_rpm_version }}
-            sirius_sha256=${{ inputs.sirius_sha256 }}
             image_version=${{ inputs.build_version }}
             workstation_image=${{ inputs.workstation_image }}
             workstation_target_image=ghcr.io/${{ inputs.image_namespace }}/luminusos-workstation:${{ inputs.target_tag }}

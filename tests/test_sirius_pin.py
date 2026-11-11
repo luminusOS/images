@@ -13,37 +13,47 @@ PRIMARY_FINGERPRINTS = {
 }
 
 
+def repo_file(name):
+    return (ROOT / f"editions/workstation/files/system/etc/yum.repos.d/{name}.repo").read_text()
+
+
 def pin(name):
     return re.search(rf"^{name}=(.+)$", VERSIONS, re.MULTILINE).group(1)
 
 
 class SiriusPinTests(unittest.TestCase):
-    def test_the_package_comes_from_the_luminus_repository_not_a_github_release(self):
-        self.assertIn(
-            "https://rpm.luminusos.org/${sirius_channel}/${fedora_version}/x86_64/Packages/",
-            INSTALLER,
-        )
-        self.assertNotIn("github.com/luminusOS/sirius/releases", INSTALLER)
+    def test_the_package_comes_from_the_configured_luminus_repository(self):
+        self.assertIn('"sirius-installer-${sirius_rpm_version}"', INSTALLER)
+        for download in ("curl", "wget", "github.com/luminusOS/sirius/releases", "rpm.luminusos.org"):
+            self.assertNotIn(download, INSTALLER)
 
-    def test_the_digest_signature_and_installation_checks_are_all_required(self):
-        install = INSTALLER.index("sha256sum -c -")
-        key = INSTALLER.index("rpmkeys --import")
-        checksig = INSTALLER.index("rpmkeys --checksig")
-        dnf = INSTALLER.index("localpkg_gpgcheck=1")
-        self.assertLess(install, key)
-        self.assertLess(key, checksig)
-        self.assertLess(checksig, dnf)
+    def test_package_and_metadata_signatures_are_never_disabled(self):
         for forbidden in ("--nogpgcheck", "gpgcheck=0", "--nosignature", "--nodigest"):
             self.assertNotIn(forbidden, INSTALLER)
+        for channel in ("luminus", "luminus-testing"):
+            text = repo_file(channel)
+            self.assertIn("gpgcheck=1", text)
+            self.assertIn("repo_gpgcheck=1", text)
+            self.assertNotIn("gpgcheck=0", text)
 
-    def test_release_candidates_use_the_testing_channel_and_final_versions_stable(self):
-        self.assertIn("*-rc.*) sirius_channel=testing", INSTALLER)
-        self.assertIn("*) sirius_channel=stable", INSTALLER)
+    def test_release_candidates_use_the_testing_repository_and_final_versions_stable(self):
+        self.assertIn("*-rc.*) sirius_repo=luminus-testing", INSTALLER)
+        self.assertIn("*) sirius_repo=luminus ", INSTALLER)
+        self.assertIn('--enablerepo="${sirius_repo}"', INSTALLER)
 
     def test_rpm_and_file_versions_describe_the_same_release(self):
         version, rpm_version = pin("SIRIUS_VERSION"), pin("SIRIUS_RPM_VERSION")
         self.assertEqual(version.replace("-rc.", "~rc."), rpm_version)
-        self.assertRegex(pin("SIRIUS_SHA256"), r"^[0-9a-f]{64}$")
+
+    def test_the_repositories_trust_only_the_bundled_channel_keys(self):
+        self.assertIn("rpm.luminusos.org/stable/$releasever/$basearch/", repo_file("luminus"))
+        self.assertIn("rpm.luminusos.org/testing/$releasever/$basearch/", repo_file("luminus-testing"))
+        self.assertIn("gpgkey=file:///usr/share/luminus/rpm-keys/luminus-stable.asc", repo_file("luminus"))
+        self.assertIn("gpgkey=file:///usr/share/luminus/rpm-keys/luminus-testing.asc", repo_file("luminus-testing"))
+
+    def test_stable_is_enabled_by_default_and_testing_is_opt_in(self):
+        self.assertIn("enabled=1", repo_file("luminus"))
+        self.assertIn("enabled=0", repo_file("luminus-testing"))
 
     def test_the_bundled_keys_are_the_pinned_channel_keys(self):
         for channel, fingerprint in PRIMARY_FINGERPRINTS.items():
@@ -64,10 +74,11 @@ class SiriusPinTests(unittest.TestCase):
             PRIMARY_FINGERPRINTS["stable"], PRIMARY_FINGERPRINTS["testing"]
         )
 
-    def test_the_live_root_does_not_trust_the_keys_for_the_installed_system(self):
+    def test_the_installed_system_ships_the_repositories_and_their_keys(self):
         workstation = (ROOT / "editions/workstation/Containerfile").read_text()
-        self.assertNotIn("rpm-keys", workstation)
-        self.assertNotIn("luminus.asc", workstation)
+        self.assertIn("COPY shared/rpm-keys/ /usr/share/luminus/rpm-keys/", workstation)
+        self.assertIn("COPY editions/workstation/files/system/ /", workstation)
+        self.assertNotIn("rpm-keys", INSTALLER)
 
 
 if __name__ == "__main__":

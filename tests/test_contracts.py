@@ -106,7 +106,8 @@ class RepositoryContracts(unittest.TestCase):
             self.assertEqual(rule["type"], "sigstoreSigned")
             self.assertEqual(rule["keyPath"], "/etc/pki/containers/luminusos.pub")
         self.assertIn(
-            "sha256sum -c", read("editions/workstation/Containerfile.installer")
+            '"sirius-installer-${sirius_rpm_version}"',
+            read("editions/workstation/Containerfile.installer"),
         )
 
     def test_workflow_security_and_contracts(self):
@@ -135,7 +136,6 @@ class RepositoryContracts(unittest.TestCase):
         self.assertIn(
             '"sirius_rpm_version": override.replace("-rc.", "~rc.")', metadata
         )
-        self.assertIn("sirius_version override requires sirius_sha256", metadata)
         self.assertIn("publish: false", build)
         self.assertNotIn("inputs.publish", build)
         self.assertIn('env.get("PUBLISH") == "true"', metadata)

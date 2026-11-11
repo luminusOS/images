@@ -72,9 +72,6 @@ def metadata(env, config, supported, base_digest, today, sequence=0):
     if not re.fullmatch(r"[A-Za-z0-9_][A-Za-z0-9_.-]{0,90}", candidate):
         raise ValueError("invalid candidate_id")
     override = env.get("SIRIUS_VERSION", "")
-    checksum = env.get("SIRIUS_SHA256", "") if override else config["SIRIUS_SHA256"]
-    if not re.fullmatch(r"[0-9a-f]{64}", checksum):
-        raise ValueError("sirius_version override requires sirius_sha256")
     if override and not re.fullmatch(
         r"[0-9]+\.[0-9]+\.[0-9]+(?:-rc\.[0-9]+)?", override
     ):
@@ -100,7 +97,6 @@ def metadata(env, config, supported, base_digest, today, sequence=0):
         "sirius_version": override or config["SIRIUS_VERSION"],
         "sirius_rpm_version": override.replace("-rc.", "~rc.")
         or config["SIRIUS_RPM_VERSION"],
-        "sirius_sha256": checksum,
         "publish_channel": str(fedora == supported["LATEST_RELEASE"]).lower(),
     }
     for key in (
