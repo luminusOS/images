@@ -68,10 +68,6 @@ jobs:
       workstation_iso_image: '${{ steps.version.outputs.workstation_iso_image }}'
       sirius_version: '${{ steps.version.outputs.sirius_version }}'
       sirius_rpm_version: '${{ steps.version.outputs.sirius_rpm_version }}'
-      aurora_shell_version: '${{ steps.version.outputs.aurora_shell_version }}'
-      aurora_shell_sha256: '${{ steps.version.outputs.aurora_shell_sha256 }}'
-      elastic_swap_version: '${{ steps.version.outputs.elastic_swap_version }}'
-      elastic_swap_sha256: '${{ steps.version.outputs.elastic_swap_sha256 }}'
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - name: Resolve versions and image references
@@ -238,10 +234,6 @@ jobs:
             edition_name=Workstation
             edition_id=workstation
             skip_flatpaks=${{ inputs.skip_flatpaks }}
-            aurora_shell_version=${{ needs.metadata.outputs.aurora_shell_version }}
-            aurora_shell_sha256=${{ needs.metadata.outputs.aurora_shell_sha256 }}
-            elastic_swap_version=${{ needs.metadata.outputs.elastic_swap_version }}
-            elastic_swap_sha256=${{ needs.metadata.outputs.elastic_swap_sha256 }}
           tags: '${{ needs.metadata.outputs.workstation_image }}'
       - name: Install workstation OCI export tools
         run: sudo apt-get update && sudo apt-get install -y skopeo

@@ -134,10 +134,6 @@ def workstation(args):
         "image_version": args.version,
         "edition_name": "Workstation",
         "edition_id": "workstation",
-        "aurora_shell_version": args.aurora_version,
-        "aurora_shell_sha256": args.aurora_sha256,
-        "elastic_swap_version": args.elastic_version,
-        "elastic_swap_sha256": args.elastic_sha256,
         "skip_flatpaks": args.skip_flatpaks,
     }
     command = [
@@ -229,10 +225,6 @@ def main():
         "workstation",
         "installer",
         "target",
-        "aurora-version",
-        "aurora-sha256",
-        "elastic-version",
-        "elastic-sha256",
         "sirius-version",
         "sirius-rpm-version",
         "force-core",

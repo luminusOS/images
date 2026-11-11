@@ -119,10 +119,6 @@ flowchart TD
 | `LOS_NAME` | `LuminusOS` | OS name written to os-release. |
 | `LOS_PRETTY_NAME` | `Luminus OS` | Base pretty OS name; active editions append their edition name and `LOS_VERSION` for bootloader entries. |
 | `LOS_WORKSTATION_TARGET_IMAGE` | `…:testing-<fedora>`, or `…:<fedora>` when `UPDATE_CHANNEL=stable` | Installed bootc update reference. |
-| `AURORA_SHELL_VERSION` | From `config/versions.env` | Aurora Shell release downloaded during build. |
-| `AURORA_SHELL_SHA256` | From `config/versions.env` | Expected digest for the Aurora Shell release artifact. |
-| `ELASTIC_SWAP_VERSION` | From `config/versions.env` | elastic-swap release whose x86_64 RPM is installed into the workstation image. |
-| `ELASTIC_SWAP_SHA256` | From `config/versions.env` | SHA256 of that RPM for the default Fedora release; the build fails if the download does not match. |
 | `SIRIUS_VERSION` | From `config/versions.env` | Sirius release installed into the live installer from the Luminus RPM repository (`-rc.N` versions come from the testing channel, final versions from stable). |
 | `SIRIUS_RPM_VERSION` | From `config/versions.env` | Package version requested from the repository (`1.0.5~rc.2` for `1.0.5-rc.2`). |
 | `LOS_FORCE_CORE` | `0` | Rebuild core even if the local stamp is unchanged. |
@@ -218,20 +214,18 @@ The workstation image is built by `editions/workstation/Containerfile`. It is us
 
 The ISO live root is built by `editions/workstation/Containerfile.installer` as `luminusos-workstation:<tag>-iso`. It starts from the workstation image, then adds the live-only installer packages, Sirius, GNOME live session files, and the image-builder ISO config. The normal workstation image is also embedded as the install payload.
 
-The workstation Containerfile has five stages:
+The workstation Containerfile has four stages:
 
 1. `ctx-scripts`: shared build helpers.
 2. `ctx-workstation-script`: edition build script context.
 3. `ctx-flatpaks`: shared Flatpak refs from `shared/flatpaks`.
-4. `aurora-extension`: downloads and validates the Aurora Shell extension zip.
-5. Final workstation stage: starts from core and installs installed-system boot packages, Plymouth, GNOME, Aurora Shell, Flatpaks, qcow2 image-builder config, and first-boot cleanup.
+4. Final workstation stage: starts from core and installs installed-system boot packages, Plymouth, GNOME, Aurora Shell, Flatpaks, qcow2 image-builder config, and first-boot cleanup.
 
 ```mermaid
 flowchart TD
     ScriptCtx["ctx-workstation-script<br/>editions/workstation/build.py"]
     FlatpakCtx["ctx-flatpaks<br/>shared/flatpaks"]
     FilesCtx["system overlay<br/>files/system"]
-    AuroraStage["aurora-extension stage"]
     CoreImage["core image<br/>luminusos:<tag>"]
     BootPkgs["installed boot packages<br/>kernel, dracut, grub, shim, bootc, toolbox, flatpak, plymouth"]
     Plymouth["install Lucent Plymouth theme"]
@@ -247,7 +241,6 @@ flowchart TD
     ScriptCtx --> GnomeBuild
     FilesCtx --> GnomeBuild
     FlatpakCtx --> Flatpaks
-    AuroraStage --> CopyAurora
     CoreImage --> BootPkgs --> Plymouth --> Dracut --> CopyAurora --> PatchAurora --> GnomeBuild
     GnomeBuild --> Flatpaks --> ValidateAurora --> Lint --> Output
 ```
@@ -267,7 +260,7 @@ The workstation initramfs is rebuilt without live modules. The installer image r
 
 ## Aurora Shell
 
-Aurora Shell is installed from the release artifact selected by `AURORA_SHELL_VERSION`. The workstation image patches `metadata.json` for the normal user session and GNOME Initial Setup; the installer image adds the custom live installer session:
+Aurora Shell, elastic-swap, appimage-thumbnailer and ddcutil-service are installed with `dnf` from the Luminus RPM repository, whose packages are signed with the channel key. Aurora Shell is installed as `gnome-shell-extension-aurora-shell`. The workstation image patches `metadata.json` for the normal user session and GNOME Initial Setup; the installer image adds the custom live installer session:
 
 ```json
 "session-modes": ["initial-setup", "live-installer", "user"]

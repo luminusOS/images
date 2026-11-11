@@ -99,13 +99,6 @@ def metadata(env, config, supported, base_digest, today, sequence=0):
         or config["SIRIUS_RPM_VERSION"],
         "publish_channel": str(fedora == supported["LATEST_RELEASE"]).lower(),
     }
-    for key in (
-        "AURORA_SHELL_VERSION",
-        "AURORA_SHELL_SHA256",
-        "ELASTIC_SWAP_VERSION",
-        "ELASTIC_SWAP_SHA256",
-    ):
-        result[key.lower()] = config[key]
     return result
 
 
