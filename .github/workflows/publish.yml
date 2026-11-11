@@ -3,6 +3,10 @@ name: Image Publication
 "on":
   workflow_dispatch:
     inputs:
+      inert_r2_probe:
+        description: "Upload an inert private R2 handoff payload only"
+        type: boolean
+        default: false
       channel:
         description: "testing builds a new release; stable promotes an existing testing build"
         type: choice
@@ -47,6 +51,12 @@ name: Image Publication
       force_core: {type: boolean, default: false}
       security_findings_bypass: {type: boolean, default: false}
     secrets:
+      R2_INERT_HANDOFF_ACCESS_KEY_ID:
+        description: "Dedicated inert R2 producer credential; probe uses the inert-r2-handoff environment"
+        required: false
+      R2_INERT_HANDOFF_SECRET_ACCESS_KEY:
+        description: "Dedicated inert R2 producer credential; probe uses the inert-r2-handoff environment"
+        required: false
       COSIGN_PRIVATE_KEY: {required: true}
       COSIGN_PASSWORD: {required: false}
       R2_ACCESS_KEY_ID: {required: false}
@@ -67,11 +77,37 @@ env:
   BYPASS_VERSION: ${{ inputs.promote_version }}
 
 concurrency:
-  group: luminus-release-${{ github.repository }}
+  group: ${{ github.event_name == 'workflow_dispatch' && inputs.inert_r2_probe == true && format('luminus-inert-r2-{0}', github.repository) || format('luminus-release-{0}', github.repository) }}
   cancel-in-progress: false
 
 jobs:
+  r2-producer-probe:
+    name: r2-producer-probe
+    if: ${{ github.event_name == 'workflow_dispatch' && inputs.inert_r2_probe == true && github.ref == 'refs/heads/main' && github.repository_id == '1118572971' }}
+    environment: inert-r2-handoff
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          persist-credentials: false
+      - name: Upload inert R2 handoff payload
+        env:
+          INERT_R2_PROBE: "true"
+          R2_PROBE_ACCESS_KEY_ID: ${{ secrets.R2_INERT_HANDOFF_ACCESS_KEY_ID }}
+          R2_PROBE_SECRET_ACCESS_KEY: ${{ secrets.R2_INERT_HANDOFF_SECRET_ACCESS_KEY }}
+        run: python3 .github/scripts/workflow/inert_r2_probe.py upload
+      - name: Record inert R2 handoff identity
+        env:
+          INERT_R2_PROBE: "true"
+          R2_PROBE_ACCESS_KEY_ID: ${{ secrets.R2_INERT_HANDOFF_ACCESS_KEY_ID }}
+          R2_PROBE_SECRET_ACCESS_KEY: ${{ secrets.R2_INERT_HANDOFF_SECRET_ACCESS_KEY }}
+        run: python3 .github/scripts/workflow/inert_r2_probe.py record
+
   inputs:
+    if: ${{ !(github.event_name == 'workflow_dispatch' && inputs.inert_r2_probe == true) }}
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
@@ -90,6 +126,7 @@ jobs:
           python3 -c 'import os,sys; e=os.environ; c=e["CANDIDATE"]; v=e["VALIDATION"]; t=e["TESTING"]; tv=e["TESTING_VALIDATION"]; ok=e["CHANNEL"] in ("testing","stable") and bool(c)==bool(v) and all(not x or (x.isascii() and x.isdigit() and int(x)>0) for x in (c,v,t,tv)) and (bool(c) or e["CHANNEL"] != "stable" or (bool(t) and bool(tv) and bool(e["VERSION"]))); sys.exit(0 if ok else "invalid release phase inputs")'
 
   quality:
+    if: ${{ !(github.event_name == 'workflow_dispatch' && inputs.inert_r2_probe == true) }}
     name: Validate source
     permissions:
       contents: read
@@ -99,7 +136,7 @@ jobs:
     name: Build candidate images
     needs: [quality, inputs]
     # The signing key is available to this workflow, and only main may use it.
-    if: github.ref == 'refs/heads/main' && inputs.candidate_run_id == '' && inputs.validation_run_id == '' && inputs.channel == 'testing'
+    if: ${{ !(github.event_name == 'workflow_dispatch' && inputs.inert_r2_probe == true) && (github.ref == 'refs/heads/main' && inputs.candidate_run_id == '' && inputs.validation_run_id == '' && inputs.channel == 'testing') }}
     permissions:
       contents: read
       packages: read
@@ -121,7 +158,7 @@ jobs:
   stable-source:
     name: Verify approved testing candidate
     needs: [quality, inputs]
-    if: ${{ !inputs.security_findings_bypass && github.ref == 'refs/heads/main' && inputs.candidate_run_id == '' && inputs.validation_run_id == '' && inputs.channel == 'stable' }}
+    if: ${{ !(github.event_name == 'workflow_dispatch' && inputs.inert_r2_probe == true) && (!inputs.security_findings_bypass && github.ref == 'refs/heads/main' && inputs.candidate_run_id == '' && inputs.validation_run_id == '' && inputs.channel == 'stable') }}
     runs-on: ubuntu-latest
     permissions: {contents: read, actions: read}
     outputs:
@@ -169,7 +206,7 @@ jobs:
   publish-images:
     name: Publish candidate containers
     needs: [containers]
-    if: inputs.channel == 'testing' && github.ref == 'refs/heads/main'
+    if: ${{ !(github.event_name == 'workflow_dispatch' && inputs.inert_r2_probe == true) && (inputs.channel == 'testing' && github.ref == 'refs/heads/main') }}
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -261,7 +298,7 @@ jobs:
   stable-installer:
     name: Build stable installer from approved testing image
     needs: [stable-source]
-    if: inputs.channel == 'stable' && github.ref == 'refs/heads/main'
+    if: ${{ !(github.event_name == 'workflow_dispatch' && inputs.inert_r2_probe == true) && (inputs.channel == 'stable' && github.ref == 'refs/heads/main') }}
     permissions:
       contents: read
       packages: read
@@ -282,7 +319,7 @@ jobs:
   publish-stable-installer:
     name: Publish stable installer image
     needs: [stable-installer, stable-source]
-    if: inputs.channel == 'stable' && github.ref == 'refs/heads/main'
+    if: ${{ !(github.event_name == 'workflow_dispatch' && inputs.inert_r2_probe == true) && (inputs.channel == 'stable' && github.ref == 'refs/heads/main') }}
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -341,7 +378,7 @@ jobs:
   iso:
     name: Package ISO
     needs: [containers, publish-images, stable-source, stable-installer, publish-stable-installer]
-    if: ${{ always() && inputs.candidate_run_id == '' && ((needs.containers.result == 'success' && needs.publish-images.result == 'success' && inputs.channel == 'testing') || (needs.stable-source.result == 'success' && needs.stable-installer.result == 'success' && needs.publish-stable-installer.result == 'success' && inputs.channel == 'stable')) }}
+    if: ${{ !(github.event_name == 'workflow_dispatch' && inputs.inert_r2_probe == true) && (always() && inputs.candidate_run_id == '' && ((needs.containers.result == 'success' && needs.publish-images.result == 'success' && inputs.channel == 'testing') || (needs.stable-source.result == 'success' && needs.stable-installer.result == 'success' && needs.publish-stable-installer.result == 'success' && inputs.channel == 'stable'))) }}
     runs-on: ubuntu-24.04
     timeout-minutes: 180
     permissions:
@@ -391,7 +428,7 @@ jobs:
   qcow2:
     name: Package qcow2
     needs: [containers, publish-images, stable-source, stable-installer, publish-stable-installer]
-    if: ${{ always() && inputs.candidate_run_id == '' && ((needs.containers.result == 'success' && needs.publish-images.result == 'success' && inputs.channel == 'testing') || (needs.stable-source.result == 'success' && needs.stable-installer.result == 'success' && needs.publish-stable-installer.result == 'success' && inputs.channel == 'stable')) }}
+    if: ${{ !(github.event_name == 'workflow_dispatch' && inputs.inert_r2_probe == true) && (always() && inputs.candidate_run_id == '' && ((needs.containers.result == 'success' && needs.publish-images.result == 'success' && inputs.channel == 'testing') || (needs.stable-source.result == 'success' && needs.stable-installer.result == 'success' && needs.publish-stable-installer.result == 'success' && inputs.channel == 'stable'))) }}
     runs-on: ubuntu-24.04
     timeout-minutes: 180
     permissions:
@@ -439,6 +476,7 @@ jobs:
           if-no-files-found: error
 
   boot-test:
+    if: ${{ !(github.event_name == 'workflow_dispatch' && inputs.inert_r2_probe == true) }}
     name: Boot smoke test
     needs: [iso, qcow2]
     runs-on: ubuntu-latest
@@ -497,7 +535,7 @@ jobs:
   prepare-candidate:
     name: Bind candidate artifacts
     needs: [quality, containers, publish-images, stable-source, stable-installer, publish-stable-installer, iso, qcow2, boot-test]
-    if: ${{ always() && !inputs.security_findings_bypass && github.ref == 'refs/heads/main' && inputs.candidate_run_id == '' && needs.quality.result == 'success' && needs.iso.result == 'success' && needs.qcow2.result == 'success' && needs.boot-test.result == 'success' && ((inputs.channel == 'testing' && needs.publish-images.result == 'success') || (inputs.channel == 'stable' && needs.publish-stable-installer.result == 'success')) }}
+    if: ${{ !(github.event_name == 'workflow_dispatch' && inputs.inert_r2_probe == true) && (always() && !inputs.security_findings_bypass && github.ref == 'refs/heads/main' && inputs.candidate_run_id == '' && needs.quality.result == 'success' && needs.iso.result == 'success' && needs.qcow2.result == 'success' && needs.boot-test.result == 'success' && ((inputs.channel == 'testing' && needs.publish-images.result == 'success') || (inputs.channel == 'stable' && needs.publish-stable-installer.result == 'success'))) }}
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -563,7 +601,7 @@ jobs:
   release:
     name: Promote validated candidate
     needs: [quality, inputs]
-    if: ${{ !inputs.security_findings_bypass && github.ref == 'refs/heads/main' && inputs.candidate_run_id != '' && inputs.validation_run_id != '' }}
+    if: ${{ !(github.event_name == 'workflow_dispatch' && inputs.inert_r2_probe == true) && (!inputs.security_findings_bypass && github.ref == 'refs/heads/main' && inputs.candidate_run_id != '' && inputs.validation_run_id != '') }}
     runs-on: ubuntu-latest
     permissions:
       actions: read
