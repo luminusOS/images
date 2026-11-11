@@ -14,7 +14,9 @@ PRIMARY_FINGERPRINTS = {
 
 
 def repo_file(name):
-    return (ROOT / f"editions/workstation/files/system/etc/yum.repos.d/{name}.repo").read_text()
+    return (
+        ROOT / f"editions/workstation/files/system/etc/yum.repos.d/{name}.repo"
+    ).read_text()
 
 
 def pin(name):
@@ -24,7 +26,12 @@ def pin(name):
 class SiriusPinTests(unittest.TestCase):
     def test_the_package_comes_from_the_configured_luminus_repository(self):
         self.assertIn('"sirius-installer-${sirius_rpm_version}"', INSTALLER)
-        for download in ("curl", "wget", "github.com/luminusOS/sirius/releases", "rpm.luminusos.org"):
+        for download in (
+            "curl",
+            "wget",
+            "github.com/luminusOS/sirius/releases",
+            "rpm.luminusos.org",
+        ):
             self.assertNotIn(download, INSTALLER)
 
     def test_package_and_metadata_signatures_are_never_disabled(self):
@@ -36,7 +43,9 @@ class SiriusPinTests(unittest.TestCase):
             self.assertIn("repo_gpgcheck=1", text)
             self.assertNotIn("gpgcheck=0", text)
 
-    def test_release_candidates_use_the_testing_repository_and_final_versions_stable(self):
+    def test_release_candidates_use_the_testing_repository_and_final_versions_stable(
+        self,
+    ):
         self.assertIn("*-rc.*) sirius_repo=luminus-testing", INSTALLER)
         self.assertIn("*) sirius_repo=luminus ", INSTALLER)
         self.assertIn('--enablerepo="${sirius_repo}"', INSTALLER)
@@ -46,10 +55,21 @@ class SiriusPinTests(unittest.TestCase):
         self.assertEqual(version.replace("-rc.", "~rc."), rpm_version)
 
     def test_the_repositories_trust_only_the_bundled_channel_keys(self):
-        self.assertIn("rpm.luminusos.org/stable/$releasever/$basearch/", repo_file("luminus"))
-        self.assertIn("rpm.luminusos.org/testing/$releasever/$basearch/", repo_file("luminus-testing"))
-        self.assertIn("gpgkey=file:///usr/share/luminus/rpm-keys/luminus-stable.asc", repo_file("luminus"))
-        self.assertIn("gpgkey=file:///usr/share/luminus/rpm-keys/luminus-testing.asc", repo_file("luminus-testing"))
+        self.assertIn(
+            "rpm.luminusos.org/stable/$releasever/$basearch/", repo_file("luminus")
+        )
+        self.assertIn(
+            "rpm.luminusos.org/testing/$releasever/$basearch/",
+            repo_file("luminus-testing"),
+        )
+        self.assertIn(
+            "gpgkey=file:///usr/share/luminus/rpm-keys/luminus-stable.asc",
+            repo_file("luminus"),
+        )
+        self.assertIn(
+            "gpgkey=file:///usr/share/luminus/rpm-keys/luminus-testing.asc",
+            repo_file("luminus-testing"),
+        )
 
     def test_stable_is_enabled_by_default_and_testing_is_opt_in(self):
         self.assertIn("enabled=1", repo_file("luminus"))
