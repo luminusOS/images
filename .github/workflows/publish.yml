@@ -136,7 +136,7 @@ jobs:
     name: Build candidate images
     needs: [quality, inputs]
     # The signing key is available to this workflow, and only main may use it.
-    if: ${{ !(github.event_name == 'workflow_dispatch' && inputs.inert_r2_probe == true) && (github.ref == 'refs/heads/main' && inputs.candidate_run_id == '' && inputs.validation_run_id == '' && inputs.channel == 'testing') }}
+    if: github.ref == 'refs/heads/main' && !(github.event_name == 'workflow_dispatch' && inputs.inert_r2_probe == true) && inputs.candidate_run_id == '' && inputs.validation_run_id == '' && inputs.channel == 'testing'
     permissions:
       contents: read
       packages: read
