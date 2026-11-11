@@ -140,11 +140,8 @@ class ConfigurationTests(unittest.TestCase):
         versions = text(ROOT / "config/versions.env")
         for pattern in (
             r"^FEDORA_BOOTC_DIGEST=sha256:[0-9a-f]{64}$",
-            r"^AURORA_SHELL_SHA256=[0-9a-f]{64}$",
             r"^SIRIUS_VERSION=[0-9]+\.[0-9]+\.[0-9]+(-rc\.[0-9]+)?$",
             r"^SIRIUS_RPM_VERSION=[0-9]+\.[0-9]+\.[0-9]+(~rc\.[0-9]+)?$",
-            r"^ELASTIC_SWAP_VERSION=[0-9]+\.[0-9]+\.[0-9]+$",
-            r"^ELASTIC_SWAP_SHA256=[0-9a-f]{64}$",
         ):
             self.assertRegex(versions, re.compile(pattern, re.MULTILINE))
         for path in (
@@ -156,19 +153,12 @@ class ConfigurationTests(unittest.TestCase):
             self.assertNotRegex(
                 text(path),
                 re.compile(
-                    r"^ARG (fedora_version|aurora_shell_version|sirius_version)=",
+                    r"^ARG (fedora_version|sirius_version)=",
                     re.MULTILINE,
                 ),
             )
         workstation = text(ROOT / "editions/workstation/Containerfile")
         build = text(ROOT / "editions/workstation/build.py")
-        self.assertRegex(
-            workstation,
-            re.compile(
-                r'^    echo "[0-9a-f]{64}  /tmp/ddcutil-service\.rpm" \| sha256sum -c - && \\$',
-                re.MULTILINE,
-            ),
-        )
         self.assertIn(
             "zswap.enabled=1",
             text(SYSTEM / "usr/lib/bootc/kargs.d/20-luminusos-zswap.toml"),
@@ -206,11 +196,20 @@ class ConfigurationTests(unittest.TestCase):
                     for path in (SYSTEM / "usr/lib/systemd/user" / directory).glob("*")
                 )
             )
-        build_tool = text(ROOT / "tools/build-images.py")
-        workflow = text(ROOT / ".github/workflows/containers.yml")
-        for value in ("elastic_swap_sha256", "elastic_swap_version"):
-            self.assertIn(value, build_tool)
-            self.assertIn(value, workflow)
+        workstation = text(ROOT / "editions/workstation/Containerfile")
+        for package in (
+            "gnome-shell-extension-aurora-shell",
+            "appimage-thumbnailer",
+            "elastic-swap",
+            "ddcutil-service",
+        ):
+            self.assertRegex(workstation, rf"install {package} &&")
+        self.assertLess(
+            workstation.index(
+                "COPY editions/workstation/files/system/etc/yum.repos.d/luminus.repo"
+            ),
+            workstation.index("install gnome-shell-extension-aurora-shell"),
+        )
         for unit in ("elastic-swap", "elastic-swap-prepare"):
             self.assertIn(
                 "ConditionVirtualization=!container",

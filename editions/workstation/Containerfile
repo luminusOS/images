@@ -1,7 +1,6 @@
 ARG core_image=localhost/luminusos:latest
 ARG fedora_bootc_base=quay.io/fedora/fedora-bootc:45
 ARG fedora_version
-ARG aurora_shell_version
 
 FROM scratch AS ctx-scripts
 
@@ -19,31 +18,6 @@ FROM ${fedora_bootc_base} AS python-tools
 ARG fedora_version
 RUN dnf -y --releasever="${fedora_version}" install python3 && dnf clean all
 
-FROM ${fedora_bootc_base} AS aurora-extension
-
-ARG fedora_version
-ARG aurora_shell_version
-ARG aurora_shell_sha256
-ARG aurora_shell_uuid=aurora-shell@luminusos.github.io
-
-RUN --mount=type=cache,target=/var/cache/dnf \
-    --mount=type=bind,from=ctx-scripts,source=/scripts,target=/scripts \
-    --mount=type=bind,from=python-tools,source=/usr,target=/opt/python,ro \
-    env PYTHONHOME=/opt/python LD_LIBRARY_PATH=/opt/python/lib64 /opt/python/bin/python3 /scripts/dnf-releasever.py "${fedora_version}" && \
-    dnf -y --releasever="${fedora_version}" install curl unzip jq && \
-    dnf clean all && \
-    mkdir -p "/out/${aurora_shell_uuid}" && \
-    curl -fsSL \
-      "https://github.com/luminusOS/aurora-shell/releases/download/${aurora_shell_version}/${aurora_shell_uuid}.shell-extension.zip" \
-      -o /tmp/aurora-shell.zip && \
-    # Release tags are mutable; the pinned digest is what actually
-    # guarantees we ship the artifact we reviewed.
-    echo "${aurora_shell_sha256}  /tmp/aurora-shell.zip" | sha256sum -c - && \
-    unzip -q /tmp/aurora-shell.zip -d "/out/${aurora_shell_uuid}" && \
-    test -f "/out/${aurora_shell_uuid}/metadata.json" && \
-    jq -e --arg uuid "${aurora_shell_uuid}" '.uuid == $uuid' \
-      "/out/${aurora_shell_uuid}/metadata.json"
-
 FROM ${core_image}
 
 ARG fedora_version
@@ -52,8 +26,6 @@ ARG edition_name="Workstation"
 ARG edition_id="workstation"
 ARG aurora_shell_uuid=aurora-shell@luminusos.github.io
 ARG skip_flatpaks=0
-ARG elastic_swap_version
-ARG elastic_swap_sha256
 ARG source_url="https://github.com/LuminusOS/images"
 ARG fedora_bootc_digest=""
 
@@ -133,8 +105,17 @@ RUN --mount=type=bind,from=ctx-scripts,source=/scripts,target=/scripts \
     --mount=type=bind,from=python-tools,source=/usr,target=/opt/python,ro \
     env PYTHONHOME=/opt/python LD_LIBRARY_PATH=/opt/python/lib64 /opt/python/bin/python3 /scripts/rebuild-initramfs.py
 
-# Install the pre-built aurora-shell extension before GNOME Shell is installed.
-COPY --from=aurora-extension /out/aurora-shell@luminusos.github.io/ /usr/share/gnome-shell/extensions/aurora-shell@luminusos.github.io/
+# Luminus RPM repository definitions and keys, needed by every package installed from it.
+COPY editions/workstation/files/system/etc/yum.repos.d/luminus.repo /etc/yum.repos.d/luminus.repo
+COPY shared/rpm-keys/ /usr/share/luminus/rpm-keys/
+
+# Aurora Shell is published as an RPM in the Luminus repository before GNOME Shell is installed.
+RUN --mount=type=cache,target=/var/cache/dnf \
+    --mount=type=bind,from=ctx-scripts,source=/scripts,target=/scripts \
+    --mount=type=bind,from=python-tools,source=/usr,target=/opt/python,ro \
+    env PYTHONHOME=/opt/python LD_LIBRARY_PATH=/opt/python/lib64 /opt/python/bin/python3 /scripts/rpmdb-repair.py && \
+    dnf -y --releasever="${fedora_version}" install gnome-shell-extension-aurora-shell && \
+    dnf clean all
 RUN --mount=type=bind,from=ctx-scripts,source=/scripts,target=/scripts \
     --mount=type=bind,from=python-tools,source=/usr,target=/opt/python,ro \
     env PYTHONHOME=/opt/python LD_LIBRARY_PATH=/opt/python/lib64 /opt/python/bin/python3 /scripts/aurora-session-modes.py \
@@ -187,57 +168,35 @@ RUN --mount=type=cache,target=/var/cache/dnf \
       gstreamer1-plugin-libav && \
     dnf clean all
 
-# Nautilus thumbnails for AppImages. Not packaged in Fedora, so install the
-# upstream RPM; the pinned digest guards against a replaced release asset.
+# Nautilus thumbnails for AppImages, from the Luminus repository.
 RUN --mount=type=cache,target=/var/cache/dnf \
     --mount=type=bind,from=ctx-scripts,source=/scripts,target=/scripts \
     --mount=type=bind,from=python-tools,source=/usr,target=/opt/python,ro \
     env PYTHONHOME=/opt/python LD_LIBRARY_PATH=/opt/python/lib64 /opt/python/bin/python3 /scripts/rpmdb-repair.py && \
-    curl -fsSL \
-      "https://github.com/kem-a/appimage-thumbnailer/releases/download/v4.1.1/appimage-thumbnailer-v4.1.1-1.x86_64.rpm" \
-      -o /tmp/appimage-thumbnailer.rpm && \
-    echo "c249b93ed422be6348c5f162c640ef1cf02f00a26d5afe014c3685122ca7c050  /tmp/appimage-thumbnailer.rpm" | sha256sum -c - && \
-    dnf -y --releasever="${fedora_version}" install /tmp/appimage-thumbnailer.rpm && \
-    rm -f /tmp/appimage-thumbnailer.rpm && \
+    dnf -y --releasever="${fedora_version}" install appimage-thumbnailer && \
     dnf clean all
 
-# Swap daemon: grows and shrinks swap files in /var/swap behind zswap. It is
-# our own package, published as a release asset; the digest guards against a
-# replaced asset. A mismatch fails the build.
+# Swap daemon: grows and shrinks swap files in /var/swap behind zswap.
 RUN --mount=type=cache,target=/var/cache/dnf \
     --mount=type=bind,from=ctx-scripts,source=/scripts,target=/scripts \
     --mount=type=bind,from=python-tools,source=/usr,target=/opt/python,ro \
     env PYTHONHOME=/opt/python LD_LIBRARY_PATH=/opt/python/lib64 /opt/python/bin/python3 /scripts/rpmdb-repair.py && \
-    curl -fsSL \
-      "https://github.com/luminusOS/elastic-swap/releases/download/v${elastic_swap_version}/elastic-swap-${elastic_swap_version}-1.fc${fedora_version}.x86_64.rpm" \
-      -o /tmp/elastic-swap.rpm && \
-    echo "${elastic_swap_sha256}  /tmp/elastic-swap.rpm" | sha256sum -c - && \
-    dnf -y --releasever="${fedora_version}" install /tmp/elastic-swap.rpm && \
-    rm -f /tmp/elastic-swap.rpm && \
+    dnf -y --releasever="${fedora_version}" install elastic-swap && \
     dnf clean all
 
 # D-Bus service for DDC/CI monitor control, used by Aurora Shell's External
 # Display Brightness module. It pulls Fedora's ddcutil, whose udev rule gives
-# the logged-in user access to the I2C buses. ddcutil-service is not packaged in
-# Fedora; until the LuminusOS RPM repository publishes it, this installs the
-# unsigned hopsayer/ddcutil-service COPR build. That COPR prunes old builds, so
-# the pinned digest fails the build when the asset is removed or replaced.
+# the logged-in user access to the I2C buses.
 RUN --mount=type=cache,target=/var/cache/dnf \
     --mount=type=bind,from=ctx-scripts,source=/scripts,target=/scripts \
     --mount=type=bind,from=python-tools,source=/usr,target=/opt/python,ro \
     env PYTHONHOME=/opt/python LD_LIBRARY_PATH=/opt/python/lib64 /opt/python/bin/python3 /scripts/rpmdb-repair.py && \
-    curl -fsSL \
-      "https://download.copr.fedorainfracloud.org/results/hopsayer/ddcutil-service/fedora-${fedora_version}-x86_64/Packages/d/ddcutil-service-1.0.15-0.x86_64.rpm" \
-      -o /tmp/ddcutil-service.rpm && \
-    echo "05518dcadd7e24b31633fa5f4b2e3dbb002813ecad26c41e3cc4cbac3646dcfb  /tmp/ddcutil-service.rpm" | sha256sum -c - && \
-    dnf -y --releasever="${fedora_version}" install /tmp/ddcutil-service.rpm && \
-    rm -f /tmp/ddcutil-service.rpm && \
+    dnf -y --releasever="${fedora_version}" install ddcutil-service && \
     dnf clean all
 
 # The system overlay mirrors the installed filesystem. Live-installer files
 # live in a separate overlay consumed only by Containerfile.installer.
 COPY editions/workstation/files/system/ /
-COPY shared/rpm-keys/ /usr/share/luminus/rpm-keys/
 COPY shared/trust/ /
 # GDM renders the login-screen logo at natural size, so keep it small.
 COPY editions/workstation/assets/gdm-logo.png /usr/share/pixmaps/luminusos-gdm-logo.png
@@ -329,7 +288,6 @@ RUN set -eux; \
     ! systemctl is-enabled sshd.service && \
     systemctl is-enabled bootc-fetch-apply-updates.timer && \
     rpm -q elastic-swap && \
-    test "$(rpm -q --queryformat '%{VERSION}' elastic-swap)" = "${elastic_swap_version}" && \
     systemctl is-enabled elastic-swap.service && \
     test -f /usr/lib/systemd/system/elastic-swap-prepare.service && \
     rpm -q ddcutil ddcutil-service && \
