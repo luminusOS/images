@@ -6,6 +6,7 @@ import io
 import json
 import os
 import shutil
+import socket
 import subprocess
 import tarfile
 import tempfile
@@ -95,6 +96,381 @@ def sample(root):
 
 
 class OciLayoutTests(unittest.TestCase):
+    def test_negative_subjects_preserve_bytes_and_exclude_attachments(self):
+        manifest = json.loads(
+            (self.root / "blobs/sha256" / self.expected[7:]).read_bytes()
+        )
+        manifest["annotations"] = {"existing": "preserved"}
+        expected = store_manifest(self.root, manifest)
+        index = json.loads((self.root / "index.json").read_bytes())
+        index["annotations"] = {"index": "preserved"}
+        index["manifests"][0]["platform"] = {"os": "linux", "architecture": "amd64"}
+        index["manifests"][0]["annotations"]["descriptor"] = "preserved"
+        (self.root / "index.json").write_bytes(encoded(index))
+        (self.root / "signatures").symlink_to("/does-not-exist")
+        blob(self.root, b"unreferenced signature", LAYER)
+        before = {
+            p.relative_to(self.root): p.read_bytes()
+            for p in self.root.rglob("*")
+            if p.is_file()
+        }
+        destinations = [self.root.parent / name for name in ("unsigned", "foreign-key")]
+        with (
+            mock.patch.object(
+                oci.subprocess, "run", side_effect=AssertionError("external execution")
+            ),
+            mock.patch.object(
+                oci.subprocess,
+                "Popen",
+                side_effect=AssertionError("external execution"),
+            ),
+            mock.patch.object(socket, "socket", side_effect=AssertionError("network")),
+        ):
+            result = oci.derive_negative_subjects(
+                self.root, "core", expected, *destinations
+            )
+        self.assertEqual(len({expected, *result.values()}), 3)
+        for kind, path in zip(("unsigned", "foreign-key"), destinations):
+            digest = result[kind]
+            actual = json.loads((path / "blobs/sha256" / digest[7:]).read_bytes())
+            wanted = copy.deepcopy(manifest)
+            wanted["annotations"][oci.NEGATIVE_SUBJECT] = kind
+            self.assertEqual(actual, wanted)
+            self.assertEqual(
+                oci.verify_negative_subject(self.root, "core", expected, path, kind),
+                digest,
+            )
+            descriptors = [manifest["config"], *manifest["layers"]]
+            for descriptor in descriptors:
+                name = "blobs/sha256/" + descriptor["digest"][7:]
+                self.assertEqual(
+                    (path / name).read_bytes(), (self.root / name).read_bytes()
+                )
+            self.assertEqual(
+                {p.name for p in (path / "blobs/sha256").iterdir()},
+                {digest[7:], *(d["digest"][7:] for d in descriptors)},
+            )
+            self.assertFalse((path / "signatures").exists())
+            output_index = json.loads((path / "index.json").read_bytes())
+            wanted_index = copy.deepcopy(index)
+            wanted_index["manifests"][0].update(
+                digest=digest,
+                size=len((path / "blobs/sha256" / digest[7:]).read_bytes()),
+            )
+            wanted_index["manifests"][0]["annotations"][REF] = "negative-" + kind
+            self.assertEqual(output_index, wanted_index)
+        self.assertEqual(
+            before,
+            {
+                p.relative_to(self.root): p.read_bytes()
+                for p in self.root.rglob("*")
+                if p.is_file()
+            },
+        )
+
+    def test_negative_subjects_reject_wrong_digest_and_existing_paths(self):
+        a, b = (self.root.parent / name for name in ("a", "b"))
+        with self.assertRaises(ValueError):
+            oci.derive_negative_subjects(self.root, "core", "sha256:" + "0" * 64, a, b)
+        self.assertFalse(a.exists())
+        b.mkdir()
+        with self.assertRaises((ValueError, OSError)):
+            oci.derive_negative_subjects(self.root, "core", self.expected, a, b)
+        self.assertFalse(a.exists())
+
+    def test_negative_subjects_reject_unsafe_paths(self):
+        for fault in (
+            "source-link",
+            "parent-link",
+            "destination-link",
+            "traversal",
+            "same",
+            "invalid",
+            "inside-source",
+        ):
+            with self.subTest(fault=fault), tempfile.TemporaryDirectory() as temp:
+                parent = Path(temp)
+                source = self.root
+                a, b = parent / "a", parent / "b"
+                if fault == "source-link":
+                    source = parent / "source"
+                    source.symlink_to(self.root)
+                elif fault == "parent-link":
+                    (parent / "link").symlink_to(parent, target_is_directory=True)
+                    a = parent / "link/a"
+                elif fault == "destination-link":
+                    a.symlink_to(parent / "absent")
+                elif fault == "traversal":
+                    a = parent / ".." / "a"
+                elif fault == "same":
+                    b = a
+                elif fault == "inside-source":
+                    a = self.root / "new-subject"
+                else:
+                    a = parent / "bad:name"
+                with self.assertRaises((ValueError, OSError)):
+                    oci.derive_negative_subjects(source, "core", self.expected, a, b)
+
+    def test_negative_subjects_reject_source_corruption_and_reserved_annotation(self):
+        for fault in ("config", "layer", "manifest", "annotation"):
+            with self.subTest(fault=fault), tempfile.TemporaryDirectory() as temp:
+                parent = Path(temp)
+                source = parent / "source"
+                manifest, expected = sample(source)
+                if fault == "annotation":
+                    manifest["annotations"] = {oci.NEGATIVE_SUBJECT: "unsigned"}
+                    expected = store_manifest(source, manifest)
+                else:
+                    digest = (
+                        expected
+                        if fault == "manifest"
+                        else (
+                            manifest["config"]
+                            if fault == "config"
+                            else manifest["layers"][0]
+                        )["digest"]
+                    )
+                    (source / "blobs/sha256" / digest[7:]).write_bytes(b"corrupt")
+                with self.assertRaises((ValueError, OSError)):
+                    oci.derive_negative_subjects(
+                        source, "core", expected, parent / "a", parent / "b"
+                    )
+                self.assertFalse((parent / "a").exists())
+
+    def test_negative_subjects_verify_actual_relation(self):
+        for fault in (
+            "manifest",
+            "config",
+            "layer",
+            "index",
+            "extra",
+            "root-extra",
+            "blob-extra",
+            "kind",
+            "expected",
+        ):
+            with self.subTest(fault=fault), tempfile.TemporaryDirectory() as temp:
+                parent = Path(temp)
+                a, b = parent / "a", parent / "b"
+                result = oci.derive_negative_subjects(
+                    self.root, "core", self.expected, a, b
+                )
+                kind, expected = "unsigned", self.expected
+                if fault in ("manifest", "config", "layer"):
+                    manifest = json.loads(
+                        (a / "blobs/sha256" / result[kind][7:]).read_bytes()
+                    )
+                    if fault == "manifest":
+                        manifest["annotations"]["extra"] = "forbidden"
+                    elif fault == "config":
+                        manifest["config"] = blob(
+                            a,
+                            encoded(
+                                {"os": "linux", "architecture": "amd64", "extra": True}
+                            ),
+                            CONFIG,
+                        )
+                    else:
+                        manifest["layers"] = [blob(a, b"changed layer", LAYER)]
+                    digest = store_manifest(a, manifest)
+                    index = json.loads((a / "index.json").read_bytes())
+                    index["manifests"][0]["annotations"][REF] = "negative-unsigned"
+                    (a / "index.json").write_bytes(encoded(index))
+                    self.assertEqual(
+                        oci.manifest_digest(a, "negative-unsigned"), digest
+                    )
+                elif fault == "index":
+                    index = json.loads((a / "index.json").read_bytes())
+                    index["annotations"] = {"extra": "forbidden"}
+                    (a / "index.json").write_bytes(encoded(index))
+                elif fault == "extra":
+                    blob(a, b"attachment", LAYER)
+                elif fault == "root-extra":
+                    (a / "signature").write_bytes(b"attachment")
+                elif fault == "blob-extra":
+                    (a / "blobs/extra").mkdir()
+                elif fault == "kind":
+                    kind = "foreign-signed"
+                else:
+                    expected = "sha256:" + "0" * 64
+                with self.assertRaises((ValueError, OSError)):
+                    oci.verify_negative_subject(self.root, "core", expected, a, kind)
+
+    def test_negative_subjects_closed_identifiers_and_source_index_race(self):
+        index = self.index()
+        for kind in ("foreign-signed", "other", "", None):
+            with self.subTest(kind=kind), self.assertRaises(ValueError):
+                oci.negative_documents(index, self.manifest, kind)
+        index["manifests"][0]["annotations"][REF] = "bad:ref"
+        self.write_index(index)
+        with oci.directory(self.root) as base, self.assertRaises(ValueError):
+            oci.negative_base(base, "bad:ref", self.expected)
+        index["manifests"][0]["annotations"][REF] = "core"
+        self.write_index(index)
+        original = oci.checked_manifest
+
+        def changed(base, ref):
+            digest = original(base, ref)
+            index["annotations"] = {"raced": "true"}
+            self.write_index(index)
+            return digest
+
+        with (
+            mock.patch.object(oci, "checked_manifest", side_effect=changed),
+            oci.directory(self.root) as base,
+            self.assertRaises(ValueError),
+        ):
+            oci.negative_base(base, "core", self.expected)
+
+    def test_negative_subjects_reject_byte_identical_directory_replacement(self):
+        a, b = self.root.parent / "a", self.root.parent / "b"
+        original = oci.write_negative_subject
+
+        def write(base, destination, index, manifest, kind):
+            original(base, destination, index, manifest, kind)
+            if kind == "foreign-key":
+                retained = self.root.parent / "retained"
+                a.rename(retained)
+                shutil.copytree(retained, a)
+
+        with (
+            mock.patch.object(oci, "write_negative_subject", side_effect=write),
+            self.assertRaises(ValueError),
+        ):
+            oci.derive_negative_subjects(self.root, "core", self.expected, a, b)
+        self.assertTrue(a.is_dir())
+
+    def test_negative_subjects_reject_parent_replacement_with_same_children(self):
+        parent = self.root.parent / "outputs"
+        parent.mkdir()
+        a, b = parent / "a", parent / "b"
+        original = oci.write_negative_subject
+
+        def write(base, destination, index, manifest, kind):
+            original(base, destination, index, manifest, kind)
+            if kind == "foreign-key":
+                retained = self.root.parent / "retained-parent"
+                parent.rename(retained)
+                parent.mkdir()
+                (retained / "a").rename(a)
+                (retained / "b").rename(b)
+
+        with (
+            mock.patch.object(oci, "write_negative_subject", side_effect=write),
+            self.assertRaises(ValueError),
+        ):
+            oci.derive_negative_subjects(self.root, "core", self.expected, a, b)
+        self.assertTrue(a.is_dir())
+        self.assertTrue(b.is_dir())
+
+    def test_negative_subjects_reject_directory_swap_before_open_without_writing(self):
+        a, b = self.root.parent / "a", self.root.parent / "b"
+        original = os.open
+
+        def swapped(name, flags, *args, **kwargs):
+            if name == "a" and flags == oci.DIRECTORY_FLAGS and "dir_fd" in kwargs:
+                a.rename(self.root.parent / "retained-empty")
+                a.mkdir()
+            return original(name, flags, *args, **kwargs)
+
+        with (
+            mock.patch.object(oci.os, "open", side_effect=swapped),
+            self.assertRaises(ValueError),
+        ):
+            oci.derive_negative_subjects(self.root, "core", self.expected, a, b)
+        self.assertEqual(list(a.iterdir()), [])
+        self.assertFalse(b.exists())
+
+    def test_negative_subjects_fail_without_cleanup_on_write_or_replacement(self):
+        for fault in ("write", "replace", "relocate"):
+            with self.subTest(fault=fault), tempfile.TemporaryDirectory() as temp:
+                parent = Path(temp) / "parent"
+                parent.mkdir()
+                a, b = parent / "a", parent / "b"
+                original = oci.write_negative_subject
+                calls = []
+
+                def write(
+                    source,
+                    destination,
+                    index,
+                    manifest,
+                    kind,
+                    *,
+                    original=original,
+                    calls=calls,
+                    fault=fault,
+                    a=a,
+                    parent=parent,
+                    temp=temp,
+                ):
+                    original(source, destination, index, manifest, kind)
+                    calls.append(kind)
+                    if kind == "foreign-key":
+                        if fault == "write":
+                            raise OSError("injected write failure")
+                        if fault == "replace":
+                            a.rename(parent / "retained")
+                            a.mkdir()
+                            (a / "unrelated").write_bytes(b"keep")
+                        else:
+                            parent.rename(Path(temp) / "relocated")
+                            parent.mkdir()
+                            (parent / "unrelated").write_bytes(b"keep")
+
+                with (
+                    mock.patch.object(oci, "write_negative_subject", side_effect=write),
+                    self.assertRaises((ValueError, OSError)),
+                ):
+                    oci.derive_negative_subjects(self.root, "core", self.expected, a, b)
+                self.assertEqual(calls, list(oci.NEGATIVE_KINDS))
+                if fault == "replace":
+                    self.assertEqual((a / "unrelated").read_bytes(), b"keep")
+                elif fault == "relocate":
+                    self.assertEqual((parent / "unrelated").read_bytes(), b"keep")
+                else:
+                    self.assertTrue(a.is_dir())
+                    self.assertTrue(b.is_dir())
+
+    def test_negative_subjects_verify_before_return_and_rehash_during_copy(self):
+        for fault in ("output", "copy"):
+            with self.subTest(fault=fault), tempfile.TemporaryDirectory() as temp:
+                parent = Path(temp)
+                source = parent / "source"
+                _manifest, expected = sample(source)
+                a, b = parent / "a", parent / "b"
+                original = oci.write_negative_subject
+
+                def write(
+                    base,
+                    destination,
+                    index,
+                    manifest,
+                    kind,
+                    *,
+                    fault=fault,
+                    source=source,
+                    a=a,
+                    original=original,
+                ):
+                    layer = (
+                        source / "blobs/sha256" / manifest["layers"][0]["digest"][7:]
+                    )
+                    if fault == "copy" and kind == "unsigned":
+                        raw = layer.read_bytes()
+                        layer.write_bytes(bytes([raw[0] ^ 1]) + raw[1:])
+                    original(base, destination, index, manifest, kind)
+                    if fault == "output" and kind == "foreign-key":
+                        descriptor = manifest["layers"][0]
+                        target = a / "blobs/sha256" / descriptor["digest"][7:]
+                        target.write_bytes(b"corrupt")
+
+                with (
+                    mock.patch.object(oci, "write_negative_subject", side_effect=write),
+                    self.assertRaises((ValueError, OSError)),
+                ):
+                    oci.derive_negative_subjects(source, "core", expected, a, b)
+
     def run_cli(self, *arguments):
         output = self.root.parent / "cli-outputs"
         output.write_text("unchanged=true\n")
