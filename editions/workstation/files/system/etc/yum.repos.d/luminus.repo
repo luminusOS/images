@@ -1,0 +1,8 @@
+[luminus]
+name=Luminus OS (stable)
+baseurl=https://rpm.luminusos.org/stable/$releasever/$basearch/
+enabled=1
+gpgcheck=1
+repo_gpgcheck=1
+gpgkey=file:///usr/share/luminus/rpm-keys/luminus-stable.asc
+metadata_expire=1h

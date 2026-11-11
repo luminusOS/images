@@ -510,7 +510,6 @@ class WorkflowPhasesTest(unittest.TestCase):
                 "fedora_version",
                 "sirius_version",
                 "sirius_rpm_version",
-                "sirius_sha256",
                 "build_version",
                 "workstation_image",
                 "image_namespace",
@@ -526,7 +525,6 @@ class WorkflowPhasesTest(unittest.TestCase):
                     "fedora_version",
                     "sirius_version",
                     "sirius_rpm_version",
-                    "sirius_sha256",
                     "build_version",
                     "workstation_image",
                     "image_namespace",
@@ -563,7 +561,6 @@ class WorkflowPhasesTest(unittest.TestCase):
             "fedora_version",
             "sirius_version",
             "sirius_rpm_version",
-            "sirius_sha256",
             "build_version",
             "workstation_image",
             "image_namespace",
@@ -641,7 +638,7 @@ class WorkflowPhasesTest(unittest.TestCase):
         publish = workflow("publish.yml")
         inputs = publish["on"]["workflow_dispatch"]["inputs"]
         assert len(inputs) <= 10
-        assert {"sirius_version", "sirius_sha256"} <= inputs.keys()
+        assert "sirius_version" in inputs
         assert "candidate_workflow" not in inputs
         assert "testing_workflow" not in inputs
         for job in ("stable-source", "release"):

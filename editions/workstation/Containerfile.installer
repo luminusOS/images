@@ -15,26 +15,17 @@ ARG fedora_version
 ARG image_version
 ARG sirius_version
 ARG sirius_rpm_version
-ARG sirius_sha256
 ARG workstation_image=localhost/luminusos-workstation:latest
 ARG workstation_target_image
 ARG aurora_shell_uuid=aurora-shell@luminusos.github.io
 ARG source_url="https://github.com/LuminusOS/images"
 
-COPY shared/rpm-keys/ /usr/share/luminus/rpm-keys/
-
 RUN --mount=type=cache,target=/var/cache/dnf \
     --mount=type=bind,from=ctx-scripts,source=/scripts,target=/scripts \
     --mount=type=bind,from=python-tools,source=/usr,target=/opt/python,ro \
     env PYTHONHOME=/opt/python LD_LIBRARY_PATH=/opt/python/lib64 /opt/python/bin/python3 /scripts/rpmdb-repair.py && \
-    case "${sirius_version}" in *-rc.*) sirius_channel=testing ;; *) sirius_channel=stable ;; esac && \
-    curl -fsSL \
-      "https://rpm.luminusos.org/${sirius_channel}/${fedora_version}/x86_64/Packages/sirius-installer-${sirius_version}-1.x86_64.rpm" \
-      -o /tmp/sirius-installer.rpm && \
-    echo "${sirius_sha256}  /tmp/sirius-installer.rpm" | sha256sum -c - && \
-    rpmkeys --import "/usr/share/luminus/rpm-keys/luminus-${sirius_channel}.asc" && \
-    rpmkeys --checksig /tmp/sirius-installer.rpm | grep -q 'digests signatures OK' && \
-    dnf -y --releasever="${fedora_version}" --setopt=localpkg_gpgcheck=1 install \
+    case "${sirius_version}" in *-rc.*) sirius_repo=luminus-testing ;; *) sirius_repo=luminus ;; esac && \
+    dnf -y --releasever="${fedora_version}" --enablerepo="${sirius_repo}" install \
       bubblewrap \
       dracut-live \
       fuse-overlayfs \
@@ -47,8 +38,7 @@ RUN --mount=type=cache,target=/var/cache/dnf \
       polkit \
       squashfs-tools \
       xorriso \
-      /tmp/sirius-installer.rpm && \
-    rm -f /tmp/sirius-installer.rpm && \
+      "sirius-installer-${sirius_rpm_version}" && \
     dnf clean all && \
     # The Sirius RPM ships generic repart definitions (10-esp.conf,
     # 20-root.conf) that would mix with the LuminusOS 10-root/20-boot/30-esp

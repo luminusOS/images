@@ -196,7 +196,6 @@ def installer(args):
         "fedora_version": args.fedora,
         "sirius_version": args.sirius_version,
         "sirius_rpm_version": args.sirius_rpm_version,
-        "sirius_sha256": args.sirius_sha256,
         "workstation_image": args.workstation,
         "workstation_target_image": args.target,
         "image_version": args.version,
@@ -236,7 +235,6 @@ def main():
         "elastic-sha256",
         "sirius-version",
         "sirius-rpm-version",
-        "sirius-sha256",
         "force-core",
         "skip-flatpaks",
     ):

@@ -28,7 +28,6 @@ BASE = "sha256:" + "a" * 64
 CONFIG = {
     "UPDATE_CHANNEL": "testing",
     "DEFAULT_FEDORA_VERSION": "45",
-    "SIRIUS_SHA256": "b" * 64,
     "SIRIUS_VERSION": "1.0.4",
     "SIRIUS_RPM_VERSION": "1.0.3",
     "AURORA_SHELL_VERSION": "v1",
@@ -66,7 +65,7 @@ class MetadataTests(unittest.TestCase):
             meta.releases('SUPPORTED_RELEASES="$(touch nope)"\nLATEST_RELEASE=45')
         with self.assertRaises(ValueError):
             meta.metadata(
-                {**ENV, "SIRIUS_VERSION": "1.2.3"}, CONFIG, RELEASES, BASE, "20261105"
+                {**ENV, "SIRIUS_VERSION": "1.2"}, CONFIG, RELEASES, BASE, "20261105"
             )
         with self.assertRaises(ValueError):
             meta.metadata(

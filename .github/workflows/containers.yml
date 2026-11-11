@@ -8,7 +8,6 @@ on:
       promote_version: {type: string, default: ""}
       workstation_digest: {type: string, default: ""}
       sirius_version: {type: string, default: ""}
-      sirius_sha256: {type: string, default: ""}
       skip_flatpaks: {type: string, default: "0"}
       build_installer: {type: boolean, default: false}
       publish: {type: boolean, default: false}
@@ -69,7 +68,6 @@ jobs:
       workstation_iso_image: '${{ steps.version.outputs.workstation_iso_image }}'
       sirius_version: '${{ steps.version.outputs.sirius_version }}'
       sirius_rpm_version: '${{ steps.version.outputs.sirius_rpm_version }}'
-      sirius_sha256: '${{ steps.version.outputs.sirius_sha256 }}'
       aurora_shell_version: '${{ steps.version.outputs.aurora_shell_version }}'
       aurora_shell_sha256: '${{ steps.version.outputs.aurora_shell_sha256 }}'
       elastic_swap_version: '${{ steps.version.outputs.elastic_swap_version }}'
@@ -83,7 +81,6 @@ jobs:
           CHANNEL: '${{ inputs.channel }}'
           PROMOTE_VERSION: '${{ inputs.promote_version }}'
           SIRIUS_VERSION: '${{ inputs.sirius_version }}'
-          SIRIUS_SHA256: '${{ inputs.sirius_sha256 }}'
           BUILDER_MODE: '${{ inputs.builder_mode }}'
           PUBLISH: '${{ inputs.publish }}'
           BUILD_SEQUENCE: '${{ inputs.build_sequence }}'
@@ -286,7 +283,6 @@ jobs:
       fedora_version: ${{ needs.metadata.outputs.fedora_version }}
       sirius_version: ${{ needs.metadata.outputs.sirius_version }}
       sirius_rpm_version: ${{ needs.metadata.outputs.sirius_rpm_version }}
-      sirius_sha256: ${{ needs.metadata.outputs.sirius_sha256 }}
       build_version: ${{ needs.metadata.outputs.build_version }}
       workstation_image: ${{ needs.metadata.outputs.workstation_image }}
       image_namespace: ${{ needs.metadata.outputs.image_namespace }}

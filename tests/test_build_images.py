@@ -33,7 +33,6 @@ def args():
         elastic_sha256="b" * 64,
         sirius_version="1.0.4",
         sirius_rpm_version="1.0.3",
-        sirius_sha256="c" * 64,
         skip_flatpaks="0",
         force_core="0",
     )

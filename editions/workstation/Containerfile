@@ -237,6 +237,7 @@ RUN --mount=type=cache,target=/var/cache/dnf \
 # The system overlay mirrors the installed filesystem. Live-installer files
 # live in a separate overlay consumed only by Containerfile.installer.
 COPY editions/workstation/files/system/ /
+COPY shared/rpm-keys/ /usr/share/luminus/rpm-keys/
 COPY shared/trust/ /
 # GDM renders the login-screen logo at natural size, so keep it small.
 COPY editions/workstation/assets/gdm-logo.png /usr/share/pixmaps/luminusos-gdm-logo.png

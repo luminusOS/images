@@ -123,9 +123,8 @@ flowchart TD
 | `AURORA_SHELL_SHA256` | From `config/versions.env` | Expected digest for the Aurora Shell release artifact. |
 | `ELASTIC_SWAP_VERSION` | From `config/versions.env` | elastic-swap release whose x86_64 RPM is installed into the workstation image. |
 | `ELASTIC_SWAP_SHA256` | From `config/versions.env` | SHA256 of that RPM for the default Fedora release; the build fails if the download does not match. |
-| `SIRIUS_VERSION` | From `config/versions.env` | Sirius GitHub release downloaded into the live installer. |
-| `SIRIUS_RPM_VERSION` | From `config/versions.env` | Package version encoded in the Sirius release RPM filename and metadata. |
-| `SIRIUS_SHA256` | From `config/versions.env` | SHA256 of the Sirius release RPM; the installer build fails if the download does not match. Update it with `SIRIUS_VERSION`. |
+| `SIRIUS_VERSION` | From `config/versions.env` | Sirius release installed into the live installer from the Luminus RPM repository (`-rc.N` versions come from the testing channel, final versions from stable). |
+| `SIRIUS_RPM_VERSION` | From `config/versions.env` | Package version requested from the repository (`1.0.5~rc.2` for `1.0.5-rc.2`). |
 | `LOS_FORCE_CORE` | `0` | Rebuild core even if the local stamp is unchanged. |
 | `LOS_SKIP_FLATPAKS` | `0` | Skip Flatpak installation during workstation build. |
 
@@ -204,6 +203,7 @@ flowchart TD
 | File | Role |
 | --- | --- |
 | `shared/flatpaks` | Flatpak refs installed into workstation unless `LOS_SKIP_FLATPAKS=1`; related refs are not preinstalled so GPU-specific runtimes are resolved on the installed system. |
+| `editions/workstation/files/system/etc/yum.repos.d/luminus*.repo` | The Luminus RPM repository on the system: `luminus` (stable, enabled) and `luminus-testing` (disabled). Packages and metadata are checked against the channel keys in `shared/rpm-keys/`, installed to `/usr/share/luminus/rpm-keys/`. The live installer build installs Sirius from this repository instead of downloading the RPM. |
 | `editions/workstation/files/system/usr/libexec/luminus-flatpak-remotes` | Boot-time service that adds the Luminus application remote (`luminus` on stable, `luminus-testing` on testing) to the system Flatpak installation. The channel comes from the booted bootc image tag (`testing-*` is testing) unless `/etc/luminus/flatpak-channel` names one. It installs no applications and never changes an existing remote, so updated systems keep their remotes and a remote with the same name and another URL is left alone. The `.flatpakrepo` files under `usr/share/luminus/flatpak` come from the `flatpak-repo` descriptors. |
 | `shared/bootc-image-builder.toml.example` | Template for the gitignored local `shared/bootc-image-builder.toml` used by the direct QEMU install path (test user credentials stay out of git). |
 | `shared/scripts/` | Build-time helper scripts (rpmdb repair, releasever pin, os-release branding, initramfs rebuild, session-modes patch) bind-mounted into every edition build. |
