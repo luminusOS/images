@@ -34,6 +34,9 @@ jobs:
         with:
           python-version: '3.12'
 
+      - name: Diagnose Ubuntu package access
+        run: python3 .github/scripts/workflow/apt_diagnostics.py
+
       - name: Install system tooling
         run: |
           sudo apt-get update
