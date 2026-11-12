@@ -16,6 +16,7 @@ import zipfile
 from pathlib import Path
 from unittest import mock
 
+from test_oci_layout import base_metadata_fixture
 from test_release_pipeline import core_oci_sample
 
 MODULE = (
@@ -839,6 +840,28 @@ class PrivateHandoffTests(unittest.TestCase):
         self.addCleanup(self.tmp.cleanup)
         self.parent = Path(self.tmp.name)
         self.fixture = Fixture()
+        sample_config = next(
+            json.loads(value)
+            for name, value in self.fixture.files.items()
+            if name.startswith("blobs/") and b'"rootfs"' in value
+        )
+        self.base_raw = base_metadata_fixture(sample_config["rootfs"]["diff_ids"])
+        self.base_responses = {
+            (
+                "manifests" if n < 2 else "blobs",
+                "sha256:" + hashlib.sha256(value).hexdigest(),
+            ): value
+            for n, value in enumerate(self.base_raw)
+        }
+        reader = mock.Mock()
+        reader.get.side_effect = lambda kind, digest, deadline: self.base_responses[
+            kind, digest
+        ]
+        patcher = mock.patch.object(
+            acquisition, "FedoraMetadataTransport", return_value=reader
+        )
+        patcher.start()
+        self.addCleanup(patcher.stop)
         self.policy = {
             "repository": "luminusOS/images",
             "repository_id": "1118572971",
@@ -847,7 +870,7 @@ class PrivateHandoffTests(unittest.TestCase):
             "caller_ref": "refs/heads/main",
             "caller_workflow": ".github/workflows/build-containers.yml",
             "fedora": "45",
-            "base_digest": "sha256:" + "c" * 64,
+            "base_digest": "sha256:" + hashlib.sha256(self.base_raw[0]).hexdigest(),
             "actions_sha256": hashlib.sha256(
                 b"actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1\n"
                 b"actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6\n"
@@ -1705,6 +1728,501 @@ class PrivateHandoffTests(unittest.TestCase):
             archive_sha256=hashlib.sha256(self.fixture.archive).hexdigest(),
         )
         self.assertEqual(self.download(facts), facts)
+
+    def test_policy_base_must_match_real_core_prefix_not_embedded_claims(self):
+        raw = base_metadata_fixture(["sha256:" + "f" * 64])
+        self.policy["base_digest"] = "sha256:" + hashlib.sha256(raw[0]).hexdigest()
+        self.fixture.files["core-handoff-policy.json"] = json.dumps(
+            dict(self.policy, run_id="12", run_attempt="1"),
+            sort_keys=True,
+            separators=(",", ":"),
+        ).encode()
+        self.fixture.repack()
+        self.facts.update(
+            policy_sha256=acquisition.private_policy_sha256(self.checked()),
+            archive_sha256=hashlib.sha256(self.fixture.archive).hexdigest(),
+            archive_size=str(len(self.fixture.archive)),
+        )
+        responses = {
+            (
+                "manifests" if n < 2 else "blobs",
+                "sha256:" + hashlib.sha256(value).hexdigest(),
+            ): value
+            for n, value in enumerate(raw)
+        }
+        reader = mock.Mock()
+        reader.get.side_effect = lambda kind, digest, deadline: responses[kind, digest]
+        with (
+            mock.patch.object(
+                acquisition, "FedoraMetadataTransport", create=True, return_value=reader
+            ),
+            self.assertRaisesRegex(ValueError, "Fedora base diff_ids prefix mismatch"),
+        ):
+            self.download()
+
+    def test_independent_base_prefix_survives_recompression_but_not_core_rewrites(self):
+        base_payloads = [b"first base layer", b"second base layer"]
+        base_ids = [
+            "sha256:" + hashlib.sha256(value).hexdigest() for value in base_payloads
+        ]
+        raw = base_metadata_fixture(base_ids)
+        self.policy["base_digest"] = "sha256:" + hashlib.sha256(raw[0]).hexdigest()
+        self.base_responses.clear()
+        self.base_responses.update(
+            {
+                (
+                    "manifests" if n < 2 else "blobs",
+                    "sha256:" + hashlib.sha256(value).hexdigest(),
+                ): value
+                for n, value in enumerate(raw)
+            }
+        )
+        original_parent = self.parent
+        cases = {
+            "short": base_payloads[:1],
+            "reordered": base_payloads[::-1],
+            "mismatch": [b"replacement layer", base_payloads[1]],
+            "recompressed": [*base_payloads, b"core addition"],
+        }
+        for case, payloads in cases.items():
+            with self.subTest(case=case):
+                self.parent = original_parent / case
+                self.parent.mkdir()
+                files, original_digest = core_oci_sample()
+                index = json.loads(files["index.json"])
+                manifest = json.loads(files["blobs/sha256/" + original_digest[7:]])
+                config = json.loads(
+                    files["blobs/sha256/" + manifest["config"]["digest"][7:]]
+                )
+                config["rootfs"]["diff_ids"] = [
+                    "sha256:" + hashlib.sha256(value).hexdigest() for value in payloads
+                ]
+
+                def store(value, files=files):
+                    digest = "sha256:" + hashlib.sha256(value).hexdigest()
+                    files["blobs/sha256/" + digest[7:]] = value
+                    return {"digest": digest, "size": len(value)}
+
+                manifest["layers"] = []
+                for payload in payloads:
+                    compressed = gzip.compress(payload, mtime=12345)
+                    self.assertNotEqual(
+                        hashlib.sha256(compressed).digest(),
+                        hashlib.sha256(gzip.compress(payload, mtime=0)).digest(),
+                    )
+                    manifest["layers"].append(
+                        dict(
+                            store(compressed),
+                            mediaType="application/vnd.oci.image.layer.v1.tar+gzip",
+                        )
+                    )
+                manifest["config"].update(store(json.dumps(config).encode()))
+                index["manifests"][0].update(store(json.dumps(manifest).encode()))
+                files["index.json"] = json.dumps(index).encode()
+                files["core-handoff-policy.json"] = json.dumps(
+                    dict(self.policy, run_id="12", run_attempt="1"),
+                    sort_keys=True,
+                    separators=(",", ":"),
+                ).encode()
+                self.fixture.files = files
+                self.fixture.repack()
+                facts = dict(
+                    self.facts,
+                    policy_sha256=acquisition.private_policy_sha256(self.checked()),
+                    archive_sha256=hashlib.sha256(self.fixture.archive).hexdigest(),
+                    archive_size=str(len(self.fixture.archive)),
+                    manifest_digest=index["manifests"][0]["digest"],
+                )
+                with mock.patch.object(
+                    acquisition.oci,
+                    "verify_diff_ids",
+                    wraps=acquisition.oci.verify_diff_ids,
+                ) as verify:
+                    if case == "recompressed":
+                        self.assertEqual(self.download(facts), facts)
+                    else:
+                        with self.assertRaisesRegex(
+                            ValueError, "Fedora base diff_ids prefix mismatch"
+                        ):
+                            self.download(facts)
+                    verify.assert_called_once()
+
+
+class FedoraMetadataTransportTests(unittest.TestCase):
+    def setUp(self):
+        self.digest = "sha256:" + "a" * 64
+        self.cdn_path = "/quayio-production-s3/sha256/aa/" + "a" * 64
+        self.location = (
+            "https://cdn01.quay.io" + self.cdn_path + "?opaque=secret-signature"
+        )
+        self.responses = []
+        self.connections = []
+        self.pending = []
+        patcher = mock.patch.object(
+            acquisition.http.client, "HTTPSConnection", side_effect=self.connect
+        )
+        self.factory = patcher.start()
+        self.addCleanup(patcher.stop)
+
+    def response(self, body=b"{}", status=200, headers=None):
+        response = mock.Mock()
+        response.status = status
+        response.getheaders.return_value = (
+            headers
+            if headers is not None
+            else [
+                ("Content-Type", "application/octet-stream"),
+                ("Content-Length", str(len(body))),
+            ]
+        )
+        stream = io.BytesIO(body)
+        response.read.side_effect = stream.read
+        self.responses.append(response)
+        self.pending.append(response)
+        return response
+
+    def connect(self, *args, **kwargs):
+        self.assertTrue(self.pending, "unexpected extra connection")
+        connection = mock.Mock()
+        connection.getresponse.return_value = self.pending.pop(0)
+        self.connections.append(connection)
+        return connection
+
+    def get(self, kind="blobs", deadline=None):
+        return acquisition.FedoraMetadataTransport().get(
+            kind, self.digest, time.monotonic() + 60 if deadline is None else deadline
+        )
+
+    def assert_closed(self):
+        for response in self.responses:
+            response.close.assert_called_once_with()
+        for connection in self.connections:
+            connection.close.assert_called_once_with()
+
+    def test_fixed_digest_endpoint_anonymous_default_tls_no_proxy(self):
+        self.response()
+        with mock.patch.dict(
+            os.environ,
+            {
+                "HTTPS_PROXY": "http://attacker.invalid",
+                "GH_TOKEN": "secret",
+                "R2_SECRET_ACCESS_KEY": "secret",
+            },
+        ):
+            self.assertEqual(self.get(), b"{}")
+        args, kwargs = self.factory.call_args
+        self.assertEqual(args, ("quay.io",))
+        self.assertEqual(set(kwargs), {"timeout"})
+        self.assertGreater(kwargs["timeout"], 0)
+        self.assertLessEqual(kwargs["timeout"], 15)
+        method, path = self.connections[0].request.call_args.args
+        self.assertEqual(
+            (method, path), ("GET", "/v2/fedora/fedora-bootc/blobs/" + self.digest)
+        )
+        self.assertEqual(
+            set(self.connections[0].request.call_args.kwargs["headers"]),
+            {"Accept", "Accept-Encoding"},
+        )
+        self.assert_closed()
+
+    def test_only_config_can_redirect_once_with_fresh_anonymous_headers(self):
+        for port in ("", ":443"):
+            with self.subTest(port=port):
+                self.response(
+                    status=302,
+                    headers=[
+                        (
+                            "Location",
+                            "https://cdn01.quay.io"
+                            + port
+                            + self.cdn_path
+                            + "?opaque=secret-signature",
+                        ),
+                        ("Set-Cookie", "secret"),
+                    ],
+                )
+                self.response()
+                self.assertEqual(self.get(), b"{}")
+                self.assertEqual(self.factory.call_args.args, ("cdn01.quay.io",))
+                self.assertEqual(
+                    self.connections[-1].request.call_args.args,
+                    ("GET", self.cdn_path + "?opaque=secret-signature"),
+                )
+                self.assertEqual(
+                    self.connections[-1].request.call_args.kwargs,
+                    self.connections[-2].request.call_args.kwargs,
+                )
+        self.assert_closed()
+
+    def test_redirect_boundary_rejects_other_hosts_paths_schemes_ports_and_authorities(
+        self,
+    ):
+        locations = [
+            self.location.replace("https:", "http:"),
+            self.location.replace("cdn01.quay.io", "quay.io"),
+            self.location.replace("cdn01.quay.io", "cdn01.quay.io.attacker.invalid"),
+            self.location.replace("cdn01.quay.io", "user@cdn01.quay.io"),
+            self.location.replace("cdn01.quay.io", "cdn01.quay.io:444"),
+            self.location.replace("/aa/", "/bb/"),
+            self.location.replace("sha256/", "sha256/../"),
+            self.location + "#fragment",
+            self.location + "#",
+            self.location + "\n",
+            "/relative",
+            "//cdn01.quay.io" + self.cdn_path,
+            self.location.replace("a?", "b?"),
+            "https://cdn01.quay.io%2f.attacker.invalid" + self.cdn_path,
+        ]
+        for location in locations:
+            with self.subTest(location=location):
+                count = len(self.connections)
+                self.response(status=302, headers=[("Location", location)])
+                with self.assertRaises(ValueError) as error:
+                    self.get()
+                self.assertNotIn("secret-signature", str(error.exception))
+                self.assertEqual(len(self.connections), count + 1)
+        self.assert_closed()
+
+    def test_manifest_redirects_and_cdn_further_redirects_rejected(self):
+        self.response(status=302, headers=[("Location", self.location)])
+        with self.assertRaises(ValueError):
+            self.get("manifests")
+        self.assertEqual(len(self.connections), 1)
+        self.response(status=302, headers=[("Location", self.location)])
+        self.response(status=302, headers=[("Location", self.location)])
+        with self.assertRaises(ValueError):
+            self.get()
+        self.assertEqual(len(self.connections), 3)
+        self.assert_closed()
+
+    def test_auth_statuses_other_redirects_and_missing_duplicate_locations_rejected(
+        self,
+    ):
+        for status, headers in [
+            (code, []) for code in (301, 303, 307, 308, 401, 403, 404, 500)
+        ] + [(302, []), (302, [("Location", self.location)] * 2)]:
+            with self.subTest(status=status, headers=headers):
+                self.response(status=status, headers=headers)
+                with self.assertRaises(ValueError):
+                    self.get()
+        self.assert_closed()
+
+    def test_lengths_caps_truncation_and_encodings(self):
+        media = ("Content-Type", "application/octet-stream")
+        cases = [
+            (b"{}", [media, ("Content-Length", value)])
+            for value in ("0", "-1", "abc", "1048577", "3", "1")
+        ]
+        cases += [
+            (b"{}", [media, ("Content-Length", "2"), ("Content-Length", "2")]),
+            (b"{}", [media, ("Content-Encoding", "gzip")]),
+            (b"{}", [("Content-Type", "text/html")]),
+            (b"", [media]),
+            (b"x" * (1048576 + 1), [media]),
+        ]
+        for body, headers in cases:
+            with self.subTest(length=len(body), headers=headers):
+                self.response(body, headers=headers)
+                with self.assertRaises(ValueError):
+                    self.get()
+        self.assert_closed()
+
+    def test_chunked_without_length_and_exact_cap(self):
+        for size in (2, 1048576):
+            self.response(
+                b"x" * size, headers=[("Content-Type", "application/octet-stream")]
+            )
+            self.assertEqual(len(self.get()), size)
+        self.assert_closed()
+
+    def test_ambiguous_or_unsupported_transfer_framing_rejected(self):
+        for framing in (
+            [("Transfer-Encoding", "chunked"), ("Content-Length", "2")],
+            [("Transfer-Encoding", "gzip")],
+            [("Transfer-Encoding", "chunked")] * 2,
+        ):
+            self.response(
+                headers=[("Content-Type", "application/octet-stream"), *framing]
+            )
+            with self.assertRaises(ValueError):
+                self.get()
+        self.assert_closed()
+
+    def test_absolute_chain_alarm_interrupts_connect_headers_and_drip_reads(self):
+        raw = base_metadata_fixture(["sha256:" + "a" * 64])
+        expected = "sha256:" + hashlib.sha256(raw[0]).hexdigest()
+        handler = signal.getsignal(signal.SIGALRM)
+        for phase in ("connect", "headers", "read"):
+            with self.subTest(phase=phase):
+                response = self.response(
+                    raw[0], headers=[("Content-Type", acquisition.oci.INDEX)]
+                )
+
+                def blocked(*args, **kwargs):
+                    time.sleep(0.3)
+                    return b"x"
+
+                if phase == "connect":
+                    self.factory.side_effect = blocked
+                elif phase == "headers":
+                    original = self.connect
+
+                    def headers_blocked(*args, original=original, **kwargs):
+                        connection = original(*args, **kwargs)
+                        connection.getresponse.side_effect = blocked
+                        return connection
+
+                    self.factory.side_effect = headers_blocked
+                else:
+                    self.factory.side_effect = self.connect
+                    response.read.side_effect = blocked
+                start = time.monotonic()
+                with (
+                    mock.patch.object(acquisition, "BASE_METADATA_SECONDS", 0.05),
+                    self.assertRaises(ValueError),
+                ):
+                    acquisition.load_base_diff_ids(expected)
+                self.assertLess(time.monotonic() - start, 0.25)
+                if phase != "connect":
+                    self.connections[-1].close.assert_called_once()
+                if phase == "read":
+                    response.close.assert_called_once()
+                self.assertEqual(signal.getsignal(signal.SIGALRM), handler)
+                self.assertEqual(signal.getitimer(signal.ITIMER_REAL), (0.0, 0.0))
+                self.pending.clear()
+                self.factory.side_effect = self.connect
+
+    def test_deadline_before_connection_and_during_read_closes_everything(self):
+        with self.assertRaises(ValueError):
+            self.get(deadline=time.monotonic() - 1)
+        self.factory.assert_not_called()
+        response = self.response()
+        response.read.side_effect = TimeoutError("opaque=secret-signature")
+        with self.assertRaises(ValueError) as error:
+            self.get()
+        self.assertNotIn("secret-signature", str(error.exception))
+        self.assert_closed()
+
+    def test_failures_in_request_headers_body_and_close_do_not_leak_query(self):
+        for phase in ("request", "getresponse", "read", "close"):
+            with self.subTest(phase=phase):
+                response = self.response(
+                    status=302, headers=[("Location", self.location)]
+                )
+                final = self.response()
+                if phase in ("read", "close"):
+                    getattr(final, phase).side_effect = OSError("secret-signature")
+                else:
+                    original = self.connect
+
+                    def failing(*args, original=original, phase=phase, **kwargs):
+                        connection = original(*args, **kwargs)
+                        if args[0] == "cdn01.quay.io":
+                            getattr(connection, phase).side_effect = OSError(
+                                "secret-signature"
+                            )
+                        return connection
+
+                    self.factory.side_effect = failing
+                with self.assertRaises(ValueError) as error:
+                    self.get()
+                self.assertNotIn("secret-signature", str(error.exception))
+                response.close.assert_called_once()
+                self.connections[-1].close.assert_called_once()
+                self.pending.clear()
+                self.factory.side_effect = self.connect
+
+    def test_invalid_operation_or_digest_never_connects(self):
+        for kind, digest in (
+            ("tags", self.digest),
+            ("blobs", "latest"),
+            ("blobs", "sha256:" + "a" * 64 + "/../"),
+        ):
+            with self.assertRaises(ValueError):
+                acquisition.FedoraMetadataTransport().get(
+                    kind, digest, time.monotonic() + 60
+                )
+        self.factory.assert_not_called()
+
+    def test_three_metadata_objects_share_one_absolute_deadline_and_timer(self):
+        ids = ["sha256:" + "a" * 64]
+        raw = base_metadata_fixture(ids)
+        reader = mock.Mock()
+        calls = []
+
+        def get(kind, digest, deadline):
+            position = len(calls)
+            calls.append((kind, digest, deadline))
+            self.assertGreater(signal.getitimer(signal.ITIMER_REAL)[0], 0)
+            return raw[position]
+
+        reader.get.side_effect = get
+        before = time.monotonic()
+        self.assertEqual(
+            acquisition.load_base_diff_ids(
+                "sha256:" + hashlib.sha256(raw[0]).hexdigest(), transport=reader
+            ),
+            ids,
+        )
+        self.assertEqual(
+            [call[0] for call in calls], ["manifests", "manifests", "blobs"]
+        )
+        self.assertEqual(
+            [call[1] for call in calls],
+            ["sha256:" + hashlib.sha256(value).hexdigest() for value in raw],
+        )
+        self.assertEqual(len({call[2] for call in calls}), 1)
+        self.assertGreaterEqual(calls[0][2], before + 60)
+        self.assertEqual(signal.getitimer(signal.ITIMER_REAL), (0.0, 0.0))
+
+    def test_full_chain_permits_only_three_quay_gets_and_one_config_cdn_get(self):
+        ids = ["sha256:" + "a" * 64]
+        raw = base_metadata_fixture(ids)
+        config_hex = hashlib.sha256(raw[2]).hexdigest()
+        path = f"/quayio-production-s3/sha256/{config_hex[:2]}/{config_hex}"
+        self.response(raw[0], headers=[("Content-Type", acquisition.oci.INDEX)])
+        self.response(raw[1], headers=[("Content-Type", acquisition.oci.MANIFEST)])
+        self.response(
+            status=302,
+            headers=[
+                (
+                    "Location",
+                    "https://cdn01.quay.io" + path + "?opaque=secret-signature",
+                )
+            ],
+        )
+        self.response(raw[2])
+        self.assertEqual(
+            acquisition.load_base_diff_ids(
+                "sha256:" + hashlib.sha256(raw[0]).hexdigest()
+            ),
+            ids,
+        )
+        self.assertEqual(
+            [call.args for call in self.factory.call_args_list],
+            [("quay.io",)] * 3 + [("cdn01.quay.io",)],
+        )
+        self.assertEqual(
+            [connection.request.call_args.args for connection in self.connections[:3]],
+            [
+                (
+                    "GET",
+                    "/v2/fedora/fedora-bootc/"
+                    + ("manifests/" if n < 2 else "blobs/")
+                    + "sha256:"
+                    + hashlib.sha256(value).hexdigest(),
+                )
+                for n, value in enumerate(raw)
+            ],
+        )
+        self.assert_closed()
+
+    def test_bad_index_stops_chain_without_requesting_builder_claims(self):
+        reader = mock.Mock()
+        reader.get.return_value = b"{}"
+        with self.assertRaises(ValueError):
+            acquisition.load_base_diff_ids(self.digest, transport=reader)
+        reader.get.assert_called_once()
 
 
 if __name__ == "__main__":

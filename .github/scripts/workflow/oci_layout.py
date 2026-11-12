@@ -335,6 +335,126 @@ def verify_diff_ids(root, ref, expected):
     return verified
 
 
+def metadata_document(raw, digest, size=None):
+    expected_digest(digest)
+    require(
+        type(raw) is bytes and 0 < len(raw) <= MAX_JSON_BYTES,
+        "invalid base metadata size",
+    )
+    require(size is None or len(raw) == size, "base metadata descriptor size mismatch")
+    require(
+        "sha256:" + hashlib.sha256(raw).hexdigest() == digest,
+        "base metadata digest mismatch",
+    )
+    return document(raw)
+
+
+def base_descriptor(value, media_types, limit=None):
+    limit = MAX_JSON_BYTES if limit is None else limit
+    fields(value, {"mediaType", "digest", "size"}, {"annotations", "platform"})
+    require(
+        isinstance(value["mediaType"], str) and value["mediaType"] in media_types,
+        "invalid base descriptor mediaType",
+    )
+    expected_digest(value["digest"])
+    require(
+        type(value["size"]) is int and 0 < value["size"] <= limit,
+        "invalid base descriptor size",
+    )
+
+
+def base_manifest(index_raw, expected):
+    index = metadata_document(index_raw, expected)
+    fields(index, {"schemaVersion", "mediaType", "manifests"}, {"annotations"})
+    require(
+        type(index["schemaVersion"]) is int
+        and index["schemaVersion"] == 2
+        and index["mediaType"] == INDEX,
+        "invalid base OCI index",
+    )
+    entries = index["manifests"]
+    require(
+        isinstance(entries, list) and 0 < len(entries) <= MAX_LAYERS,
+        "invalid base manifest list",
+    )
+    selected = []
+    for entry in entries:
+        base_descriptor(entry, {MANIFEST})
+        position = entry.get("platform")
+        fields(
+            position, {"os", "architecture"}, {"variant", "os.version", "os.features"}
+        )
+        require(
+            all(
+                isinstance(position[k], str) and position[k]
+                for k in ("os", "architecture")
+            ),
+            "invalid base platform",
+        )
+        if position["os"] == "linux" and position["architecture"] == "amd64":
+            selected.append(entry)
+    require(len(selected) == 1, "base index requires exactly one linux/amd64 manifest")
+    return selected[0]
+
+
+def base_manifest_config(manifest_raw, descriptor):
+    base_descriptor(descriptor, {MANIFEST})
+    manifest = metadata_document(manifest_raw, descriptor["digest"], descriptor["size"])
+    fields(
+        manifest, {"schemaVersion", "config", "layers"}, {"mediaType", "annotations"}
+    )
+    require(
+        type(manifest["schemaVersion"]) is int
+        and manifest["schemaVersion"] == 2
+        and manifest.get("mediaType", descriptor["mediaType"]) == MANIFEST,
+        "invalid base OCI manifest",
+    )
+    base_descriptor(manifest["config"], {CONFIG})
+    for value in (descriptor, manifest["config"]):
+        if "platform" in value:
+            platform(value["platform"])
+    layers = manifest["layers"]
+    require(
+        isinstance(layers, list) and 0 < len(layers) <= MAX_LAYERS,
+        "invalid base layers",
+    )
+    for layer in layers:
+        base_descriptor(layer, LAYERS, MAX_LAYER_BYTES)
+        if "platform" in layer:
+            platform(layer["platform"])
+    return manifest["config"], len(layers)
+
+
+def base_diff_ids(index_raw, manifest_raw, config_raw, expected):
+    descriptor = base_manifest(index_raw, expected)
+    config_descriptor, count = base_manifest_config(manifest_raw, descriptor)
+    config = metadata_document(
+        config_raw, config_descriptor["digest"], config_descriptor["size"]
+    )
+    platform(config)
+    rootfs = config.get("rootfs")
+    fields(rootfs, {"type", "diff_ids"})
+    ids = rootfs["diff_ids"]
+    require(
+        rootfs["type"] == "layers"
+        and isinstance(ids, list)
+        and len(ids) == count
+        and all(isinstance(value, str) and DIGEST.fullmatch(value) for value in ids),
+        "invalid base declared diff_ids",
+    )
+    return ids
+
+
+def require_base_prefix(base, verified_core):
+    require(
+        isinstance(base, list)
+        and base
+        and isinstance(verified_core, list)
+        and verified_core[: len(base)] == base,
+        "Fedora base diff_ids prefix mismatch",
+    )
+
+
 def expected_digest(value):
     require(
         isinstance(value, str) and DIGEST.fullmatch(value),

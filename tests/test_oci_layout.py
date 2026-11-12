@@ -95,6 +95,184 @@ def sample(root):
     return manifest, store_manifest(root, manifest)
 
 
+def base_metadata_fixture(diff_ids):
+    config = encoded(
+        {
+            "os": "linux",
+            "architecture": "amd64",
+            "rootfs": {"type": "layers", "diff_ids": diff_ids},
+        }
+    )
+
+    def descriptor(raw, media):
+        return {
+            "mediaType": media,
+            "digest": "sha256:" + hashlib.sha256(raw).hexdigest(),
+            "size": len(raw),
+        }
+
+    manifest = encoded(
+        {
+            "schemaVersion": 2,
+            "config": descriptor(config, CONFIG),
+            "layers": [
+                {"mediaType": LAYER, "digest": "sha256:" + "e" * 64, "size": 100}
+                for _ in diff_ids
+            ],
+        }
+    )
+    child = descriptor(manifest, MANIFEST)
+    child["platform"] = {"os": "linux", "architecture": "amd64"}
+    index = encoded({"schemaVersion": 2, "mediaType": INDEX, "manifests": [child]})
+    return index, manifest, config
+
+
+class BaseMetadataTests(unittest.TestCase):
+    def setUp(self):
+        self.ids = ["sha256:" + "a" * 64, "sha256:" + "b" * 64]
+        self.raw = base_metadata_fixture(self.ids)
+
+    def verify(self, raw=None, expected=None):
+        raw = self.raw if raw is None else raw
+        return oci.base_diff_ids(
+            *raw, expected or "sha256:" + hashlib.sha256(raw[0]).hexdigest()
+        )
+
+    def test_exact_metadata_chain_with_optional_manifest_body_type(self):
+        self.assertEqual(self.verify(), self.ids)
+        self.assertNotIn("mediaType", json.loads(self.raw[1]))
+        oci.require_base_prefix(self.ids, [*self.ids, "sha256:" + "c" * 64])
+
+    def test_metadata_hashes_and_sizes_cannot_be_substituted(self):
+        with self.assertRaises(ValueError):
+            self.verify(expected="sha256:" + "0" * 64)
+        for position in (1, 2):
+            with self.subTest(position=position):
+                raw = list(self.raw)
+                raw[position] += b" "
+                with self.assertRaises(ValueError):
+                    self.verify(raw)
+        for field, value in (
+            ("size", 1),
+            ("size", True),
+            ("size", oci.MAX_JSON_BYTES + 1),
+            ("digest", "sha256:" + "0" * 64),
+            ("mediaType", CONFIG),
+            ("mediaType", []),
+            ("urls", ["https://attacker.invalid"]),
+        ):
+            with self.subTest(field=field):
+                index = json.loads(self.raw[0])
+                index["manifests"][0][field] = value
+                with self.assertRaises(ValueError):
+                    self.verify((encoded(index), *self.raw[1:]))
+
+    def test_unique_amd64_selection_and_index_shape(self):
+        original = json.loads(self.raw[0])
+        for entries in (
+            [],
+            original["manifests"] * 2,
+            [
+                dict(
+                    original["manifests"][0],
+                    platform={"os": "linux", "architecture": "arm64"},
+                )
+            ],
+        ):
+            with self.subTest(entries=entries), self.assertRaises(ValueError):
+                self.verify((encoded(dict(original, manifests=entries)), *self.raw[1:]))
+        for mutation in ({"schemaVersion": True}, {"mediaType": MANIFEST}):
+            with self.subTest(mutation=mutation), self.assertRaises(ValueError):
+                self.verify((encoded(dict(original, **mutation)), *self.raw[1:]))
+
+    def rebind(self, config=None, manifest=None):
+        index, original_manifest, original_config = map(json.loads, self.raw)
+        config_raw = encoded(original_config if config is None else config)
+        manifest = original_manifest if manifest is None else manifest
+        manifest["config"].update(
+            digest="sha256:" + hashlib.sha256(config_raw).hexdigest(),
+            size=len(config_raw),
+        )
+        manifest_raw = encoded(manifest)
+        index["manifests"][0].update(
+            digest="sha256:" + hashlib.sha256(manifest_raw).hexdigest(),
+            size=len(manifest_raw),
+        )
+        return encoded(index), manifest_raw, config_raw
+
+    def test_manifest_type_layer_descriptors_and_config_descriptor_fail_closed(self):
+        for mutate in (
+            lambda m: m.update(mediaType=INDEX),
+            lambda m: m.update(schemaVersion=True),
+            lambda m: m["config"].update(mediaType=LAYER),
+            lambda m: m["config"].update(urls=["https://attacker.invalid"]),
+            lambda m: m["config"].update(
+                platform={"os": "linux", "architecture": "arm64"}
+            ),
+            lambda m: m["layers"][0].update(size=True),
+            lambda m: m["layers"][0].update(mediaType=CONFIG),
+            lambda m: m["layers"][0].update(digest="invalid"),
+            lambda m: m["layers"][0].update(
+                platform={"os": "windows", "architecture": "amd64"}
+            ),
+        ):
+            manifest = json.loads(self.raw[1])
+            mutate(manifest)
+            raw = self.rebind(manifest=manifest)
+            with self.assertRaises(ValueError):
+                self.verify(raw)
+        for field, value in (
+            ("size", True),
+            ("size", 1),
+            ("digest", "sha256:" + "0" * 64),
+        ):
+            manifest = json.loads(self.raw[1])
+            manifest["config"][field] = value
+            raw = encoded(manifest)
+            index = json.loads(self.raw[0])
+            index["manifests"][0].update(
+                digest="sha256:" + hashlib.sha256(raw).hexdigest(), size=len(raw)
+            )
+            with self.subTest(config_field=field), self.assertRaises(ValueError):
+                self.verify((encoded(index), raw, self.raw[2]))
+
+    def test_config_platform_rootfs_and_layer_counts(self):
+        config = json.loads(self.raw[2])
+        cases = [dict(config, os="windows"), dict(config, architecture="arm64")]
+        for rootfs in (
+            None,
+            {},
+            {"type": "other", "diff_ids": self.ids},
+            {"type": "layers", "diff_ids": []},
+            {"type": "layers", "diff_ids": self.ids[:1]},
+            {"type": "layers", "diff_ids": [True, self.ids[1]]},
+        ):
+            cases.append(dict(config, rootfs=rootfs))
+        for value in cases:
+            with self.subTest(config=value), self.assertRaises(ValueError):
+                self.verify(self.rebind(config=value))
+
+    def test_metadata_json_and_byte_caps(self):
+        for raw in (
+            b'{"schemaVersion":2,"schemaVersion":2}',
+            b'{"x":NaN}',
+            b"\xff",
+            b"[]",
+        ):
+            with self.subTest(raw=raw), self.assertRaises(ValueError):
+                self.verify((raw, *self.raw[1:]))
+        with (
+            mock.patch.object(oci, "MAX_JSON_BYTES", len(self.raw[0]) - 1),
+            self.assertRaises(ValueError),
+        ):
+            self.verify()
+
+    def test_short_reordered_or_different_verified_core_prefix_fails(self):
+        for core in (self.ids[:1], self.ids[::-1], ["sha256:" + "c" * 64, self.ids[1]]):
+            with self.subTest(core=core), self.assertRaises(ValueError):
+                oci.require_base_prefix(self.ids, core)
+
+
 class DiffIDTests(unittest.TestCase):
     def setUp(self):
         self.temporary = tempfile.TemporaryDirectory()
