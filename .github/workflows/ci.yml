@@ -73,6 +73,10 @@ jobs:
           persist-credentials: false
 
       - name: actionlint
-        uses: docker://rhysd/actionlint@sha256:887a259a5a534f3c4f36cb02dca341673c6089431057242cdc931e9f133147e9 # 1.7.7
-        with:
-          args: -color
+        timeout-minutes: 10
+        run: |
+          docker build --platform linux/amd64 --file .github/containers/actionlint/Containerfile \
+            --tag luminus-actionlint:native26 .github/containers/actionlint
+          docker run --rm --network=none --read-only --cap-drop=ALL --security-opt=no-new-privileges \
+            --mount type=bind,src="$GITHUB_WORKSPACE",dst=/work,readonly --workdir /work \
+            luminus-actionlint:native26 -color -shellcheck=/usr/local/bin/shellcheck -pyflakes=/usr/bin/pyflakes

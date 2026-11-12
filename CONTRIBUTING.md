@@ -38,6 +38,22 @@ just test    # Python unittest discovery and config validation
 
 The Python tests under `tests/` exercise the automation and validate the config files shipped in the images: TOML, JSON, systemd units, repart definitions, YAML, overlays, version defaults, and artifact/QEMU resolution. CI also lints the workflows with actionlint, and `build-containers` build-checks `core` and `workstation`. Packaging validation uses `.github/scripts/boot-test.py` to check for a graphical screen under QEMU/KVM; it does not replace installation and first-boot evidence.
 
+### Workflow lint
+
+Use Docker with BuildKit to build and run the same workflow checker as CI:
+
+```bash
+docker build --platform linux/amd64 --file .github/containers/actionlint/Containerfile \
+  --tag luminus-actionlint:native26 .github/containers/actionlint
+docker run --rm --network=none --read-only --cap-drop=ALL --security-opt=no-new-privileges \
+  --mount type=bind,src="$PWD",dst=/work,readonly --workdir /work \
+  luminus-actionlint:native26 -shellcheck=/usr/local/bin/shellcheck -pyflakes=/usr/bin/pyflakes
+```
+
+The Containerfile pins the Go builder, actionlint source archive, patch and original runtime image. Dependency fetching authenticates the selected versions against the unchanged upstream checksums; tests and compilation then run without network access. Only the actionlint binary is replaced, preserving ShellCheck and Pyflakes.
+
+The local patch adds native Ubuntu 26.04 runner recognition and compatibility checks. Remove it when adopting an upstream release with equivalent support, and retain tests for unknown labels, incompatible runners and both external checkers. Source or dependency updates require reviewing the pins and checksums rather than accepting newly generated lock entries.
+
 ## Packaging
 
 Build the workstation image first, then package the desired artifact:

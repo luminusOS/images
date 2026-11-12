@@ -31,6 +31,8 @@ just qemu iso
 
 For a directly bootable VM disk, use `just package workstation qcow2`. To build only the shared base, use `just build core`.
 
+For workflow changes, run the [workflow lint checks](CONTRIBUTING.md#workflow-lint), including ShellCheck and Pyflakes.
+
 ## Updates and trust
 
 Images are delivered through OCI registries; releases require cosign signatures and validation evidence before promotion. Installed systems support atomic updates and rollback.
