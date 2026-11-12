@@ -1,8 +1,8 @@
 """Acquire legacy consistency evidence or an independently pinned private handoff.
 
 The default transport requires a trusted gh executable, credential configuration
-and TLS roots. Credential forwarding on asset redirects is delegated to that
-trusted CLI; this module never handles redirect URLs or adds Authorization headers.
+and TLS roots. Credential forwarding on legacy asset redirects is delegated to
+that trusted CLI. Private base metadata uses a separate anonymous transport.
 Injected transports are test seams, not authenticated-observation attestations.
 The caller selects a parent whose contents are controlled by the current user or
 a trusted administrator. Its descriptor must be effective-user- or root-owned,
@@ -31,6 +31,7 @@ from contextlib import ExitStack, contextmanager
 from datetime import UTC, datetime
 from pathlib import Path, PurePosixPath
 from typing import NamedTuple
+from urllib.parse import urlsplit
 
 spec = importlib.util.spec_from_file_location(
     "acquisition_binding", Path(__file__).with_name("core_build_binding.py")
@@ -764,6 +765,157 @@ def r2_deadline(deadline):
         signal.signal(signal.SIGALRM, previous_handler)
 
 
+BASE_METADATA_SECONDS = 60
+
+
+class FedoraMetadataTransport:
+    def get(self, kind, digest, deadline):
+        require(kind in ("manifests", "blobs"), "invalid Fedora metadata operation")
+        oci.expected_digest(digest)
+        host = "quay.io"
+        path = f"/v2/fedora/fedora-bootc/{kind}/{digest}"
+        try:
+            for redirected in (False, True):
+                require(
+                    time.monotonic() < deadline, "Fedora metadata deadline exceeded"
+                )
+                connection, response = None, None
+                try:
+                    connection = http.client.HTTPSConnection(
+                        host, timeout=min(15, deadline - time.monotonic())
+                    )
+                    connection.request(
+                        "GET",
+                        path,
+                        headers={
+                            "Accept": f"{oci.INDEX}, {oci.MANIFEST}, {oci.CONFIG}, application/octet-stream",
+                            "Accept-Encoding": "identity",
+                        },
+                    )
+                    response = connection.getresponse()
+                    if response.status == 302:
+                        require(
+                            kind == "blobs" and not redirected,
+                            "Fedora metadata redirect rejected",
+                        )
+                        locations = [
+                            v
+                            for k, v in response.getheaders()
+                            if k.lower() == "location"
+                        ]
+                        require(
+                            len(locations) == 1
+                            and len(locations[0]) <= 8192
+                            and not re.search(r"[\x00-\x20\x7f#]", locations[0]),
+                            "Fedora metadata redirect rejected",
+                        )
+                        target = urlsplit(locations[0])
+                        expected_path = (
+                            f"/quayio-production-s3/sha256/{digest[7:9]}/{digest[7:]}"
+                        )
+                        require(
+                            target.scheme == "https"
+                            and target.netloc in ("cdn01.quay.io", "cdn01.quay.io:443")
+                            and target.path == expected_path,
+                            "Fedora metadata redirect rejected",
+                        )
+                        host = "cdn01.quay.io"
+                        path = target.path + (
+                            "?" + target.query if target.query else ""
+                        )
+                        continue
+                    require(response.status == 200, "Fedora metadata response rejected")
+                    headers = response.getheaders()
+                    lengths = [v for k, v in headers if k.lower() == "content-length"]
+                    transfers = [
+                        v for k, v in headers if k.lower() == "transfer-encoding"
+                    ]
+                    require(
+                        not transfers or (transfers == ["chunked"] and not lengths),
+                        "ambiguous Fedora metadata framing",
+                    )
+                    require(
+                        len(lengths) <= 1
+                        and (not lengths or re.fullmatch(r"[0-9]{1,10}", lengths[0])),
+                        "invalid Fedora metadata length",
+                    )
+                    size = int(lengths[0]) if lengths else None
+                    require(
+                        size is None or 0 < size <= oci.MAX_JSON_BYTES,
+                        "Fedora metadata size limit exceeded",
+                    )
+                    encodings = [
+                        v for k, v in headers if k.lower() == "content-encoding"
+                    ]
+                    require(
+                        not encodings or encodings == ["identity"],
+                        "Fedora metadata encoding rejected",
+                    )
+                    media = [v for k, v in headers if k.lower() == "content-type"]
+                    allowed = (
+                        {oci.INDEX, oci.MANIFEST}
+                        if kind == "manifests"
+                        else {oci.CONFIG, "application/octet-stream"}
+                    )
+                    require(
+                        len(media) == 1 and media[0] in allowed,
+                        "Fedora metadata content type rejected",
+                    )
+                    chunks, total = [], 0
+                    while True:
+                        require(
+                            time.monotonic() < deadline,
+                            "Fedora metadata deadline exceeded",
+                        )
+                        chunk = response.read(
+                            min(65536, oci.MAX_JSON_BYTES + 1 - total)
+                        )
+                        if not chunk:
+                            break
+                        require(type(chunk) is bytes, "invalid Fedora metadata bytes")
+                        total += len(chunk)
+                        require(
+                            total <= oci.MAX_JSON_BYTES,
+                            "Fedora metadata size limit exceeded",
+                        )
+                        chunks.append(chunk)
+                    require(
+                        total > 0 and (size is None or total == size),
+                        "truncated Fedora metadata",
+                    )
+                    require(
+                        time.monotonic() < deadline, "Fedora metadata deadline exceeded"
+                    )
+                    return b"".join(chunks)
+                finally:
+                    try:
+                        if response is not None:
+                            response.close()
+                    finally:
+                        if connection is not None:
+                            connection.close()
+        except (OSError, ValueError, http.client.HTTPException):
+            raise ValueError(
+                "Fedora base metadata request rejected; response details withheld"
+            ) from None
+        raise ValueError("Fedora metadata redirect rejected")
+
+
+def load_base_diff_ids(expected, *, transport=None):
+    oci.expected_digest(expected)
+    transport = FedoraMetadataTransport() if transport is None else transport
+    deadline = time.monotonic() + BASE_METADATA_SECONDS
+    with r2_deadline(deadline):
+        index = transport.get("manifests", expected, deadline)
+        manifest_descriptor = oci.base_manifest(index, expected)
+        manifest = transport.get("manifests", manifest_descriptor["digest"], deadline)
+        config_descriptor, _ = oci.base_manifest_config(manifest, manifest_descriptor)
+        config = transport.get("blobs", config_descriptor["digest"], deadline)
+        result = oci.base_diff_ids(index, manifest, config, expected)
+        require(time.monotonic() < deadline, "Fedora metadata deadline exceeded")
+        return result
+
+
 class R2Transport:
     def request(self, method, key, payload_hash, *, size=0, source=None, deadline=None):
         if deadline is None:
@@ -930,7 +1082,12 @@ def private_download(policy, facts, output, *, transport=None):
                     "private OCI manifest mismatch",
                 )
                 with r2_deadline(time.monotonic() + oci.DIFFID_TIMEOUT_SECONDS):
-                    oci.verify_diff_ids(layout, "core", facts["manifest_digest"])
+                    verified = oci.verify_diff_ids(
+                        layout, "core", facts["manifest_digest"]
+                    )
+                oci.require_base_prefix(
+                    load_base_diff_ids(policy["base_digest"]), verified
+                )
         return dict(facts)
 
 
