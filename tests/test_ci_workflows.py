@@ -1,3 +1,4 @@
+import copy
 import hashlib
 import importlib.util
 import io
@@ -945,6 +946,322 @@ class ContainerWorkflowTests(unittest.TestCase):
             Loader=yaml.BaseLoader,
         )
 
+    def assert_container_security_contract(self, workflow, private=False):
+        jobs = workflow["jobs"]
+        permissions = {
+            "metadata": {"contents": "read"},
+            "core": {"contents": "read", "packages": "read"},
+            "workstation": {"contents": "read", "packages": "read", "actions": "read"},
+            "installer": {"contents": "read", "packages": "read", "actions": "read"},
+        }
+        private_permissions = {
+            "private-core": {"contents": "read"},
+            "private-core-attest": {
+                "contents": "read",
+                "actions": "read",
+                "id-token": "write",
+                "attestations": "write",
+            },
+        }
+        if private:
+            permissions = private_permissions
+        self.assertEqual(set(jobs), set(permissions))
+        legacy_conditions = {
+            "core": "inputs.channel != 'stable'",
+            "workstation": "inputs.channel != 'stable'",
+            "installer": "always() && inputs.build_installer && needs.metadata.result == 'success' && (inputs.channel == 'stable' || needs.workstation.result == 'success')",
+        }
+        if not private:
+            self.assertNotIn("if", jobs["metadata"])
+            self.assertNotIn("private_core", str(workflow))
+            for name, condition in legacy_conditions.items():
+                self.assertEqual(jobs[name]["if"], condition, name)
+        else:
+            self.assert_private_job_contract(jobs)
+
+        secret_steps = (
+            {
+                ("private-core", "Transport private producer archive"): {
+                    "R2_ACCESS_KEY_ID": "${{ secrets.CORE_R2_WRITER_ACCESS_KEY_ID }}",
+                    "R2_SECRET_ACCESS_KEY": "${{ secrets.CORE_R2_WRITER_SECRET_ACCESS_KEY }}",
+                },
+                ("private-core-attest", "Check actual private producer object"): {
+                    "R2_ACCESS_KEY_ID": "${{ secrets.CORE_R2_READER_ACCESS_KEY_ID }}",
+                    "R2_SECRET_ACCESS_KEY": "${{ secrets.CORE_R2_READER_SECRET_ACCESS_KEY }}",
+                    "GH_TOKEN": "${{ github.token }}",
+                },
+            }
+            if private
+            else {}
+        )
+        self.assertNotIn("secrets.", str(workflow.get("env", {})))
+        self.assertNotIn("R2_", str(workflow.get("env", {})))
+        seen = []
+        for name, job in jobs.items():
+            self.assertEqual(job["permissions"], permissions[name], name)
+            self.assertNotIn("secrets", job, name)
+            job_settings = {k: v for k, v in job.items() if k != "steps"}
+            self.assertNotIn("secrets.", str(job_settings), name)
+            self.assertNotIn("R2_", str(job_settings), name)
+            self.assertNotIn("GH_TOKEN", job.get("env", {}), name)
+            for step in job.get("steps", []):
+                if "docker/build-push-action" in step.get("uses", ""):
+                    self.assertEqual(step["with"].get("push"), "false")
+                key = (name, step.get("name"))
+                if key in secret_steps:
+                    seen.append(key)
+                    credentials = secret_steps[key]
+                    self.assertEqual(
+                        set(step["env"]), {*credentials, "CORE_HANDOFF_FACTS"}
+                    )
+                    for variable, reference in credentials.items():
+                        self.assertEqual(step["env"][variable], reference)
+                    remaining = copy.deepcopy(step)
+                    for variable in credentials:
+                        del remaining["env"][variable]
+                    self.assertNotIn("secrets.", str(remaining))
+                    self.assertNotIn("R2_", str(remaining))
+                else:
+                    self.assertNotIn("secrets.", str(step), key)
+                    self.assertNotIn("R2_", str(step), key)
+        self.assertCountEqual(seen, secret_steps)
+
+    def assert_private_job_contract(self, jobs):
+        steps = {
+            "private-core": [
+                "Validate independent operator policy",
+                "actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1",
+                "actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1",
+                "Install trusted OCI tooling",
+                "Build and export private core",
+                "Pack checked producer output",
+                "Terminate builder before credential transport",
+                "Transport private producer archive",
+            ],
+            "private-core-attest": [
+                "Validate independent operator policy",
+                "actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1",
+                "Check actual private producer object",
+                "Attest checked local archive with native provenance",
+            ],
+        }
+        context = '{"repository":${{ toJSON(github.repository) }},"repository_id":${{ toJSON(github.repository_id) }},"sha":${{ toJSON(github.sha) }},"ref":${{ toJSON(github.ref) }},"event_name":${{ toJSON(github.event_name) }},"workflow_ref":${{ toJSON(github.workflow_ref) }},"run_id":${{ toJSON(github.run_id) }},"run_attempt":${{ toJSON(github.run_attempt) }}}'
+        for name, job in jobs.items():
+            self.assertEqual(job["runs-on"], "ubuntu-24.04")
+            self.assertEqual(
+                job["timeout-minutes"], "150" if name == "private-core" else "30"
+            )
+            self.assertEqual(
+                job["env"],
+                {
+                    "CORE_HANDOFF_POLICY": "${{ vars.CORE_HANDOFF_POLICY }}",
+                    "CORE_HANDOFF_CONTEXT": context,
+                },
+            )
+            self.assertEqual(
+                [step.get("name", step.get("uses")) for step in job["steps"]],
+                steps[name],
+            )
+            for step in job["steps"]:
+                if step.get("id") == "policy":
+                    self.assertEqual(
+                        step["env"],
+                        {
+                            "CORE_HANDOFF_JOB": "${{ toJSON(job) }}",
+                            "CORE_RUNNER_ENVIRONMENT": "${{ runner.environment }}",
+                            "ACTION_CLOSURE": "actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1\nactions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6",
+                        },
+                    )
+                elif step.get("name") not in (
+                    "Transport private producer archive",
+                    "Check actual private producer object",
+                ):
+                    self.assertNotIn("env", step)
+        self.assertEqual(
+            jobs["private-core"]["if"],
+            "inputs.private_core_handoff && github.event_name == 'workflow_dispatch' && github.repository == 'luminusOS/images' && !inputs.publish && !inputs.build_installer && inputs.channel == 'testing'",
+        )
+        self.assertNotIn("needs", jobs["private-core"])
+        self.assertEqual(jobs["private-core"]["environment"], "core-candidate-writer")
+        self.assertEqual(jobs["private-core-attest"]["needs"], ["private-core"])
+        self.assertEqual(
+            jobs["private-core-attest"]["if"],
+            "inputs.private_core_handoff && github.event_name == 'workflow_dispatch' && needs.private-core.result == 'success'",
+        )
+        self.assertEqual(
+            jobs["private-core-attest"]["environment"], "core-candidate-reader"
+        )
+
+    def test_private_core_security_contract_rejects_mutations(self):
+        originals = {
+            False: self.load_workflow("containers.yml"),
+            True: self.load_workflow("private-core-producer.yml"),
+        }
+        for private, original in originals.items():
+            self.assert_container_security_contract(original, private)
+        mutations = [
+            (
+                "legacy build credential",
+                "core",
+                "Build core",
+                "env",
+                {
+                    "R2_SECRET_ACCESS_KEY": "${{ secrets.CORE_R2_WRITER_SECRET_ACCESS_KEY }}"
+                },
+            ),
+            (
+                "private host build credential",
+                "private-core",
+                "Build and export private core",
+                "env",
+                {
+                    "R2_SECRET_ACCESS_KEY": "${{ secrets.CORE_R2_WRITER_SECRET_ACCESS_KEY }}"
+                },
+            ),
+            (
+                "wrong writer environment",
+                "private-core",
+                None,
+                "environment",
+                "unprotected",
+            ),
+            (
+                "wrong reader environment",
+                "private-core-attest",
+                None,
+                "environment",
+                "unprotected",
+            ),
+            (
+                "changed legacy core condition",
+                "core",
+                None,
+                "if",
+                "inputs.private_core_handoff",
+            ),
+            ("changed legacy metadata condition", "metadata", None, "if", "true"),
+            (
+                "writer token escalation",
+                "private-core",
+                None,
+                "permissions",
+                {"contents": "read", "id-token": "write"},
+            ),
+            (
+                "legacy token escalation",
+                "core",
+                None,
+                "permissions",
+                {"contents": "read", "packages": "read", "id-token": "write"},
+            ),
+            (
+                "attester package escalation",
+                "private-core-attest",
+                None,
+                "permissions",
+                {
+                    "contents": "read",
+                    "actions": "read",
+                    "id-token": "write",
+                    "attestations": "write",
+                    "packages": "write",
+                },
+            ),
+            ("inherited job secrets", "private-core", None, "secrets", "inherit"),
+            (
+                "job-level credential",
+                "private-core",
+                None,
+                "env",
+                {"R2_ACCESS_KEY_ID": "${{ secrets.CORE_R2_WRITER_ACCESS_KEY_ID }}"},
+            ),
+            (
+                "unapproved transport env",
+                "private-core",
+                "Transport private producer archive",
+                "env",
+                {
+                    "R2_ACCESS_KEY_ID": "${{ secrets.CORE_R2_READER_ACCESS_KEY_ID }}",
+                    "R2_SECRET_ACCESS_KEY": "${{ secrets.CORE_R2_READER_SECRET_ACCESS_KEY }}",
+                    "CORE_HANDOFF_FACTS": "{}",
+                },
+            ),
+            (
+                "missing writer success dependency",
+                "private-core-attest",
+                None,
+                "needs",
+                [],
+            ),
+            (
+                "private PR gate",
+                "private-core",
+                None,
+                "if",
+                "inputs.private_core_handoff",
+            ),
+        ]
+        for label, job_name, step_name, field, value in mutations:
+            with self.subTest(mutation=label):
+                private = job_name.startswith("private-core")
+                mutated = copy.deepcopy(originals[private])
+                target = mutated["jobs"][job_name]
+                if step_name:
+                    target = next(
+                        s for s in target["steps"] if s.get("name") == step_name
+                    )
+                target[field] = value
+                with self.assertRaises(AssertionError):
+                    self.assert_container_security_contract(mutated, private)
+        mutated = copy.deepcopy(originals[True])
+        mutated["jobs"]["private-core-extra"] = copy.deepcopy(
+            mutated["jobs"]["private-core"]
+        )
+        with self.assertRaises(AssertionError):
+            self.assert_container_security_contract(mutated, True)
+
+    def test_private_opt_in_defaults_off_without_changing_legacy_caller_routes(self):
+        private = self.load_workflow("private-core-producer.yml")
+        self.assertEqual(set(private["on"]), {"workflow_call"})
+        call = private["on"]["workflow_call"]
+        inputs = call["inputs"]
+        self.assertEqual(
+            set(inputs),
+            {"channel", "build_installer", "publish", "private_core_handoff"},
+        )
+        self.assertEqual(
+            set(call["outputs"]),
+            {
+                "private_core_key",
+                "private_core_policy_sha256",
+                "private_core_archive_sha256",
+                "private_core_archive_size",
+                "private_core_manifest_digest",
+            },
+        )
+        self.assertEqual(
+            inputs["private_core_handoff"], {"type": "boolean", "default": "false"}
+        )
+        for path in (ROOT / ".github/workflows").glob("*.yml"):
+            if path.name != "private-core-producer.yml":
+                self.assertNotIn("private-core-producer.yml", path.read_text())
+        self.assertNotIn(
+            "private_core_handoff",
+            self.load_workflow("containers.yml")["on"]["workflow_call"]["inputs"],
+        )
+        for name in ("build-containers.yml", "auto-testing.yml", "publish.yml"):
+            for job in self.load_workflow(name)["jobs"].values():
+                if job.get("uses") == "./.github/workflows/containers.yml":
+                    self.assertEqual(
+                        job["with"].get("private_core_handoff", "false"), "false"
+                    )
+                    self.assertEqual(job["with"]["publish"], "false")
+                    self.assertNotIn("secrets", job)
+                    self.assertEqual(
+                        job["permissions"],
+                        {"contents": "read", "packages": "read", "actions": "read"},
+                    )
+
     def test_resume_imports_original_candidate_without_rebuilding(self):
         workflow = self.load_workflow("publish.yml")
         jobs = workflow["jobs"]
@@ -1049,11 +1366,7 @@ class ContainerWorkflowTests(unittest.TestCase):
                 any(step.get("with", {}).get("push") == "true" for step in job["steps"])
             )
             self.assertFalse(any("secrets." in str(step) for step in job["steps"]))
-        for job in workflow["jobs"].values():
-            for step in job.get("steps", []):
-                if "docker/build-push-action" in step.get("uses", ""):
-                    self.assertEqual(step["with"].get("push"), "false")
-                self.assertNotIn("secrets.", str(step))
+        self.assert_container_security_contract(workflow)
 
     def test_reusable_installer_workflow_is_read_only_and_uses_approved_payload(self):
         workflow = self.load_workflow("installer.yml")
@@ -1191,9 +1504,13 @@ class ContainerWorkflowTests(unittest.TestCase):
             outputs["workstation_image"]["value"],
             "${{ jobs.metadata.outputs.workstation_image }}",
         )
-        self.assertEqual(workflow["jobs"]["core"]["if"], "inputs.channel != 'stable'")
         self.assertEqual(
-            workflow["jobs"]["workstation"]["if"], "inputs.channel != 'stable'"
+            workflow["jobs"]["core"]["if"],
+            "inputs.channel != 'stable'",
+        )
+        self.assertEqual(
+            workflow["jobs"]["workstation"]["if"],
+            "inputs.channel != 'stable'",
         )
         self.assertEqual(workflow["jobs"]["workstation"]["needs"], ["metadata", "core"])
 
