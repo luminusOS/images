@@ -859,7 +859,7 @@ class PrivateHandoffTests(unittest.TestCase):
             "ref": "refs/heads/main",
             "event_name": "workflow_dispatch",
             "workflow_ref": "luminusOS/images/.github/workflows/build-containers.yml@refs/heads/main",
-            "producer_ref": "luminusOS/images/.github/workflows/containers.yml@"
+            "producer_ref": "luminusOS/images/.github/workflows/private-core-producer.yml@"
             + "b" * 40,
             "producer_sha": "b" * 40,
             "run_id": "12",
@@ -884,6 +884,15 @@ class PrivateHandoffTests(unittest.TestCase):
 
     def checked(self):
         return acquisition.private_policy(self.policy, self.context)
+
+    def test_legacy_combined_producer_identity_is_rejected(self):
+        context = dict(
+            self.context,
+            producer_ref="luminusOS/images/.github/workflows/containers.yml@"
+            + "b" * 40,
+        )
+        with self.assertRaises(ValueError):
+            acquisition.private_policy(self.policy, context)
 
     def test_independent_policy_binds_producer_source_and_recipe(self):
         policy = self.checked()
@@ -1014,7 +1023,10 @@ class PrivateHandoffTests(unittest.TestCase):
             ("--source-digest", SOURCE),
             ("--source-ref", "refs/heads/main"),
             ("--format", "json"),
-            ("--signer-workflow", "luminusOS/images/.github/workflows/containers.yml"),
+            (
+                "--signer-workflow",
+                "luminusOS/images/.github/workflows/private-core-producer.yml",
+            ),
         ):
             self.assertEqual(argv[argv.index(flag) + 1], value)
         self.assertIn("--deny-self-hosted-runners", argv)
@@ -1040,11 +1052,10 @@ class PrivateHandoffTests(unittest.TestCase):
 
         root = MODULE.parents[3]
         workflow = yaml.safe_load(
-            (root / ".github/workflows/containers.yml").read_text()
+            (root / ".github/workflows/private-core-producer.yml").read_text()
         )
         jobs = workflow["jobs"]
-        for name in ("metadata", "core", "workstation", "installer"):
-            self.assertIn("!inputs.private_core_handoff", jobs[name]["if"])
+        self.assertEqual(set(jobs), {"private-core", "private-core-attest"})
         build, attest = jobs["private-core"], jobs["private-core-attest"]
         self.assertEqual(build["environment"], "core-candidate-writer")
         self.assertEqual(attest["environment"], "core-candidate-reader")
@@ -1172,7 +1183,9 @@ class PrivateHandoffTests(unittest.TestCase):
         import yaml
 
         workflow = yaml.safe_load(
-            (MODULE.parents[3] / ".github/workflows/containers.yml").read_text()
+            (
+                MODULE.parents[3] / ".github/workflows/private-core-producer.yml"
+            ).read_text()
         )
         for job_name in ("private-core", "private-core-attest"):
             step = workflow["jobs"][job_name]["steps"][0]
@@ -1214,7 +1227,9 @@ class PrivateHandoffTests(unittest.TestCase):
         import yaml
 
         workflow = yaml.safe_load(
-            (MODULE.parents[3] / ".github/workflows/containers.yml").read_text()
+            (
+                MODULE.parents[3] / ".github/workflows/private-core-producer.yml"
+            ).read_text()
         )
         job = workflow["jobs"]["private-core"]
         self.assertNotIn("R2_", json.dumps(job.get("env", {})))

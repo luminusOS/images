@@ -573,7 +573,7 @@ PRIVATE_ACTIONS = (
 PRIVATE_ACTIONS_SHA256 = hashlib.sha256(
     ("\n".join(PRIVATE_ACTIONS) + "\n").encode()
 ).hexdigest()
-PRIVATE_WORKFLOW = "luminusOS/images/.github/workflows/containers.yml"
+PRIVATE_WORKFLOW = "luminusOS/images/.github/workflows/private-core-producer.yml"
 R2_HOST = "89e6fc75aed6d04cd84a0c7d11a5594e.r2.cloudflarestorage.com"
 R2_BUCKET = "luminus-images-staging"
 R2_TRANSACTION_SECONDS = 600

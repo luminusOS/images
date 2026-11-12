@@ -11,16 +11,83 @@ def workflow(name):
     return yaml.safe_load((ROOT / ".github" / "workflows" / name).read_text())
 
 
+def reusable_permission_errors(workflows, entrypoint):
+    levels = {"none": 0, "read": 1, "write": 2}
+    errors = []
+
+    def visit(filename, ceiling=None):
+        data = workflows[filename]
+        for name, job in data["jobs"].items():
+            requested = job.get("permissions", data.get("permissions", ceiling or {}))
+            if ceiling is not None:
+                for permission, level in requested.items():
+                    if levels[level] > levels[ceiling.get(permission, "none")]:
+                        errors.append((filename, name, permission, level))
+            uses = job.get("uses", "")
+            if uses.startswith("./.github/workflows/"):
+                effective = (
+                    requested
+                    if ceiling is None
+                    else {
+                        permission: level
+                        for permission, level in requested.items()
+                        if levels[level] <= levels[ceiling.get(permission, "none")]
+                    }
+                )
+                visit(uses.rsplit("/", 1)[1], effective)
+
+    visit(entrypoint)
+    return errors
+
+
 class WorkflowPhasesTest(unittest.TestCase):
-    def assert_container_token_scope(self, containers):
-        approved = {
-            (
-                "workstation",
-                "fetch-core-oci",
-                "Fetch verified canonical core OCI layout",
-            ),
-            ("private-core-attest", None, "Check actual private producer object"),
+    def test_legacy_call_graph_respects_permission_ceiling_before_conditions(self):
+        workflows = {
+            path.name: workflow(path.name)
+            for path in (ROOT / ".github/workflows").glob("*.yml")
         }
+        for caller in ("build-containers.yml", "publish.yml", "auto-testing.yml"):
+            with self.subTest(caller=caller):
+                self.assertEqual(reusable_permission_errors(workflows, caller), [])
+
+    def test_permission_ceiling_rejects_guarded_false_nested_attester(self):
+        workflows = {
+            path.name: workflow(path.name)
+            for path in (ROOT / ".github/workflows").glob("*.yml")
+        }
+        attester = copy.deepcopy(
+            workflows["private-core-producer.yml"]["jobs"]["private-core-attest"]
+        )
+        attester["if"] = "${{ false }}"
+        workflows["containers.yml"]["jobs"]["private-core-attest"] = attester
+        for caller in ("build-containers.yml", "publish.yml", "auto-testing.yml"):
+            with self.subTest(caller=caller):
+                self.assertEqual(
+                    reusable_permission_errors(workflows, caller),
+                    [
+                        ("containers.yml", "private-core-attest", "id-token", "write"),
+                        (
+                            "containers.yml",
+                            "private-core-attest",
+                            "attestations",
+                            "write",
+                        ),
+                    ]
+                    * (2 if caller != "build-containers.yml" else 1),
+                )
+
+    def assert_container_token_scope(self, containers, private=False):
+        approved = (
+            {("private-core-attest", None, "Check actual private producer object")}
+            if private
+            else {
+                (
+                    "workstation",
+                    "fetch-core-oci",
+                    "Fetch verified canonical core OCI layout",
+                ),
+            }
+        )
         self.assertNotIn("GH_TOKEN", containers.get("env", {}))
         self.assertNotIn("github.token", str(containers.get("env", {})))
         seen = []
@@ -40,14 +107,20 @@ class WorkflowPhasesTest(unittest.TestCase):
         self.assertCountEqual(seen, approved)
 
     def test_container_token_scope_rejects_mutations(self):
-        original = workflow("containers.yml")
+        originals = {
+            False: workflow("containers.yml"),
+            True: workflow("private-core-producer.yml"),
+        }
+        for private, original in originals.items():
+            self.assert_container_token_scope(original, private)
         for job_name, step_name in (
             ("core", "Build core"),
             ("private-core", "Build and export private core"),
             ("private-core-attest", "Validate independent operator policy"),
         ):
             with self.subTest(job=job_name, step=step_name):
-                mutated = copy.deepcopy(original)
+                private = job_name.startswith("private-core")
+                mutated = copy.deepcopy(originals[private])
                 step = next(
                     s
                     for s in mutated["jobs"][job_name]["steps"]
@@ -55,21 +128,18 @@ class WorkflowPhasesTest(unittest.TestCase):
                 )
                 step.setdefault("env", {})["GH_TOKEN"] = "${{ github.token }}"
                 with self.assertRaises(AssertionError):
-                    self.assert_container_token_scope(mutated)
-        mutated = copy.deepcopy(original)
+                    self.assert_container_token_scope(mutated, private)
+        mutated = copy.deepcopy(originals[True])
         mutated["jobs"]["private-core-extra"] = {
             "steps": [{"env": {"GH_TOKEN": "${{ github.token }}"}}]
         }
         with self.assertRaises(AssertionError):
-            self.assert_container_token_scope(mutated)
+            self.assert_container_token_scope(mutated, True)
 
-    def test_private_false_retains_exact_legacy_conditions(self):
+    def test_separation_retains_exact_legacy_conditions(self):
         data = workflow("containers.yml")
         triggers = data.get("on", data.get(True))
-        self.assertEqual(
-            triggers["workflow_call"]["inputs"]["private_core_handoff"],
-            {"type": "boolean", "default": False},
-        )
+        self.assertNotIn("private_core_handoff", triggers["workflow_call"]["inputs"])
         previous = {
             "metadata": "true",
             "core": "inputs.channel != 'stable'",
@@ -78,14 +148,10 @@ class WorkflowPhasesTest(unittest.TestCase):
         }
         for name, legacy in previous.items():
             with self.subTest(job=name):
-                condition = data["jobs"][name]["if"]
                 if name == "metadata":
-                    self.assertEqual(condition, "${{ !inputs.private_core_handoff }}")
+                    self.assertNotIn("if", data["jobs"][name])
                 else:
-                    self.assertEqual(
-                        condition,
-                        "${{ !inputs.private_core_handoff && " + legacy + " }}",
-                    )
+                    self.assertEqual(data["jobs"][name]["if"], legacy)
 
     def test_installer_validation_requires_explicit_boolean_manual_opt_in(self):
         validation = workflow("build-containers.yml")
@@ -140,7 +206,7 @@ class WorkflowPhasesTest(unittest.TestCase):
                     self.assertEqual(job["uses"], "./.github/workflows/containers.yml")
 
         for data, expected in (
-            (containers, {"workstation", "installer", "private-core-attest"}),
+            (containers, {"workstation", "installer"}),
             (installer, {"build"}),
             (validation, {"build-containers"}),
             (
@@ -164,11 +230,12 @@ class WorkflowPhasesTest(unittest.TestCase):
             containers["jobs"]["core"]["permissions"],
             {"contents": "read", "packages": "read"},
         )
+        private = workflow("private-core-producer.yml")
         self.assertEqual(
-            containers["jobs"]["private-core"]["permissions"], {"contents": "read"}
+            private["jobs"]["private-core"]["permissions"], {"contents": "read"}
         )
         self.assertEqual(
-            containers["jobs"]["private-core-attest"]["permissions"],
+            private["jobs"]["private-core-attest"]["permissions"],
             {
                 "contents": "read",
                 "actions": "read",
@@ -201,7 +268,7 @@ class WorkflowPhasesTest(unittest.TestCase):
         )
         self.assertEqual(
             jobs["workstation"]["if"],
-            "${{ !inputs.private_core_handoff && inputs.channel != 'stable' }}",
+            "inputs.channel != 'stable'",
         )
         steps = jobs["workstation"]["steps"]
         fetch = next(step for step in steps if step.get("id") == "fetch-core-oci")
@@ -395,7 +462,7 @@ class WorkflowPhasesTest(unittest.TestCase):
         self.assertEqual(caller["needs"], ["metadata", "workstation"])
         self.assertEqual(
             caller["if"],
-            "${{ !inputs.private_core_handoff && always() && inputs.build_installer && needs.metadata.result == 'success' && (inputs.channel == 'stable' || needs.workstation.result == 'success') }}",
+            "always() && inputs.build_installer && needs.metadata.result == 'success' && (inputs.channel == 'stable' || needs.workstation.result == 'success')",
         )
         self.assertEqual(caller["with"]["channel"], "${{ inputs.channel }}")
         installer = workflow("installer.yml")
@@ -405,7 +472,7 @@ class WorkflowPhasesTest(unittest.TestCase):
         self.assertEqual(channel, {"type": "string", "required": True})
         self.assertEqual(
             containers["jobs"]["workstation"]["if"],
-            "${{ !inputs.private_core_handoff && inputs.channel != 'stable' }}",
+            "inputs.channel != 'stable'",
         )
         for role, job in (
             ("workstation", containers["jobs"]["workstation"]),
@@ -440,7 +507,7 @@ class WorkflowPhasesTest(unittest.TestCase):
         upload = next(step for step in steps if step.get("id") == "upload-core-oci")
         self.assertEqual(
             core["if"],
-            "${{ !inputs.private_core_handoff && inputs.channel != 'stable' }}",
+            "inputs.channel != 'stable'",
         )
         self.assertEqual(
             export["if"],
