@@ -1,0 +1,86 @@
+name: Private Core Handoff
+
+on:
+  workflow_dispatch: {}
+
+permissions:
+  contents: read
+
+jobs:
+  quality:
+    uses: luminusOS/images/.github/workflows/ci.yml@f6631960b38fed0f6d176175b8592145326c3bd2
+    with:
+      checkout_ref: ${{ github.sha }}
+
+  producer:
+    needs: [quality]
+    uses: luminusOS/images/.github/workflows/private-core-producer.yml@f6631960b38fed0f6d176175b8592145326c3bd2
+    permissions: {contents: read, actions: read, id-token: write, attestations: write}
+    with:
+      private_core_handoff: true
+      channel: testing
+      publish: false
+      build_installer: false
+
+  consumer:
+    name: Verify private core handoff
+    needs: [quality, producer]
+    environment: core-candidate-reader
+    runs-on: ubuntu-26.04
+    timeout-minutes: 30
+    permissions: {contents: read, actions: read}
+    env:
+      CORE_HANDOFF_POLICY: ${{ vars.CORE_HANDOFF_POLICY }}
+      CORE_HANDOFF_CONTEXT: >-
+        {"repository":${{ toJSON(github.repository) }},"repository_id":${{ toJSON(github.repository_id) }},"sha":${{ toJSON(github.sha) }},"ref":${{ toJSON(github.ref) }},"event_name":${{ toJSON(github.event_name) }},"workflow_ref":${{ toJSON(github.workflow_ref) }},"run_id":${{ toJSON(github.run_id) }},"run_attempt":${{ toJSON(github.run_attempt) }}}
+    steps:
+      - name: Validate independent reader policy before checkout
+        env:
+          CORE_RUNNER_ENVIRONMENT: ${{ runner.environment }}
+          ACTION_CLOSURE: |-
+            actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+            actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6
+        run: |
+          python3 - <<'PY'
+          import hashlib, json, os, re
+          p = json.loads(os.environ['CORE_HANDOFF_POLICY'])
+          c = json.loads(os.environ['CORE_HANDOFF_CONTEXT'])
+          producer = 'f6631960b38fed0f6d176175b8592145326c3bd2'
+          c.update(producer_sha=producer, producer_ref='luminusOS/images/.github/workflows/private-core-producer.yml@' + producer, runner_environment=os.environ['CORE_RUNNER_ENVIRONMENT'])
+          def require(ok):
+              if not ok:
+                  raise SystemExit('Independent reader policy rejected before checkout')
+          require(set(p) == set('repository repository_id producer_sha source_sha caller_ref caller_workflow fedora base_digest actions_sha256'.split()))
+          require(all(isinstance(v, str) for v in p.values()))
+          require(all(re.fullmatch('[0-9a-f]{40}', p[k]) for k in ('producer_sha', 'source_sha')))
+          require(re.fullmatch('sha256:[0-9a-f]{64}', p['base_digest']))
+          require(p['fedora'] == '45' and p['actions_sha256'] == hashlib.sha256((os.environ['ACTION_CLOSURE'].rstrip('\n') + '\n').encode()).hexdigest())
+          require(p['repository'] == c['repository'] == 'luminusOS/images' and p['repository_id'] == c['repository_id'] == '1118572971')
+          require(p['source_sha'] == c['sha'] and p['caller_ref'] == c['ref'])
+          require(re.fullmatch(r'refs/heads/[A-Za-z0-9_./-]+', p['caller_ref']))
+          require(p['caller_workflow'] == '.github/workflows/private-core-handoff.yml')
+          require(c['workflow_ref'] == 'luminusOS/images/' + p['caller_workflow'] + '@' + p['caller_ref'])
+          require(p['producer_sha'] == producer)
+          require(c['event_name'] == 'workflow_dispatch' and c['runner_environment'] == 'github-hosted')
+          require(all(re.fullmatch('[1-9][0-9]{0,19}', c[k]) for k in ('run_id', 'run_attempt')))
+          with open(os.environ['GITHUB_ENV'], 'a') as stream:
+              stream.write('CORE_HANDOFF_CONTEXT=' + json.dumps(c, separators=(',', ':')) + '\n')
+          PY
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          repository: luminusOS/images
+          ref: f6631960b38fed0f6d176175b8592145326c3bd2
+          path: trusted-tooling
+          persist-credentials: false
+      - name: Verify reviewed tooling checkout
+        run: test "$(git -C trusted-tooling rev-parse HEAD)" = f6631960b38fed0f6d176175b8592145326c3bd2
+      - name: Acquire and authenticate private producer output
+        env:
+          GH_TOKEN: ${{ github.token }}
+          R2_ACCESS_KEY_ID: ${{ secrets.CORE_R2_READER_ACCESS_KEY_ID }}
+          R2_SECRET_ACCESS_KEY: ${{ secrets.CORE_R2_READER_SECRET_ACCESS_KEY }}
+          CORE_HANDOFF_FACTS: >-
+            {"archive_sha256":${{ toJSON(needs.producer.outputs.private_core_archive_sha256) }},"archive_size":${{ toJSON(needs.producer.outputs.private_core_archive_size) }},"manifest_digest":${{ toJSON(needs.producer.outputs.private_core_manifest_digest) }},"object_key":${{ toJSON(needs.producer.outputs.private_core_key) }},"policy_sha256":${{ toJSON(needs.producer.outputs.private_core_policy_sha256) }}}
+        run: |
+          trap 'rm -rf -- "$RUNNER_TEMP/private-core-consumer"' EXIT
+          python3 trusted-tooling/.github/scripts/workflow/core_build_acquisition.py acquire --output "$RUNNER_TEMP/private-core-consumer"

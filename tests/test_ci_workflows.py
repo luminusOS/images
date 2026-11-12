@@ -1243,7 +1243,10 @@ class ContainerWorkflowTests(unittest.TestCase):
             inputs["private_core_handoff"], {"type": "boolean", "default": "false"}
         )
         for path in (ROOT / ".github/workflows").glob("*.yml"):
-            if path.name != "private-core-producer.yml":
+            if path.name not in (
+                "private-core-producer.yml",
+                "private-core-handoff.yml",
+            ):
                 self.assertNotIn("private-core-producer.yml", path.read_text())
         self.assertNotIn(
             "private_core_handoff",
