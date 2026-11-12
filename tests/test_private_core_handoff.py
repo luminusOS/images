@@ -11,7 +11,7 @@ import yaml
 
 ROOT = Path(__file__).resolve().parents[1]
 WORKFLOW = ROOT / ".github/workflows/private-core-handoff.yml"
-PRODUCER = "29eaa9c2da5346cd28086abd55312d86d1990336"
+PRODUCER = "8dbe8cd5f9c099010c013c9155f60285ee1bd339"
 CHECKOUT = "actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1"
 
 
