@@ -965,6 +965,15 @@ class ContainerWorkflowTests(unittest.TestCase):
         }
         if private:
             permissions = private_permissions
+            self.assertEqual(
+                workflow["on"]["workflow_call"].get("secrets"),
+                {
+                    "CORE_R2_WRITER_ACCESS_KEY_ID": {"required": "true"},
+                    "CORE_R2_WRITER_SECRET_ACCESS_KEY": {"required": "true"},
+                    "CORE_R2_READER_ACCESS_KEY_ID": {"required": "true"},
+                    "CORE_R2_READER_SECRET_ACCESS_KEY": {"required": "true"},
+                },
+            )
         self.assertEqual(set(jobs), set(permissions))
         legacy_conditions = {
             "core": "inputs.channel != 'stable'",
@@ -1217,6 +1226,36 @@ class ContainerWorkflowTests(unittest.TestCase):
         mutated["jobs"]["private-core-extra"] = copy.deepcopy(
             mutated["jobs"]["private-core"]
         )
+        with self.assertRaises(AssertionError):
+            self.assert_container_security_contract(mutated, True)
+
+    def test_private_core_requires_exact_named_secrets_from_caller(self):
+        self.assert_container_security_contract(
+            self.load_workflow("private-core-producer.yml"), True
+        )
+
+    def test_private_core_rejects_missing_optional_and_extra_secrets(self):
+        original = self.load_workflow("private-core-producer.yml")
+        self.assert_container_security_contract(original, True)
+        mutated = copy.deepcopy(original)
+        del mutated["on"]["workflow_call"]["secrets"]
+        with self.assertRaises(AssertionError):
+            self.assert_container_security_contract(mutated, True)
+        for name in original["on"]["workflow_call"]["secrets"]:
+            for declaration in (None, {}, {"required": "false"}):
+                with self.subTest(secret=name, declaration=declaration):
+                    mutated = copy.deepcopy(original)
+                    secrets = mutated["on"]["workflow_call"]["secrets"]
+                    if declaration is None:
+                        del secrets[name]
+                    else:
+                        secrets[name] = declaration
+                    with self.assertRaises(AssertionError):
+                        self.assert_container_security_contract(mutated, True)
+        mutated = copy.deepcopy(original)
+        mutated["on"]["workflow_call"]["secrets"]["UNEXPECTED_SECRET"] = {
+            "required": "true"
+        }
         with self.assertRaises(AssertionError):
             self.assert_container_security_contract(mutated, True)
 

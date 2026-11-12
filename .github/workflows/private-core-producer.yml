@@ -7,6 +7,11 @@ on:
       build_installer: {type: boolean, default: false}
       publish: {type: boolean, default: false}
       private_core_handoff: {type: boolean, default: false}
+    secrets:
+      CORE_R2_WRITER_ACCESS_KEY_ID: {required: true}
+      CORE_R2_WRITER_SECRET_ACCESS_KEY: {required: true}
+      CORE_R2_READER_ACCESS_KEY_ID: {required: true}
+      CORE_R2_READER_SECRET_ACCESS_KEY: {required: true}
     outputs:
       private_core_key: {value: '${{ jobs.private-core.outputs.object_key }}'}
       private_core_policy_sha256: {value: '${{ jobs.private-core.outputs.policy_sha256 }}'}
