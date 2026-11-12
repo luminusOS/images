@@ -8,13 +8,13 @@ permissions:
 
 jobs:
   quality:
-    uses: luminusOS/images/.github/workflows/ci.yml@8dbe8cd5f9c099010c013c9155f60285ee1bd339
+    uses: luminusOS/images/.github/workflows/ci.yml@6a178fbc2d18aa9315de7a60d2d52fb740ef4196
     with:
       checkout_ref: ${{ github.sha }}
 
   producer:
     needs: [quality]
-    uses: luminusOS/images/.github/workflows/private-core-producer.yml@8dbe8cd5f9c099010c013c9155f60285ee1bd339
+    uses: luminusOS/images/.github/workflows/private-core-producer.yml@6a178fbc2d18aa9315de7a60d2d52fb740ef4196
     permissions: {contents: read, actions: read, id-token: write, attestations: write}
     with:
       private_core_handoff: true
@@ -50,7 +50,7 @@ jobs:
           import hashlib, json, os, re
           p = json.loads(os.environ['CORE_HANDOFF_POLICY'])
           c = json.loads(os.environ['CORE_HANDOFF_CONTEXT'])
-          producer = '8dbe8cd5f9c099010c013c9155f60285ee1bd339'
+          producer = '6a178fbc2d18aa9315de7a60d2d52fb740ef4196'
           c.update(producer_sha=producer, producer_ref='luminusOS/images/.github/workflows/private-core-producer.yml@' + producer, runner_environment=os.environ['CORE_RUNNER_ENVIRONMENT'])
           def require(ok):
               if not ok:
@@ -74,11 +74,11 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
         with:
           repository: luminusOS/images
-          ref: 8dbe8cd5f9c099010c013c9155f60285ee1bd339
+          ref: 6a178fbc2d18aa9315de7a60d2d52fb740ef4196
           path: trusted-tooling
           persist-credentials: false
       - name: Verify reviewed tooling checkout
-        run: test "$(git -C trusted-tooling rev-parse HEAD)" = 8dbe8cd5f9c099010c013c9155f60285ee1bd339
+        run: test "$(git -C trusted-tooling rev-parse HEAD)" = 6a178fbc2d18aa9315de7a60d2d52fb740ef4196
       - name: Acquire and authenticate private producer output
         env:
           GH_TOKEN: ${{ github.token }}
