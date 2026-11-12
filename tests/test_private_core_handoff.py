@@ -11,7 +11,7 @@ import yaml
 
 ROOT = Path(__file__).resolve().parents[1]
 WORKFLOW = ROOT / ".github/workflows/private-core-handoff.yml"
-PRODUCER = "f6631960b38fed0f6d176175b8592145326c3bd2"
+PRODUCER = "29eaa9c2da5346cd28086abd55312d86d1990336"
 CHECKOUT = "actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1"
 
 
@@ -113,7 +113,68 @@ class PrivateCoreHandoffTests(unittest.TestCase):
                 "attestations": "write",
             },
         )
-        self.assertNotIn("secrets", producer)
+        self.assert_producer_secret_contract(self.workflow)
+
+    def assert_producer_secret_contract(self, workflow):
+        self.assertEqual(
+            workflow["jobs"]["producer"].get("secrets"),
+            {
+                "CORE_R2_WRITER_ACCESS_KEY_ID": "${{ secrets.CORE_R2_WRITER_ACCESS_KEY_ID }}",
+                "CORE_R2_WRITER_SECRET_ACCESS_KEY": "${{ secrets.CORE_R2_WRITER_SECRET_ACCESS_KEY }}",
+                "CORE_R2_READER_ACCESS_KEY_ID": "${{ secrets.CORE_R2_READER_ACCESS_KEY_ID }}",
+                "CORE_R2_READER_SECRET_ACCESS_KEY": "${{ secrets.CORE_R2_READER_SECRET_ACCESS_KEY }}",
+            },
+        )
+
+    def test_producer_secret_contract_rejects_missing_extra_and_inherited_secrets(self):
+        self.assert_producer_secret_contract(self.workflow)
+        original = self.jobs["producer"]["secrets"]
+        mutations = [None, "inherit", dict(original, UNEXPECTED_SECRET="value")]
+        for name in original:
+            missing = dict(original)
+            del missing[name]
+            mutations.append(missing)
+            mutations.append(dict(original, **{name: "${{ secrets.OTHER_SECRET }}"}))
+        for secrets in mutations:
+            with self.subTest(secrets=secrets):
+                mutated = copy.deepcopy(self.workflow)
+                if secrets is None:
+                    del mutated["jobs"]["producer"]["secrets"]
+                else:
+                    mutated["jobs"]["producer"]["secrets"] = secrets
+                with self.assertRaises(AssertionError):
+                    self.assert_producer_secret_contract(mutated)
+
+    def assert_producer_pins(self, workflow):
+        jobs = workflow["jobs"]
+        self.assertEqual(
+            jobs["quality"]["uses"],
+            f"luminusOS/images/.github/workflows/ci.yml@{PRODUCER}",
+        )
+        self.assertEqual(
+            jobs["producer"]["uses"],
+            f"luminusOS/images/.github/workflows/private-core-producer.yml@{PRODUCER}",
+        )
+        steps = jobs["consumer"]["steps"]
+        self.assertIn(f"producer = '{PRODUCER}'", steps[0]["run"])
+        self.assertEqual(steps[1]["with"]["ref"], PRODUCER)
+        self.assertEqual(
+            steps[2]["run"],
+            f'test "$(git -C trusted-tooling rev-parse HEAD)" = {PRODUCER}',
+        )
+
+    def test_all_producer_pins_match_and_reject_individual_pin_drift(self):
+        self.assert_producer_pins(self.workflow)
+        text = WORKFLOW.read_text()
+        parts = text.split(PRODUCER)
+        self.assertEqual(len(parts), 6)
+        for index in range(5):
+            with self.subTest(pin=index):
+                mutated = PRODUCER.join(parts[: index + 1])
+                mutated += "f6631960b38fed0f6d176175b8592145326c3bd2"
+                mutated += PRODUCER.join(parts[index + 1 :])
+                with self.assertRaises(AssertionError):
+                    self.assert_producer_pins(yaml.safe_load(mutated))
 
     def test_reader_is_fresh_read_only_and_checks_only_reviewed_tooling(self):
         self.assertEqual(self.reader["needs"], ["quality", "producer"])
