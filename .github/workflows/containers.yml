@@ -16,7 +16,13 @@ on:
       candidate_id: {type: string, default: ""}
       core_ref: {type: string, default: ""}
       force_core: {type: boolean, default: false}
+      private_core_handoff: {type: boolean, default: false}
     outputs:
+      private_core_key: {value: '${{ jobs.private-core.outputs.object_key }}'}
+      private_core_policy_sha256: {value: '${{ jobs.private-core.outputs.policy_sha256 }}'}
+      private_core_archive_sha256: {value: '${{ jobs.private-core.outputs.archive_sha256 }}'}
+      private_core_archive_size: {value: '${{ jobs.private-core.outputs.archive_size }}'}
+      private_core_manifest_digest: {value: '${{ jobs.private-core.outputs.manifest_digest }}'}
       fedora_version: {value: '${{ jobs.metadata.outputs.fedora_version }}'}
       fedora_bootc_digest: {value: '${{ jobs.metadata.outputs.fedora_bootc_digest }}'}
       version_tag: {value: '${{ jobs.metadata.outputs.version_tag }}'}
@@ -51,6 +57,7 @@ on:
 jobs:
   metadata:
     name: Resolve build metadata
+    if: ${{ !inputs.private_core_handoff }}
     runs-on: ubuntu-latest
     permissions: {contents: read}
     outputs:
@@ -85,7 +92,7 @@ jobs:
 
   core:
     name: Build core image
-    if: inputs.channel != 'stable'
+    if: ${{ !inputs.private_core_handoff && inputs.channel != 'stable' }}
     needs: [metadata]
     runs-on: ubuntu-latest
     timeout-minutes: 150
@@ -173,7 +180,7 @@ jobs:
 
   workstation:
     name: Build workstation image
-    if: inputs.channel != 'stable'
+    if: ${{ !inputs.private_core_handoff && inputs.channel != 'stable' }}
     needs: [metadata, core]
     runs-on: ubuntu-latest
     timeout-minutes: 180
@@ -266,7 +273,7 @@ jobs:
 
   installer:
     name: Build installer image
-    if: always() && inputs.build_installer && needs.metadata.result == 'success' && (inputs.channel == 'stable' || needs.workstation.result == 'success')
+    if: ${{ !inputs.private_core_handoff && always() && inputs.build_installer && needs.metadata.result == 'success' && (inputs.channel == 'stable' || needs.workstation.result == 'success') }}
     needs: [metadata, workstation]
     permissions: {contents: read, packages: read, actions: read}
     uses: ./.github/workflows/installer.yml
@@ -284,3 +291,154 @@ jobs:
       workstation_built_oci_manifest_digest: ${{ needs.workstation.outputs.built_oci_manifest_digest }}
       workstation_archive_sha256: ${{ needs.workstation.outputs.archive_sha256 }}
       workstation_image_id: ${{ needs.workstation.outputs.image_id }}
+
+  private-core:
+    name: Private core producer
+    if: inputs.private_core_handoff && github.event_name == 'workflow_dispatch' && github.repository == 'luminusOS/images' && !inputs.publish && !inputs.build_installer && inputs.channel == 'testing'
+    environment: core-candidate-writer
+    runs-on: ubuntu-24.04
+    timeout-minutes: 150
+    permissions: {contents: read}
+    env:
+      CORE_HANDOFF_POLICY: ${{ vars.CORE_HANDOFF_POLICY }}
+      CORE_HANDOFF_CONTEXT: >-
+        {"repository":${{ toJSON(github.repository) }},"repository_id":${{ toJSON(github.repository_id) }},"sha":${{ toJSON(github.sha) }},"ref":${{ toJSON(github.ref) }},"event_name":${{ toJSON(github.event_name) }},"workflow_ref":${{ toJSON(github.workflow_ref) }},"run_id":${{ toJSON(github.run_id) }},"run_attempt":${{ toJSON(github.run_attempt) }}}
+    outputs:
+      archive_sha256: ${{ steps.pack.outputs.archive_sha256 }}
+      policy_sha256: ${{ steps.pack.outputs.policy_sha256 }}
+      archive_size: ${{ steps.pack.outputs.archive_size }}
+      manifest_digest: ${{ steps.pack.outputs.manifest_digest }}
+      object_key: ${{ steps.pack.outputs.object_key }}
+    steps:
+      - name: Validate independent operator policy
+        id: policy
+        env:
+          CORE_HANDOFF_JOB: ${{ toJSON(job) }}
+          CORE_RUNNER_ENVIRONMENT: ${{ runner.environment }}
+          ACTION_CLOSURE: |-
+            actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+            actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6
+        run: |
+          python3 - <<'PY'
+          import hashlib, json, os, re
+          p = json.loads(os.environ['CORE_HANDOFF_POLICY'])
+          c = json.loads(os.environ['CORE_HANDOFF_CONTEXT'])
+          j = json.loads(os.environ['CORE_HANDOFF_JOB'])
+          c.update(producer_sha=j.get('workflow_sha'), producer_ref=j.get('workflow_ref'), runner_environment=os.environ['CORE_RUNNER_ENVIRONMENT'])
+          def require(ok):
+              if not ok:
+                  raise SystemExit('Independent operator policy rejected before checkout')
+          require(set(p) == set('repository repository_id producer_sha source_sha caller_ref caller_workflow fedora base_digest actions_sha256'.split()))
+          require(all(isinstance(v, str) for v in p.values()))
+          require(all(re.fullmatch('[0-9a-f]{40}', p[k]) for k in ('producer_sha', 'source_sha')))
+          require(re.fullmatch('sha256:[0-9a-f]{64}', p['base_digest']))
+          require(p['fedora'] == '45' and p['actions_sha256'] == hashlib.sha256((os.environ['ACTION_CLOSURE'].rstrip('\n') + '\n').encode()).hexdigest())
+          require(p['repository'] == c['repository'] == 'luminusOS/images' and p['repository_id'] == c['repository_id'] == '1118572971')
+          require(p['source_sha'] == c['sha'] and p['caller_ref'] == c['ref'])
+          require(re.fullmatch(r'refs/heads/[A-Za-z0-9_./-]+', p['caller_ref']) and re.fullmatch(r'\.github/workflows/[A-Za-z0-9_-]+\.ya?ml', p['caller_workflow']))
+          require(c['workflow_ref'] == 'luminusOS/images/' + p['caller_workflow'] + '@' + p['caller_ref'])
+          require(c['producer_sha'] == p['producer_sha'] and c['producer_ref'] == 'luminusOS/images/.github/workflows/containers.yml@' + p['producer_sha'])
+          require(c['event_name'] == 'workflow_dispatch' and c['runner_environment'] == 'github-hosted')
+          require(all(re.fullmatch('[1-9][0-9]{0,19}', c[k]) for k in ('run_id', 'run_attempt')))
+          with open(os.environ['GITHUB_ENV'], 'a') as stream:
+              stream.write('CORE_HANDOFF_CONTEXT=' + json.dumps(c, separators=(',', ':')) + '\n')
+          with open(os.environ['GITHUB_OUTPUT'], 'a') as stream:
+              stream.write('producer_sha=' + p['producer_sha'] + '\n')
+          PY
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          repository: luminusOS/images
+          ref: ${{ steps.policy.outputs.producer_sha }}
+          path: trusted-tooling
+          persist-credentials: false
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          repository: luminusOS/images
+          ref: ${{ github.sha }}
+          path: source
+          persist-credentials: false
+      - name: Install trusted OCI tooling
+        run: sudo apt-get update && sudo apt-get install --no-install-recommends -y skopeo
+      - name: Build and export private core
+        run: python3 trusted-tooling/.github/scripts/workflow/core_build_acquisition.py build --output "$RUNNER_TEMP/private-core-layout"
+      - name: Pack checked producer output
+        id: pack
+        run: python3 trusted-tooling/.github/scripts/workflow/core_build_acquisition.py pack --layout "$RUNNER_TEMP/private-core-layout" --output "$RUNNER_TEMP/private-core-export"
+      - name: Terminate builder before credential transport
+        run: sudo systemctl stop docker.service docker.socket
+      - name: Transport private producer archive
+        env:
+          R2_ACCESS_KEY_ID: ${{ secrets.CORE_R2_WRITER_ACCESS_KEY_ID }}
+          R2_SECRET_ACCESS_KEY: ${{ secrets.CORE_R2_WRITER_SECRET_ACCESS_KEY }}
+          CORE_HANDOFF_FACTS: >-
+            {"archive_sha256":${{ toJSON(steps.pack.outputs.archive_sha256) }},"archive_size":${{ toJSON(steps.pack.outputs.archive_size) }},"manifest_digest":${{ toJSON(steps.pack.outputs.manifest_digest) }},"object_key":${{ toJSON(steps.pack.outputs.object_key) }},"policy_sha256":${{ toJSON(steps.pack.outputs.policy_sha256) }}}
+        run: python3 trusted-tooling/.github/scripts/workflow/core_build_acquisition.py upload --output "$RUNNER_TEMP/private-core-export"
+
+  private-core-attest:
+    name: Private core attestation
+    needs: [private-core]
+    if: inputs.private_core_handoff && github.event_name == 'workflow_dispatch' && needs.private-core.result == 'success'
+    environment: core-candidate-reader
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    permissions: {contents: read, actions: read, id-token: write, attestations: write}
+    env:
+      CORE_HANDOFF_POLICY: ${{ vars.CORE_HANDOFF_POLICY }}
+      CORE_HANDOFF_CONTEXT: >-
+        {"repository":${{ toJSON(github.repository) }},"repository_id":${{ toJSON(github.repository_id) }},"sha":${{ toJSON(github.sha) }},"ref":${{ toJSON(github.ref) }},"event_name":${{ toJSON(github.event_name) }},"workflow_ref":${{ toJSON(github.workflow_ref) }},"run_id":${{ toJSON(github.run_id) }},"run_attempt":${{ toJSON(github.run_attempt) }}}
+    steps:
+      - name: Validate independent operator policy
+        id: policy
+        env:
+          CORE_HANDOFF_JOB: ${{ toJSON(job) }}
+          CORE_RUNNER_ENVIRONMENT: ${{ runner.environment }}
+          ACTION_CLOSURE: |-
+            actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+            actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6
+        run: |
+          python3 - <<'PY'
+          import hashlib, json, os, re
+          p = json.loads(os.environ['CORE_HANDOFF_POLICY'])
+          c = json.loads(os.environ['CORE_HANDOFF_CONTEXT'])
+          j = json.loads(os.environ['CORE_HANDOFF_JOB'])
+          c.update(producer_sha=j.get('workflow_sha'), producer_ref=j.get('workflow_ref'), runner_environment=os.environ['CORE_RUNNER_ENVIRONMENT'])
+          def require(ok):
+              if not ok:
+                  raise SystemExit('Independent operator policy rejected before checkout')
+          require(set(p) == set('repository repository_id producer_sha source_sha caller_ref caller_workflow fedora base_digest actions_sha256'.split()))
+          require(all(isinstance(v, str) for v in p.values()))
+          require(all(re.fullmatch('[0-9a-f]{40}', p[k]) for k in ('producer_sha', 'source_sha')))
+          require(re.fullmatch('sha256:[0-9a-f]{64}', p['base_digest']))
+          require(p['fedora'] == '45' and p['actions_sha256'] == hashlib.sha256((os.environ['ACTION_CLOSURE'].rstrip('\n') + '\n').encode()).hexdigest())
+          require(p['repository'] == c['repository'] == 'luminusOS/images' and p['repository_id'] == c['repository_id'] == '1118572971')
+          require(p['source_sha'] == c['sha'] and p['caller_ref'] == c['ref'])
+          require(re.fullmatch(r'refs/heads/[A-Za-z0-9_./-]+', p['caller_ref']) and re.fullmatch(r'\.github/workflows/[A-Za-z0-9_-]+\.ya?ml', p['caller_workflow']))
+          require(c['workflow_ref'] == 'luminusOS/images/' + p['caller_workflow'] + '@' + p['caller_ref'])
+          require(c['producer_sha'] == p['producer_sha'] and c['producer_ref'] == 'luminusOS/images/.github/workflows/containers.yml@' + p['producer_sha'])
+          require(c['event_name'] == 'workflow_dispatch' and c['runner_environment'] == 'github-hosted')
+          require(all(re.fullmatch('[1-9][0-9]{0,19}', c[k]) for k in ('run_id', 'run_attempt')))
+          with open(os.environ['GITHUB_ENV'], 'a') as stream:
+              stream.write('CORE_HANDOFF_CONTEXT=' + json.dumps(c, separators=(',', ':')) + '\n')
+          with open(os.environ['GITHUB_OUTPUT'], 'a') as stream:
+              stream.write('producer_sha=' + p['producer_sha'] + '\n')
+          PY
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          repository: luminusOS/images
+          ref: ${{ steps.policy.outputs.producer_sha }}
+          path: trusted-tooling
+          persist-credentials: false
+      - name: Check actual private producer object
+        env:
+          GH_TOKEN: ${{ github.token }}
+          R2_ACCESS_KEY_ID: ${{ secrets.CORE_R2_READER_ACCESS_KEY_ID }}
+          R2_SECRET_ACCESS_KEY: ${{ secrets.CORE_R2_READER_SECRET_ACCESS_KEY }}
+          CORE_HANDOFF_FACTS: >-
+            {"archive_sha256":${{ toJSON(needs.private-core.outputs.archive_sha256) }},"archive_size":${{ toJSON(needs.private-core.outputs.archive_size) }},"manifest_digest":${{ toJSON(needs.private-core.outputs.manifest_digest) }},"object_key":${{ toJSON(needs.private-core.outputs.object_key) }},"policy_sha256":${{ toJSON(needs.private-core.outputs.policy_sha256) }}}
+        run: python3 trusted-tooling/.github/scripts/workflow/core_build_acquisition.py download --output "$RUNNER_TEMP/private-core-subject"
+      - name: Attest checked local archive with native provenance
+        uses: actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6
+        with:
+          subject-path: ${{ runner.temp }}/private-core-subject/core-oci.zip
+          push-to-registry: false
+          create-storage-record: false
