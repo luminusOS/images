@@ -9,7 +9,9 @@ import stat
 import subprocess
 import sys
 import tempfile
+import time
 import zipfile
+import zlib
 from contextlib import ExitStack, contextmanager
 from pathlib import Path
 
@@ -29,6 +31,8 @@ IMAGE = re.compile(
 )
 MAX_JSON_BYTES = 1024 * 1024
 MAX_LAYER_BYTES = 20 * 1024**3
+MAX_DIFFID_TOTAL_BYTES = 64 * 1024**3
+DIFFID_TIMEOUT_SECONDS = 600
 MAX_LAYERS = 256
 CHUNK_BYTES = 1024 * 1024
 DIRECTORY_FLAGS = os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW | os.O_CLOEXEC
@@ -70,7 +74,11 @@ def subdirectory(parent, name):
         os.close(descriptor)
 
 
-def contents(parent, name, limit, expected=None, collect=True, sink=None):
+def contents(
+    parent, name, limit, expected=None, collect=True, sink=None, deadline=None
+):
+    if deadline is not None:
+        require(time.monotonic() < deadline, "OCI diff_id deadline exceeded")
     descriptor = os.open(
         name,
         os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK | os.O_CLOEXEC,
@@ -86,6 +94,8 @@ def contents(parent, name, limit, expected=None, collect=True, sink=None):
         chunks = []
         total = 0
         while chunk := stream.read(CHUNK_BYTES):
+            if deadline is not None:
+                require(time.monotonic() < deadline, "OCI diff_id deadline exceeded")
             total += len(chunk)
             require(
                 total <= info.st_size and total <= limit, "OCI file grew during read"
@@ -154,7 +164,7 @@ def platform(value):
     )
 
 
-def blob(root, descriptor, media_types, json_blob=False):
+def blob(root, descriptor, media_types, json_blob=False, *, sink=None, deadline=None):
     fields(descriptor, {"mediaType", "digest", "size"}, {"annotations", "platform"})
     require(
         isinstance(descriptor["mediaType"], str)
@@ -177,7 +187,13 @@ def blob(root, descriptor, media_types, json_blob=False):
     require(descriptor["size"] <= limit, "OCI blob size limit exceeded")
     with subdirectory(root, "blobs") as blobs, subdirectory(blobs, "sha256") as hashes:
         raw = contents(
-            hashes, descriptor["digest"][7:], limit, descriptor, collect=json_blob
+            hashes,
+            descriptor["digest"][7:],
+            limit,
+            descriptor,
+            collect=json_blob,
+            sink=sink,
+            deadline=deadline,
         )
     return document(raw) if json_blob else None
 
@@ -193,11 +209,11 @@ def checked_manifest(root, ref):
     return checked_image(root, ref)[0]
 
 
-def checked_image(root, ref):
-    metadata = document(contents(root, "oci-layout", MAX_JSON_BYTES))
+def checked_image(root, ref, *, deadline=None):
+    metadata = document(contents(root, "oci-layout", MAX_JSON_BYTES, deadline=deadline))
     fields(metadata, {"imageLayoutVersion"})
     require(metadata["imageLayoutVersion"] == "1.0.0", "unsupported OCI layout version")
-    index = document(contents(root, "index.json", MAX_JSON_BYTES))
+    index = document(contents(root, "index.json", MAX_JSON_BYTES, deadline=deadline))
     fields(index, {"schemaVersion", "manifests"}, {"mediaType", "annotations"})
     require(
         type(index["schemaVersion"]) is int and index["schemaVersion"] == 2,
@@ -209,7 +225,7 @@ def checked_image(root, ref):
         "OCI layout must contain exactly one manifest",
     )
     descriptor = index["manifests"][0]
-    manifest = blob(root, descriptor, {MANIFEST}, json_blob=True)
+    manifest = blob(root, descriptor, {MANIFEST}, json_blob=True, deadline=deadline)
     require(descriptor.get("annotations", {}).get(REF) == ref, "OCI ref mismatch")
     fields(
         manifest,
@@ -221,15 +237,102 @@ def checked_image(root, ref):
         "invalid OCI manifest schemaVersion",
     )
     require(manifest["mediaType"] == MANIFEST, "unsupported OCI manifest mediaType")
-    config = blob(root, manifest["config"], {CONFIG}, json_blob=True)
+    config = blob(root, manifest["config"], {CONFIG}, json_blob=True, deadline=deadline)
     platform(config)
     require(
         isinstance(manifest["layers"], list) and len(manifest["layers"]) <= MAX_LAYERS,
         "invalid OCI layers",
     )
     for layer in manifest["layers"]:
-        blob(root, layer, LAYERS)
+        blob(root, layer, LAYERS, deadline=deadline)
     return descriptor["digest"], config, len(manifest["layers"])
+
+
+class DiffIDHasher:
+    def __init__(self, compressed, remaining, deadline):
+        self.compressed = compressed
+        self.remaining = remaining
+        self.deadline = deadline
+        self.checksum = hashlib.sha256()
+        self.size = 0
+        self.decoder = None
+
+    def check_deadline(self):
+        require(time.monotonic() < self.deadline, "OCI diff_id deadline exceeded")
+
+    def update(self, output):
+        self.check_deadline()
+        self.size += len(output)
+        require(self.size <= MAX_LAYER_BYTES, "decompressed OCI layer limit exceeded")
+        require(self.size <= self.remaining, "decompressed OCI image limit exceeded")
+        self.checksum.update(output)
+
+    def write(self, data):
+        self.check_deadline()
+        if not self.compressed:
+            self.update(data)
+            return
+        if self.decoder is None:
+            self.decoder = zlib.decompressobj(31)
+        while True:
+            self.check_deadline()
+            try:
+                output = self.decoder.decompress(data, CHUNK_BYTES)
+            except zlib.error:
+                raise ValueError("invalid OCI gzip stream") from None
+            self.update(output)
+            if self.decoder.eof:
+                data = self.decoder.unused_data
+                self.decoder = None
+                if not data:
+                    return
+                self.decoder = zlib.decompressobj(31)
+            else:
+                data = self.decoder.unconsumed_tail
+                if not data and len(output) < CHUNK_BYTES:
+                    return
+
+    def finish(self):
+        self.check_deadline()
+        require(self.decoder is None, "truncated OCI gzip stream")
+        return "sha256:" + self.checksum.hexdigest()
+
+
+def verify_diff_ids(root, ref, expected):
+    deadline = time.monotonic() + DIFFID_TIMEOUT_SECONDS
+    expected_digest(expected)
+    digest, config, layer_count = checked_image(root, ref, deadline=deadline)
+    require(digest == expected, "OCI manifest digest mismatch")
+    rootfs = config.get("rootfs")
+    fields(rootfs, {"type", "diff_ids"})
+    require(rootfs["type"] == "layers", "invalid OCI rootfs type")
+    declared = rootfs["diff_ids"]
+    require(
+        isinstance(declared, list)
+        and 0 < len(declared) == layer_count <= MAX_LAYERS
+        and all(
+            isinstance(value, str) and DIGEST.fullmatch(value) for value in declared
+        ),
+        "invalid OCI declared diff_ids",
+    )
+    index = document(contents(root, "index.json", MAX_JSON_BYTES, deadline=deadline))
+    descriptor = index["manifests"][0]
+    require(descriptor["digest"] == expected, "OCI manifest digest mismatch")
+    manifest = blob(root, descriptor, {MANIFEST}, json_blob=True, deadline=deadline)
+    total = 0
+    verified = []
+    for layer, wanted in zip(manifest["layers"], declared, strict=True):
+        sink = DiffIDHasher(
+            layer["mediaType"].endswith("+gzip"),
+            MAX_DIFFID_TOTAL_BYTES - total,
+            deadline,
+        )
+        blob(root, layer, LAYERS, sink=sink, deadline=deadline)
+        actual = sink.finish()
+        require(actual == wanted, "decompressed OCI diff_id mismatch")
+        total += sink.size
+        verified.append(actual)
+    return verified
 
 
 def expected_digest(value):

@@ -929,6 +929,8 @@ def private_download(policy, facts, output, *, transport=None):
                     oci.checked_image(layout, "core")[0] == facts["manifest_digest"],
                     "private OCI manifest mismatch",
                 )
+                with r2_deadline(time.monotonic() + oci.DIFFID_TIMEOUT_SECONDS):
+                    oci.verify_diff_ids(layout, "core", facts["manifest_digest"])
         return dict(facts)
 
 

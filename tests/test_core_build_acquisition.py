@@ -1,4 +1,5 @@
 import copy
+import gzip
 import hashlib
 import importlib.util
 import io
@@ -1624,6 +1625,86 @@ class PrivateHandoffTests(unittest.TestCase):
                 with self.assertRaises(ValueError):
                     list(reader.stream(key, 1, time.monotonic() + 3))
         self.assertTrue(connection.close.called)
+
+    def test_private_diff_id_verification_has_a_transaction_timer(self):
+        original = acquisition.oci.verify_diff_ids
+        handler = signal.getsignal(signal.SIGALRM)
+
+        def verify(*args):
+            remaining, interval = signal.getitimer(signal.ITIMER_REAL)
+            self.assertGreater(remaining, 0)
+            self.assertLessEqual(remaining, acquisition.oci.DIFFID_TIMEOUT_SECONDS)
+            self.assertEqual(interval, 0)
+            return original(*args)
+
+        with mock.patch.object(acquisition.oci, "verify_diff_ids", side_effect=verify):
+            self.download()
+        self.assertEqual(signal.getitimer(signal.ITIMER_REAL), (0.0, 0.0))
+        self.assertEqual(signal.getsignal(signal.SIGALRM), handler)
+
+    def test_private_diff_id_verification_never_replaces_an_active_timer(self):
+        handler = signal.getsignal(signal.SIGALRM)
+        signal.setitimer(signal.ITIMER_REAL, 10)
+        try:
+            with self.assertRaisesRegex(ValueError, "unoccupied main-thread timer"):
+                self.download()
+            self.assertGreater(signal.getitimer(signal.ITIMER_REAL)[0], 0)
+            self.assertEqual(signal.getsignal(signal.SIGALRM), handler)
+        finally:
+            signal.setitimer(signal.ITIMER_REAL, 0)
+
+    def test_private_download_rejects_forged_diff_ids_with_all_hashes_recomputed(self):
+        files = self.fixture.files
+        index = json.loads(files["index.json"])
+        manifest = json.loads(files["blobs/sha256/" + self.fixture.digest[7:]])
+        config = json.loads(files["blobs/sha256/" + manifest["config"]["digest"][7:]])
+        config["rootfs"]["diff_ids"] = ["sha256:" + "0" * 64]
+
+        def replace_blob(value, descriptor):
+            raw = json.dumps(value).encode()
+            digest = hashlib.sha256(raw).hexdigest()
+            files["blobs/sha256/" + digest] = raw
+            descriptor.update(digest="sha256:" + digest, size=len(raw))
+
+        replace_blob(config, manifest["config"])
+        replace_blob(manifest, index["manifests"][0])
+        files["index.json"] = json.dumps(index).encode()
+        self.fixture.repack()
+        facts = dict(
+            self.facts,
+            manifest_digest=index["manifests"][0]["digest"],
+            archive_size=str(len(self.fixture.archive)),
+            archive_sha256=hashlib.sha256(self.fixture.archive).hexdigest(),
+        )
+        with self.assertRaisesRegex(ValueError, "decompressed OCI diff_id mismatch"):
+            self.download(facts)
+
+    def test_private_download_validates_real_gzip_diff_ids(self):
+        files = self.fixture.files
+        index = json.loads(files["index.json"])
+        manifest = json.loads(files["blobs/sha256/" + self.fixture.digest[7:]])
+        layer = manifest["layers"][0]
+        raw = gzip.compress(files["blobs/sha256/" + layer["digest"][7:]], mtime=0)
+        digest = hashlib.sha256(raw).hexdigest()
+        files["blobs/sha256/" + digest] = raw
+        layer.update(
+            digest="sha256:" + digest,
+            size=len(raw),
+            mediaType="application/vnd.oci.image.layer.v1.tar+gzip",
+        )
+        raw = json.dumps(manifest).encode()
+        digest = hashlib.sha256(raw).hexdigest()
+        files["blobs/sha256/" + digest] = raw
+        index["manifests"][0].update(digest="sha256:" + digest, size=len(raw))
+        files["index.json"] = json.dumps(index).encode()
+        self.fixture.repack()
+        facts = dict(
+            self.facts,
+            manifest_digest="sha256:" + digest,
+            archive_size=str(len(self.fixture.archive)),
+            archive_sha256=hashlib.sha256(self.fixture.archive).hexdigest(),
+        )
+        self.assertEqual(self.download(facts), facts)
 
 
 if __name__ == "__main__":

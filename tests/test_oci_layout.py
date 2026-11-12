@@ -95,6 +95,248 @@ def sample(root):
     return manifest, store_manifest(root, manifest)
 
 
+class DiffIDTests(unittest.TestCase):
+    def setUp(self):
+        self.temporary = tempfile.TemporaryDirectory()
+        self.addCleanup(self.temporary.cleanup)
+        self.root = Path(self.temporary.name) / "layout"
+        self.manifest, self.digest = sample(self.root)
+        self.config = json.loads(self.path(self.manifest["config"]).read_bytes())
+        self.raw = gzip.decompress(self.path(self.manifest["layers"][0]).read_bytes())
+
+    def path(self, descriptor):
+        return self.root / "blobs/sha256" / descriptor["digest"][7:]
+
+    def store(self, raw=None, media=LAYER, config=None, count=1):
+        if raw is not None:
+            self.manifest["layers"] = [blob(self.root, raw, media)] * count
+        if config is not None:
+            self.manifest["config"] = blob(self.root, encoded(config), CONFIG)
+        self.digest = store_manifest(self.root, self.manifest)
+
+    def verify(self, digest=None):
+        with oci.directory(self.root) as root:
+            return oci.verify_diff_ids(root, "core", digest or self.digest)
+
+    def test_valid_tar_gzip_and_concatenated_members_hash_all_output(self):
+        expected = self.config["rootfs"]["diff_ids"]
+        for raw, media in (
+            (self.raw, "application/vnd.oci.image.layer.v1.tar"),
+            (gzip.compress(self.raw, mtime=0), LAYER),
+            (
+                gzip.compress(self.raw[:100], mtime=0)
+                + gzip.compress(b"", mtime=0)
+                + gzip.compress(self.raw[100:], mtime=0),
+                LAYER,
+            ),
+        ):
+            with self.subTest(media=media, size=len(raw)):
+                self.store(raw, media)
+                self.assertEqual(self.verify(), expected)
+
+    def test_concatenated_gzip_members_across_single_byte_boundaries(self):
+        self.store(
+            gzip.compress(self.raw[:5000], mtime=0)
+            + gzip.compress(self.raw[5000:], mtime=0)
+        )
+        with mock.patch.object(oci, "CHUNK_BYTES", 1):
+            self.assertEqual(self.verify(), self.config["rootfs"]["diff_ids"])
+
+    def test_other_layer_media_types_remain_unsupported(self):
+        self.store(b"unsupported", "application/vnd.oci.image.layer.v1.tar+zstd")
+        with self.assertRaisesRegex(ValueError, "unsupported OCI blob mediaType"):
+            self.verify()
+
+    def test_self_consistent_forged_diff_id_is_not_content_verification(self):
+        config = copy.deepcopy(self.config)
+        config["rootfs"]["diff_ids"] = ["sha256:" + "0" * 64]
+        self.store(config=config)
+        self.assertEqual(oci.manifest_digest(self.root, "core"), self.digest)
+        with self.assertRaisesRegex(ValueError, "decompressed OCI diff_id mismatch"):
+            self.verify()
+
+    def test_missing_malformed_and_count_mismatched_rootfs_fail(self):
+        for rootfs in (
+            None,
+            {},
+            {"type": "other", "diff_ids": self.config["rootfs"]["diff_ids"]},
+            {"type": "layers", "diff_ids": []},
+            {"type": "layers", "diff_ids": "not-a-list"},
+            {"type": "layers", "diff_ids": [True]},
+            {"type": "layers", "diff_ids": ["sha256:" + "A" * 64]},
+            {"type": "layers", "diff_ids": self.config["rootfs"]["diff_ids"] * 2},
+        ):
+            with self.subTest(rootfs=rootfs):
+                config = copy.deepcopy(self.config)
+                if rootfs is None:
+                    del config["rootfs"]
+                else:
+                    config["rootfs"] = rootfs
+                self.store(config=config)
+                with self.assertRaises(ValueError):
+                    self.verify()
+
+    def test_gzip_truncation_crc_and_trailing_garbage_fail_closed(self):
+        compressed = gzip.compress(self.raw, mtime=0)
+        for raw in (
+            compressed[:-1],
+            compressed[:-8],
+            compressed[:-8] + bytes([compressed[-8] ^ 1]) + compressed[-7:],
+            compressed[:-1] + bytes([compressed[-1] ^ 1]),
+            compressed + b"garbage",
+            compressed + b"\0",
+            compressed + gzip.compress(b"second", mtime=0)[:-1],
+            b"not gzip",
+        ):
+            with self.subTest(size=len(raw), tail=raw[-8:]):
+                self.store(raw)
+                self.assertEqual(oci.manifest_digest(self.root, "core"), self.digest)
+                with self.assertRaises(ValueError):
+                    self.verify()
+
+    def test_expected_manifest_and_layer_order_are_bound(self):
+        with self.assertRaisesRegex(ValueError, "manifest digest mismatch"):
+            self.verify("sha256:" + "0" * 64)
+        other = self.raw.replace(b"hello", b"world")
+        config = copy.deepcopy(self.config)
+        config["rootfs"]["diff_ids"].append(
+            "sha256:" + hashlib.sha256(other).hexdigest()
+        )
+        self.manifest["layers"].append(
+            blob(self.root, gzip.compress(other, mtime=0), LAYER)
+        )
+        self.store(config=config)
+        self.assertEqual(self.verify(), config["rootfs"]["diff_ids"])
+        self.manifest["layers"].reverse()
+        self.store()
+        with self.assertRaisesRegex(ValueError, "decompressed OCI diff_id mismatch"):
+            self.verify()
+
+    def test_per_layer_and_whole_image_expansion_limits(self):
+        with (
+            mock.patch.object(oci, "MAX_LAYER_BYTES", len(self.raw) - 1),
+            self.assertRaisesRegex(ValueError, "decompressed OCI layer limit"),
+        ):
+            self.verify()
+        config = copy.deepcopy(self.config)
+        config["rootfs"]["diff_ids"] *= 2
+        self.store(gzip.compress(self.raw, mtime=0), config=config, count=2)
+        with (
+            mock.patch.object(oci, "MAX_DIFFID_TOTAL_BYTES", len(self.raw) * 2 - 1),
+            self.assertRaisesRegex(ValueError, "decompressed OCI image limit"),
+        ):
+            self.verify()
+        with mock.patch.object(oci, "MAX_DIFFID_TOTAL_BYTES", len(self.raw) * 2):
+            self.assertEqual(self.verify(), config["rootfs"]["diff_ids"])
+
+    def test_decoder_input_and_output_are_bounded_and_time_is_absolute(self):
+        factory = oci.zlib.decompressobj
+        calls = []
+        clock = [0.0]
+        test = self
+
+        class Decoder:
+            def __init__(self, *args):
+                self.decoder = factory(*args)
+
+            def __getattr__(self, name):
+                return getattr(self.decoder, name)
+
+            def decompress(self, data, max_length):
+                test.assertLessEqual(len(data), 17)
+                test.assertEqual(max_length, 17)
+                result = self.decoder.decompress(data, max_length)
+                test.assertLessEqual(len(result), 17)
+                calls.append(len(result))
+                clock[0] += 0.1
+                return result
+
+        with (
+            mock.patch.object(oci, "CHUNK_BYTES", 17),
+            mock.patch.object(oci.zlib, "decompressobj", Decoder),
+            mock.patch.object(oci.time, "monotonic", side_effect=lambda: clock[0]),
+        ):
+            self.assertEqual(self.verify(), self.config["rootfs"]["diff_ids"])
+            self.assertGreater(len(calls), 100)
+            clock[0] = 0.0
+            calls.clear()
+            with (
+                mock.patch.object(oci, "DIFFID_TIMEOUT_SECONDS", 0.15),
+                self.assertRaisesRegex(ValueError, "OCI diff_id deadline"),
+            ):
+                self.verify()
+            self.assertEqual(len(calls), 2)
+
+    def test_deadline_is_not_renewed_for_each_layer(self):
+        config = copy.deepcopy(self.config)
+        config["rootfs"]["diff_ids"] *= 2
+        self.store(gzip.compress(self.raw, mtime=0), config=config, count=2)
+        original = oci.contents
+        clock = [0.0]
+
+        def read(*args, **kwargs):
+            if kwargs.get("sink") is not None:
+                clock[0] += 0.6
+            return original(*args, **kwargs)
+
+        with (
+            mock.patch.object(oci, "contents", side_effect=read),
+            mock.patch.object(oci.time, "monotonic", side_effect=lambda: clock[0]),
+            mock.patch.object(oci, "DIFFID_TIMEOUT_SECONDS", 1.0),
+            self.assertRaisesRegex(ValueError, "OCI diff_id deadline"),
+        ):
+            self.verify()
+
+    def test_decompression_rechecks_raw_digest_on_its_own_opened_stream(self):
+        self.store(self.raw, "application/vnd.oci.image.layer.v1.tar")
+        path = self.path(self.manifest["layers"][0])
+        original = oci.contents
+
+        def read(*args, **kwargs):
+            if kwargs.get("sink") is not None:
+                path.write_bytes(self.raw[:-1] + b"x")
+            return original(*args, **kwargs)
+
+        with (
+            mock.patch.object(oci, "contents", side_effect=read),
+            self.assertRaisesRegex(ValueError, "OCI blob digest mismatch"),
+        ):
+            self.verify()
+
+    def test_decoder_file_open_rejects_symlink_fifo_and_directory(self):
+        path = self.path(self.manifest["layers"][0])
+        raw = path.read_bytes()
+        target = self.root / "target"
+        target.write_bytes(raw)
+        original = oci.contents
+        for kind in ("symlink", "fifo", "directory"):
+            with self.subTest(kind=kind):
+
+                def read(*args, kind=kind, **kwargs):
+                    if kwargs.get("sink") is not None:
+                        path.unlink()
+                        if kind == "symlink":
+                            path.symlink_to(target)
+                        elif kind == "fifo":
+                            os.mkfifo(path)
+                        else:
+                            path.mkdir()
+                    return original(*args, **kwargs)
+
+                try:
+                    with (
+                        mock.patch.object(oci, "contents", side_effect=read),
+                        self.assertRaises((OSError, ValueError)),
+                    ):
+                        self.verify()
+                finally:
+                    if path.is_dir():
+                        path.rmdir()
+                    else:
+                        path.unlink()
+                    path.write_bytes(raw)
+
+
 class OciLayoutTests(unittest.TestCase):
     def test_negative_subjects_preserve_bytes_and_exclude_attachments(self):
         manifest = json.loads(
