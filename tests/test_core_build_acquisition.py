@@ -1,3 +1,4 @@
+import contextlib
 import copy
 import gzip
 import hashlib
@@ -835,6 +836,380 @@ class GhTransportTests(unittest.TestCase):
 
 
 class PrivateHandoffTests(unittest.TestCase):
+    def receipt_acquire(self, output, *, native_error=None, attempts=None):
+        with (
+            mock.patch.object(
+                acquisition,
+                "private_attempt",
+                side_effect=attempts,
+                return_value=({}, []),
+            ),
+            mock.patch.object(
+                acquisition.R2Transport,
+                "stream",
+                side_effect=lambda *args: (chunk for chunk in [self.fixture.archive]),
+            ),
+            mock.patch.object(acquisition, "verify_native", side_effect=native_error),
+        ):
+            return acquisition.acquire_private(self.checked(), self.facts, output)
+
+    def test_receipt_binds_verified_layout_and_authenticated_identity(self):
+        output = self.parent / "receipt"
+        with mock.patch.object(
+            acquisition.oci, "verify_diff_ids", wraps=acquisition.oci.verify_diff_ids
+        ) as verify:
+            result = self.receipt_acquire(output)
+        self.assertEqual(verify.call_count, 1)
+        raw = (output / "acquisition-receipt.json").read_bytes()
+        receipt = json.loads(raw)
+        self.assertEqual(
+            result["acquisition_receipt"],
+            {
+                "path": "acquisition-receipt.json",
+                "sha256": hashlib.sha256(raw).hexdigest(),
+                "size_bytes": len(raw),
+            },
+        )
+        self.assertEqual(receipt["schema_version"], 1)
+        for field, value in {**self.checked(), **self.facts}.items():
+            self.assertEqual(receipt[field], value)
+            self.assertEqual(result[field], value)
+        self.assertEqual(receipt["kind"], "authenticated-private-core-handoff")
+        for field in ("production_ready", "runtime_verified", "release_authorized"):
+            self.assertIs(receipt[field], False)
+        manifest = json.loads(
+            self.fixture.files["blobs/sha256/" + self.fixture.digest.split(":")[1]]
+        )
+        config = json.loads(
+            self.fixture.files[
+                "blobs/sha256/" + manifest["config"]["digest"].split(":")[1]
+            ]
+        )
+        self.assertEqual(
+            receipt["layout"],
+            {
+                "path": "layout",
+                "manifest_digest": self.fixture.digest,
+                "config_digest": manifest["config"]["digest"],
+                "diff_ids": config["rootfs"]["diff_ids"],
+                "os": "linux",
+                "architecture": "amd64",
+                "reference": "core",
+            },
+        )
+        self.assertEqual(
+            receipt["verification"],
+            {
+                "archive": "completed",
+                "oci": "completed",
+                "diff_ids": "completed",
+                "base_prefix": "completed",
+                "attempt": "completed",
+                "private_handoff_attestation": "completed",
+                "upstream_signature": "not_evaluated",
+                "vulnerability_policy": "not_evaluated",
+                "vulnerability_scan": "not_run",
+                "vm": "not_run",
+            },
+        )
+        self.assertEqual(
+            (output / "acquisition-receipt.json").stat().st_mode & 0o777, 0o600
+        )
+        self.assertNotIn("acquisition_receipt", receipt)
+
+    def test_receipt_is_absent_on_native_or_attempt_failure(self):
+        for name, kwargs in (
+            ("native", {"native_error": ValueError("native rejected")}),
+            ("attempt", {"attempts": [({}, []), ({"changed": True}, [])]}),
+        ):
+            with self.subTest(name=name), self.assertRaises(ValueError):
+                self.receipt_acquire(self.parent / name, **kwargs)
+            self.assertFalse((self.parent / name / "acquisition-receipt.json").exists())
+            self.assertTrue((self.parent / name / "core-oci.zip").exists())
+
+    def test_stale_receipt_removed_without_deleting_partial_workspace(self):
+        output = self.parent / "stale"
+        output.mkdir(mode=0o700)
+        marker = output / "acquisition-receipt.json"
+        marker.write_text("stale")
+        partial = output / "core-oci.zip"
+        partial.write_bytes(b"retained partial")
+        with self.assertRaises((ValueError, OSError)):
+            self.receipt_acquire(output)
+        self.assertFalse(marker.exists())
+        self.assertEqual(partial.read_bytes(), b"retained partial")
+
+    def test_unsafe_receipt_aliases_rejected_before_cleanup(self):
+        for alias in ("symlink", "hardlink", "directory"):
+            with self.subTest(alias=alias):
+                output = self.parent / alias
+                output.mkdir(mode=0o700)
+                archive = output / "core-oci.zip"
+                archive.write_bytes(b"input")
+                marker = output / "acquisition-receipt.json"
+                if alias == "symlink":
+                    marker.symlink_to(archive)
+                elif alias == "hardlink":
+                    os.link(archive, marker)
+                else:
+                    marker.mkdir()
+                with self.assertRaises((ValueError, OSError)):
+                    self.receipt_acquire(output)
+                self.assertTrue(marker.exists())
+                self.assertEqual(archive.read_bytes(), b"input")
+
+    def test_invalid_facts_do_not_invalidate_stale_marker(self):
+        output = self.parent / "invalid"
+        output.mkdir(mode=0o700)
+        marker = output / "acquisition-receipt.json"
+        marker.write_text("unrelated")
+        self.facts["unexpected"] = "value"
+        with self.assertRaises(ValueError):
+            self.receipt_acquire(output)
+        self.assertEqual(marker.read_text(), "unrelated")
+
+    def test_receipt_replace_failure_cleans_stage_and_keeps_archive(self):
+        output = self.parent / "replace-failure"
+        with (
+            mock.patch.object(
+                acquisition.os, "replace", side_effect=OSError("replace failed")
+            ),
+            self.assertRaises(OSError),
+        ):
+            self.receipt_acquire(output)
+        self.assertEqual({p.name for p in output.iterdir()}, {"layout", "core-oci.zip"})
+
+    def test_receipt_staging_is_private_exclusive_and_no_follow(self):
+        output = self.parent / "stage"
+        opened = []
+        original_open = os.open
+
+        def observe(name, flags, mode=0o777, *, dir_fd=None):
+            if str(name).startswith(".acquisition-receipt-"):
+                opened.append((flags, mode))
+            return original_open(name, flags, mode, dir_fd=dir_fd)
+
+        with mock.patch.object(acquisition.os, "open", side_effect=observe):
+            self.receipt_acquire(output)
+        self.assertEqual(len(opened), 1)
+        flags, mode = opened[0]
+        self.assertEqual(mode, 0o600)
+        for flag in (os.O_CREAT, os.O_EXCL, os.O_NOFOLLOW):
+            self.assertTrue(flags & flag)
+        self.assertFalse(flags & os.O_TRUNC)
+
+    def test_staging_collision_never_truncates_or_unlinks_hardlinked_input(self):
+        output = self.parent / "collision"
+        archive = self.parent / "unrelated-input"
+        archive.write_bytes(b"never truncate")
+        original_replace = acquisition.oci.new_oci_file
+
+        @contextlib.contextmanager
+        def collide(root, name):
+            if name.startswith(".acquisition-receipt-"):
+                os.link(archive, name, dst_dir_fd=root)
+            with original_replace(root, name) as stream:
+                yield stream
+
+        with (
+            mock.patch.object(acquisition.oci, "new_oci_file", side_effect=collide),
+            self.assertRaises(FileExistsError),
+        ):
+            self.receipt_acquire(output)
+        self.assertEqual(archive.read_bytes(), b"never truncate")
+        self.assertFalse((output / "acquisition-receipt.json").exists())
+        self.assertEqual(archive.stat().st_nlink, 2)
+
+    def test_initial_attempt_failure_does_not_create_workspace(self):
+        output = self.parent / "initial-attempt"
+        with (
+            mock.patch.object(
+                acquisition,
+                "private_attempt",
+                side_effect=ValueError("attempt rejected"),
+            ),
+            self.assertRaisesRegex(ValueError, "attempt rejected"),
+        ):
+            acquisition.acquire_private(self.checked(), self.facts, output)
+        self.assertFalse(output.exists())
+
+    def test_receipt_not_visible_until_native_and_second_attempt_complete(self):
+        output = self.parent / "publication-order"
+        marker = output / "acquisition-receipt.json"
+
+        def check_absent(*args):
+            self.assertFalse(marker.exists())
+            return ({}, [])
+
+        with (
+            mock.patch.object(
+                acquisition, "private_attempt", side_effect=check_absent
+            ) as attempt,
+            mock.patch.object(
+                acquisition.R2Transport,
+                "stream",
+                return_value=(chunk for chunk in [self.fixture.archive]),
+            ),
+            mock.patch.object(acquisition, "verify_native", side_effect=check_absent),
+        ):
+            acquisition.acquire_private(self.checked(), self.facts, output)
+        self.assertEqual(attempt.call_count, 2)
+        self.assertTrue(marker.is_file())
+
+    def test_receipt_write_failure_removes_only_its_stage(self):
+        output = self.parent / "write-failure"
+        original_file = acquisition.oci.new_oci_file
+
+        @contextlib.contextmanager
+        def fail_write(root, name):
+            with original_file(root, name) as stream:
+                if name.startswith(".acquisition-receipt-"):
+                    wrapped = mock.Mock(wraps=stream)
+                    wrapped.write.side_effect = OSError("write failed")
+                    yield wrapped
+                else:
+                    yield stream
+
+        with (
+            mock.patch.object(acquisition.oci, "new_oci_file", side_effect=fail_write),
+            self.assertRaisesRegex(OSError, "write failed"),
+        ):
+            self.receipt_acquire(output)
+        self.assertEqual({p.name for p in output.iterdir()}, {"layout", "core-oci.zip"})
+
+    def test_unsafe_output_paths_do_not_remove_markers(self):
+        output = self.parent / "existing"
+        output.mkdir(mode=0o700)
+        marker = output / "acquisition-receipt.json"
+        marker.write_text("input")
+        alias = self.parent / "alias"
+        alias.symlink_to(output, target_is_directory=True)
+        for path in (alias, self.parent / "unused/../existing"):
+            with self.subTest(path=path), self.assertRaises((ValueError, OSError)):
+                self.receipt_acquire(path)
+            self.assertEqual(marker.read_text(), "input")
+        output.chmod(0o755)
+        with self.assertRaises(ValueError):
+            self.receipt_acquire(output)
+        self.assertEqual(marker.read_text(), "input")
+
+    def test_receipt_cli_output_failure_invalidates_published_receipt(self):
+        output = self.parent / "cli-failed-output"
+        with (
+            mock.patch.dict(
+                os.environ,
+                {
+                    "CORE_HANDOFF_POLICY": json.dumps(self.policy),
+                    "CORE_HANDOFF_CONTEXT": json.dumps(self.context),
+                    "CORE_HANDOFF_FACTS": json.dumps(self.facts),
+                },
+            ),
+            mock.patch.object(
+                acquisition.sys,
+                "argv",
+                ["core_build_acquisition.py", "acquire", "--output", str(output)],
+            ),
+            mock.patch.object(acquisition, "private_attempt", return_value=({}, [])),
+            mock.patch.object(
+                acquisition.R2Transport,
+                "stream",
+                return_value=(chunk for chunk in [self.fixture.archive]),
+            ),
+            mock.patch.object(acquisition, "verify_native"),
+            mock.patch("builtins.print", side_effect=OSError("stdout failed")),
+            self.assertRaises(OSError),
+        ):
+            acquisition.private_main()
+        self.assertFalse((output / "acquisition-receipt.json").exists())
+        self.assertTrue((output / "layout/index.json").is_file())
+
+    def test_acquire_cli_prints_receipt_descriptor(self):
+        output = self.parent / "cli-receipt"
+        stdout = io.StringIO()
+        with (
+            mock.patch.dict(
+                os.environ,
+                {
+                    "CORE_HANDOFF_POLICY": json.dumps(self.policy),
+                    "CORE_HANDOFF_CONTEXT": json.dumps(self.context),
+                    "CORE_HANDOFF_FACTS": json.dumps(self.facts),
+                },
+            ),
+            mock.patch.object(
+                acquisition.sys,
+                "argv",
+                ["core_build_acquisition.py", "acquire", "--output", str(output)],
+            ),
+            mock.patch.object(acquisition, "private_attempt", return_value=({}, [])),
+            mock.patch.object(
+                acquisition.R2Transport,
+                "stream",
+                return_value=(chunk for chunk in [self.fixture.archive]),
+            ),
+            mock.patch.object(acquisition, "verify_native"),
+            contextlib.redirect_stdout(stdout),
+        ):
+            self.assertEqual(acquisition.private_main(), 0)
+        self.assertEqual(
+            json.loads(stdout.getvalue())["acquisition_receipt"]["path"],
+            "acquisition-receipt.json",
+        )
+
+    def test_download_cli_keeps_exact_five_string_transport_outputs(self):
+        output = self.parent / "cli-download"
+        stdout = io.StringIO()
+        with (
+            mock.patch.dict(
+                os.environ,
+                {
+                    "CORE_HANDOFF_POLICY": json.dumps(self.policy),
+                    "CORE_HANDOFF_CONTEXT": json.dumps(self.context),
+                    "CORE_HANDOFF_FACTS": json.dumps(self.facts),
+                    "GITHUB_OUTPUT": str(self.parent / "github-output"),
+                },
+            ),
+            mock.patch.object(
+                acquisition.sys,
+                "argv",
+                ["core_build_acquisition.py", "download", "--output", str(output)],
+            ),
+            mock.patch.object(acquisition, "private_attempt", return_value=({}, [])),
+            mock.patch.object(
+                acquisition.R2Transport,
+                "stream",
+                return_value=(chunk for chunk in [self.fixture.archive]),
+            ),
+            contextlib.redirect_stdout(stdout),
+        ):
+            self.assertEqual(acquisition.private_main(), 0)
+        self.assertEqual(json.loads(stdout.getvalue()), self.facts)
+        self.assertEqual(
+            dict(
+                line.split("=", 1)
+                for line in (self.parent / "github-output").read_text().splitlines()
+            ),
+            self.facts,
+        )
+        self.assertFalse((output / "acquisition-receipt.json").exists())
+        nested = dict(
+            self.facts, acquisition_receipt={"path": "acquisition-receipt.json"}
+        )
+        with self.assertRaisesRegex(ValueError, "invalid producer outputs"):
+            acquisition.private_facts(self.checked(), nested)
+
+    def test_tooling_relationship_rejected_before_stale_receipt_cleanup(self):
+        output = self.parent / "tooling"
+        output.mkdir(mode=0o700)
+        marker = output / "acquisition-receipt.json"
+        marker.write_text("protected input")
+        fake_script = output / ".github/scripts/workflow/core_build_acquisition.py"
+        with (
+            mock.patch.object(acquisition, "__file__", str(fake_script)),
+            self.assertRaisesRegex(ValueError, "separate from trusted tooling"),
+        ):
+            self.receipt_acquire(output)
+        self.assertEqual(marker.read_text(), "protected input")
+
     def setUp(self):
         self.tmp = tempfile.TemporaryDirectory()
         self.addCleanup(self.tmp.cleanup)
@@ -1846,6 +2221,25 @@ class PrivateHandoffTests(unittest.TestCase):
                         ):
                             self.download(facts)
                     verify.assert_called_once()
+                    if case == "recompressed":
+                        verify.reset_mock()
+                        self.facts = facts
+                        result = self.receipt_acquire(self.parent / "authenticated")
+                        verify.assert_called_once()
+                        receipt = json.loads(
+                            (
+                                self.parent
+                                / "authenticated"
+                                / result["acquisition_receipt"]["path"]
+                            ).read_bytes()
+                        )
+                        self.assertEqual(
+                            receipt["layout"]["diff_ids"], config["rootfs"]["diff_ids"]
+                        )
+                        self.assertEqual(
+                            receipt["layout"]["config_digest"],
+                            manifest["config"]["digest"],
+                        )
 
 
 class FedoraMetadataTransportTests(unittest.TestCase):
