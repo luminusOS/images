@@ -19,6 +19,7 @@ import importlib.util
 import json
 import os
 import re
+import secrets
 import selectors
 import signal
 import stat
@@ -1032,7 +1033,7 @@ class R2Transport:
             request.close()
 
 
-def private_download(policy, facts, output, *, transport=None):
+def private_download(policy, facts, output, *, transport=None, _verified_layout=None):
     private_facts(policy, facts)
     output = oci.safe_path(output)
     transport = R2Transport() if transport is None else transport
@@ -1088,6 +1089,20 @@ def private_download(policy, facts, output, *, transport=None):
                 oci.require_base_prefix(
                     load_base_diff_ids(policy["base_digest"]), verified
                 )
+                if _verified_layout is not None:
+                    index = oci.document(oci.contents(layout, "index.json", MAX_JSON))
+                    manifest = oci.blob(
+                        layout, index["manifests"][0], {oci.MANIFEST}, json_blob=True
+                    )
+                    _verified_layout.update(
+                        path="layout",
+                        manifest_digest=facts["manifest_digest"],
+                        config_digest=manifest["config"]["digest"],
+                        diff_ids=verified,
+                        os="linux",
+                        architecture="amd64",
+                        reference="core",
+                    )
         return dict(facts)
 
 
@@ -1230,13 +1245,57 @@ def private_attempt(policy, *, completed=True, command=bounded_command):
 
 
 def acquire_private(policy, facts, output):
+    private_facts(policy, facts)
+    output = oci.safe_path(output)
+    tooling = Path(__file__).resolve().parents[3]
+    require(
+        output != tooling
+        and tooling not in output.parents
+        and output not in tooling.parents,
+        "acquisition output must be separate from trusted tooling",
+    )
+    receipt_name = "acquisition-receipt.json"
+    with oci.directory(output.parent) as parent:
+        info = os.fstat(parent)
+        require(
+            info.st_uid in (os.geteuid(), 0) and not info.st_mode & 0o022,
+            "private owned output parent required before receipt cleanup",
+        )
+        try:
+            existing = os.stat(output.name, dir_fd=parent, follow_symlinks=False)
+        except FileNotFoundError:
+            existing = None
+        if existing is not None:
+            require(
+                stat.S_ISDIR(existing.st_mode)
+                and existing.st_uid == os.geteuid()
+                and existing.st_mode & 0o777 == 0o700,
+                "private owned output directory required before receipt cleanup",
+            )
+            with oci.subdirectory(parent, output.name) as root:
+                try:
+                    marker = os.stat(receipt_name, dir_fd=root, follow_symlinks=False)
+                except FileNotFoundError:
+                    marker = None
+                if marker is not None:
+                    require(
+                        stat.S_ISREG(marker.st_mode)
+                        and marker.st_uid == os.geteuid()
+                        and marker.st_nlink == 1,
+                        "receipt must be an owned regular file without aliases",
+                    )
+                    os.unlink(receipt_name, dir_fd=root)
+            raise FileExistsError(
+                "acquisition workspace already exists; partials retained"
+            )
     before = private_attempt(policy)
-    result = private_download(policy, facts, output)
-    verify_native(policy, Path(output) / "core-oci.zip", result)
+    layout = {}
+    result = private_download(policy, facts, output, _verified_layout=layout)
+    verify_native(policy, output / "core-oci.zip", result)
     require(
         private_attempt(policy) == before, "attempt changed during private acquisition"
     )
-    return {
+    summary = {
         "kind": "authenticated-private-core-handoff",
         **result,
         **policy,
@@ -1244,6 +1303,46 @@ def acquire_private(policy, facts, output):
         "runtime_verified": False,
         "release_authorized": False,
     }
+    # policy_sha256 authenticates the handoff policy, not vulnerability exceptions.
+    receipt = {
+        "schema_version": 1,
+        **summary,
+        "layout": layout,
+        "verification": {
+            "archive": "completed",
+            "oci": "completed",
+            "diff_ids": "completed",
+            "base_prefix": "completed",
+            "attempt": "completed",
+            "private_handoff_attestation": "completed",
+            "upstream_signature": "not_evaluated",
+            "vulnerability_policy": "not_evaluated",
+            "vulnerability_scan": "not_run",
+            "vm": "not_run",
+        },
+    }
+    raw = json.dumps(receipt, sort_keys=True, separators=(",", ":")).encode()
+    descriptor = {
+        "path": receipt_name,
+        "sha256": hashlib.sha256(raw).hexdigest(),
+        "size_bytes": len(raw),
+    }
+    with oci.directory(output) as root:
+        stage = ".acquisition-receipt-" + secrets.token_hex(16)
+        staged = False
+        try:
+            with oci.new_oci_file(root, stage) as sink:
+                staged = True
+                os.fchmod(sink.fileno(), 0o600)
+                sink.write(raw)
+            os.replace(stage, receipt_name, src_dir_fd=root, dst_dir_fd=root)
+        finally:
+            if staged:
+                try:
+                    os.unlink(stage, dir_fd=root)
+                except FileNotFoundError:
+                    pass
+    return {**summary, "acquisition_receipt": descriptor}
 
 
 def private_pack(policy, layout, output):
@@ -1428,7 +1527,12 @@ def private_main():
             else:
                 result = acquire_private(policy, facts, args.output)
         if args.action == "acquire":
-            print(json.dumps(result))
+            try:
+                print(json.dumps(result), flush=True)
+            except Exception:
+                with oci.directory(oci.safe_path(args.output)) as root:
+                    os.unlink("acquisition-receipt.json", dir_fd=root)
+                raise
         else:
             oci.outputs(result)
         return 0
