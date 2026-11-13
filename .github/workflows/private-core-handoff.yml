@@ -8,13 +8,13 @@ permissions:
 
 jobs:
   quality:
-    uses: luminusOS/images/.github/workflows/ci.yml@6a178fbc2d18aa9315de7a60d2d52fb740ef4196
+    uses: luminusOS/images/.github/workflows/ci.yml@c798936589369a959cce9afb496ad467b7a14396
     with:
       checkout_ref: ${{ github.sha }}
 
   producer:
     needs: [quality]
-    uses: luminusOS/images/.github/workflows/private-core-producer.yml@6a178fbc2d18aa9315de7a60d2d52fb740ef4196
+    uses: luminusOS/images/.github/workflows/private-core-producer.yml@c798936589369a959cce9afb496ad467b7a14396
     permissions: {contents: read, actions: read, id-token: write, attestations: write}
     with:
       private_core_handoff: true
