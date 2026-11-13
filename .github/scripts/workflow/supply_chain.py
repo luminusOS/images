@@ -1,5 +1,6 @@
 import argparse
 import hashlib
+import importlib.util
 import json
 import os
 import re
@@ -9,6 +10,12 @@ import sys
 from datetime import UTC, datetime, timedelta
 from pathlib import Path, PurePosixPath
 from urllib.parse import parse_qs, unquote
+
+_local_spec = importlib.util.spec_from_file_location(
+    "local_oci_scan", Path(__file__).with_name("local_oci_scan.py")
+)
+local_oci_scan = importlib.util.module_from_spec(_local_spec)
+_local_spec.loader.exec_module(local_oci_scan)
 
 
 class SupplyChainError(ValueError):
@@ -453,7 +460,7 @@ def _binary_matches(binary, artifact, sbom):
     return identities == {(binary["path"], binary["sha256"], binary["rpm_nevra"])}
 
 
-def inspect_image(
+def _inspect_image(
     image: str,
     output: Path,
     source_sha: str,
@@ -467,6 +474,7 @@ def inspect_image(
     fedora: str | None = None,
     expected_policy_sha256: str | None = None,
     now: datetime | None = None,
+    local_input: local_oci_scan.LocalOCIInput | None = None,
 ) -> Path:
     bypass = authorize_bypass()
     context = dict(zip(SCOPE_FIELDS, (edition, component_scope, channel, fedora)))
@@ -476,12 +484,33 @@ def inspect_image(
     digest = _digest_image(image)
     if not re.fullmatch(r"[0-9a-f]{40,64}", source_sha):
         raise SupplyChainError("invalid source commit")
-    syft_version = _version("syft", expected_syft_version)
-    grype_version = _version("grype", expected_grype_version)
+    local_result = None
+    if local_input is not None:
+        _require(not bypass, "private local scans forbid findings bypass")
+        _require(len(image) <= 512, "private logical image name too long")
+        _require(exceptions is not None, "private local scans require reviewed policy")
+        _exceptions(
+            exceptions, context=context, now=now, expected_sha256=expected_policy_sha256
+        )
+        _require(
+            expected_syft_version == "1.34.2" and expected_grype_version == "0.101.1",
+            "unsupported local scanner versions",
+        )
+        _require(
+            local_input.manifest_digest == "sha256:" + digest,
+            "logical image and local manifest differ",
+        )
+        local_result = local_oci_scan.scan(local_input, output, now=now)
+        syft_version = local_result["tools"]["syft"]
+        grype_version = local_result["tools"]["grype"]
+    else:
+        syft_version = _version("syft", expected_syft_version)
+        grype_version = _version("grype", expected_grype_version)
     output.mkdir(parents=True, exist_ok=True)
     sbom_path = output / "sbom.spdx.json"
     vulnerabilities_path = output / "vulnerabilities.json"
-    _run(["syft", image, "-o", "spdx-json", "--file", str(sbom_path)])
+    if local_input is None:
+        _run(["syft", image, "-o", "spdx-json", "--file", str(sbom_path)])
     sbom = _load_json(sbom_path)
     if (
         not isinstance(sbom, dict)
@@ -489,7 +518,8 @@ def inspect_image(
         or not isinstance(sbom.get("packages"), list)
     ):
         raise SupplyChainError("malformed SPDX SBOM")
-    _run(["grype", image, "-o", "json", "--file", str(vulnerabilities_path)])
+    if local_input is None:
+        _run(["grype", image, "-o", "json", "--file", str(vulnerabilities_path)])
     scan = _load_json(vulnerabilities_path)
     matches = scan.get("matches") if isinstance(scan, dict) else None
     if not isinstance(matches, list):
@@ -618,6 +648,8 @@ def inspect_image(
             },
         },
     }
+    if local_result is not None:
+        provenance["predicate"]["local_input"] = local_result
     provenance_path.write_text(
         json.dumps(provenance, sort_keys=True, indent=2) + "\n", encoding="utf-8"
     )
@@ -630,6 +662,7 @@ def inspect_image(
                 "source_sha": source_sha,
                 "security": security,
                 "policy_sha256": policy_hash,
+                **({"local_input": local_result} if local_result is not None else {}),
                 "scan": None
                 if bypass
                 else {
@@ -660,7 +693,60 @@ def inspect_image(
         + "\n",
         encoding="utf-8",
     )
+    if local_input is not None:
+        provenance_path.chmod(0o600)
+        manifest.chmod(0o600)
     return manifest
+
+
+def inspect_image(
+    image: str,
+    output: Path,
+    source_sha: str,
+    exceptions: Path | None = None,
+    *,
+    expected_syft_version: str,
+    expected_grype_version: str,
+    edition: str | None = None,
+    component_scope: str | None = None,
+    channel: str | None = None,
+    fedora: str | None = None,
+    expected_policy_sha256: str | None = None,
+    now: datetime | None = None,
+    local_input: local_oci_scan.LocalOCIInput | None = None,
+) -> Path:
+    arguments = locals()
+    if local_input is None:
+        return _inspect_image(**arguments)
+    try:
+        local_oci_scan.validate_output_relationships(
+            local_input, output, exceptions=exceptions
+        )
+    except (OSError, ValueError, TypeError, AttributeError) as error:
+        raise SupplyChainError("invalid private scan output relationships") from error
+    try:
+        local_oci_scan._cleanup_managed(output)
+        _require(
+            os.environ.get("SECURITY_FINDINGS_BYPASS", "false") == "false",
+            "private local scans forbid findings bypass",
+        )
+        return _inspect_image(**arguments)
+    except BaseException as error:
+        local_oci_scan._cleanup_failure(output, error)
+        if isinstance(
+            error,
+            (
+                OSError,
+                ValueError,
+                KeyError,
+                TypeError,
+                AttributeError,
+                RecursionError,
+                subprocess.SubprocessError,
+            ),
+        ):
+            raise SupplyChainError("private local scan failed") from error
+        raise
 
 
 def _run_url() -> str | None:
