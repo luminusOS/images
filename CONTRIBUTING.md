@@ -26,6 +26,29 @@ What each variable does:
 
 Builds squash the local core and workstation payload images by default so OCI whiteouts from lower layers are processed before packaging. The `luminusos-workstation:<tag>-iso` live root squashes itself in `Containerfile.installer` (a final `FROM scratch` + `COPY --from=live / /` stage) because image-builder/osbuild deploys the ISO live root without applying OCI whiteout semantics; leftover `.wh.*` files in the live rootfs break services such as dbus-broker.
 
+### Builds inside Fedora Toolbox
+
+Run the build commands inside the toolbox that provides Buildah, Skopeo and passwordless sudo. QEMU testing also needs access to `/dev/kvm` and installed OVMF firmware.
+
+Builds use `sudo buildah`, so configure storage for root **inside the toolbox**, not for rootless Podman on the host. A graphroot on the toolbox's own overlay filesystem can fail with `invalid argument` while mounting the build context, or `operation not permitted` while copying directories. Use `fuse-overlayfs` and a dedicated graphroot on the bind-mounted home filesystem instead.
+
+Install `fuse-overlayfs` in the toolbox if it is missing. Configure `/root/.config/containers/storage.conf` using the following layout, replacing `YOUR_USER` with the host user whose home is mounted in the toolbox:
+
+```toml
+[storage]
+driver = "overlay"
+graphroot = "/var/home/YOUR_USER/.local/share/luminusos/toolbox-buildah-fedora45/storage"
+runroot = "/run/containers/luminusos-toolbox-buildah"
+
+[storage.options.overlay]
+mount_program = "/usr/bin/fuse-overlayfs"
+mountopt = "nodev"
+```
+
+Back up an existing storage configuration before editing it. This selects a separate image store; it does not migrate or delete images in the old store. Check `sudo buildah info` inside the toolbox to confirm the graphroot and mount program before running `just build core` or `just build workstation`. Do not change the host's storage configuration or switch a populated store between overlay and VFS.
+
+Builds still use the immutable Fedora digest in `config/versions.env`. If the registry returns `manifest unknown`, resolve and review a replacement digest from the intended Fedora release rather than falling back to a floating tag. Resolving a digest verifies content identity, not the upstream signature required by release validation.
+
 ## Validation and Tests
 
 Run the same checks CI runs on `main` before pushing:

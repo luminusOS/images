@@ -1,4 +1,8 @@
 import copy
+import os
+import shlex
+import subprocess
+import sys
 import unittest
 from pathlib import Path
 
@@ -41,6 +45,88 @@ def reusable_permission_errors(workflows, entrypoint):
 
 
 class WorkflowPhasesTest(unittest.TestCase):
+    def test_legacy_stable_is_disabled_before_preparation_or_resume(self):
+        step = next(
+            step
+            for step in workflow("publish.yml")["jobs"]["inputs"]["steps"]
+            if step.get("name") == "Validate phase inputs"
+        )
+        command = [sys.executable, *shlex.split(step["run"])[1:]]
+        for channel, candidate, validation, testing, expected in (
+            ("stable", "", "", "789", 1),
+            ("stable", "123", "456", "789", 1),
+            ("testing", "", "", "789", 0),
+            ("testing", "123", "456", "789", 0),
+            ("testing", "123", "", "789", 1),
+            ("testing", "", "456", "789", 1),
+            ("testing", "abc", "def", "789", 1),
+            ("testing", "0", "456", "789", 1),
+            ("testing", "١", "456", "789", 1),
+            ("testing", "", "", "bad", 1),
+        ):
+            with self.subTest(
+                channel=channel,
+                candidate=candidate,
+                validation=validation,
+                testing=testing,
+            ):
+                result = subprocess.run(
+                    command,
+                    env={
+                        **os.environ,
+                        "CHANNEL": channel,
+                        "CANDIDATE": candidate,
+                        "VALIDATION": validation,
+                        "TESTING": testing,
+                        "TESTING_VALIDATION": "987",
+                        "VERSION": "45.20261115",
+                    },
+                    capture_output=True,
+                    text=True,
+                    timeout=10,
+                    check=False,
+                )
+                self.assertEqual(result.returncode, expected)
+
+    def test_public_writers_require_successful_inputs_and_inert_probe_is_separate(self):
+        jobs = workflow("publish.yml")["jobs"]
+
+        def guarded(name):
+            if name == "inputs":
+                return True
+            job = jobs[name]
+            if any(
+                function in job.get("if", "")
+                for function in ("always()", "failure()", "cancelled()", "success()")
+            ):
+                return False
+            dependencies = job.get("needs", [])
+            if isinstance(dependencies, str):
+                dependencies = [dependencies]
+            return any(guarded(dependency) for dependency in dependencies)
+
+        writers = {
+            name
+            for name, job in jobs.items()
+            if "write" in job.get("permissions", {}).values()
+        }
+        self.assertEqual(
+            writers, {"publish-images", "publish-stable-installer", "release"}
+        )
+        for name in writers:
+            with self.subTest(job=name):
+                self.assertTrue(guarded(name))
+        self.assertNotIn("needs", jobs["r2-producer-probe"])
+        self.assertIn("inputs.inert_r2_probe == true", jobs["r2-producer-probe"]["if"])
+        self.assertEqual(
+            jobs["inputs"]["if"],
+            "${{ !(github.event_name == 'workflow_dispatch' && inputs.inert_r2_probe == true) }}",
+        )
+        for name in ("iso", "qcow2", "prepare-candidate"):
+            self.assertIn("always()", jobs[name]["if"])
+            self.assertIn("needs.", jobs[name]["if"])
+            self.assertIn(".result == 'success'", jobs[name]["if"])
+
     def test_legacy_call_graph_respects_permission_ceiling_before_conditions(self):
         workflows = {
             path.name: workflow(path.name)
@@ -624,11 +710,17 @@ class WorkflowPhasesTest(unittest.TestCase):
 
     def test_bypass_blocks_candidate_and_promotion_even_when_scans_succeed(self):
         jobs = workflow("publish.yml")["jobs"]
-        for name in ("prepare-candidate", "stable-source", "release"):
+        for name in ("publish-images", "prepare-candidate", "stable-source", "release"):
             with self.subTest(job=name):
                 self.assertIn("!inputs.security_findings_bypass", jobs[name]["if"])
-        for name in ("publish-images", "iso", "qcow2"):
-            self.assertNotIn("!inputs.security_findings_bypass", jobs[name]["if"])
+        for name in ("iso", "qcow2"):
+            with self.subTest(job=name):
+                self.assertIn("publish-images", jobs[name]["needs"])
+                self.assertIn(
+                    "needs.publish-images.result == 'success'", jobs[name]["if"]
+                )
+        self.assertIn("iso", jobs["boot-test"]["needs"])
+        self.assertIn("qcow2", jobs["boot-test"]["needs"])
 
     def test_workflow_names_describe_the_build_responsibility(self):
         self.assertEqual(

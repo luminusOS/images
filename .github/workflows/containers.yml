@@ -3,6 +3,8 @@ name: Image Build Orchestration
 on:
   workflow_call:
     inputs:
+      detected_fedora_version: {type: string, default: "__not_supplied__"}
+      detected_base_digest: {type: string, default: "__not_supplied__"}
       fedora_version: {type: string, default: ""}
       channel: {type: string, default: testing}
       promote_version: {type: string, default: ""}
@@ -74,6 +76,8 @@ jobs:
         id: version
         env:
           FEDORA_VERSION: '${{ inputs.fedora_version }}'
+          DETECTED_FEDORA_VERSION: '${{ inputs.detected_fedora_version }}'
+          DETECTED_BASE_DIGEST: '${{ inputs.detected_base_digest }}'
           CHANNEL: '${{ inputs.channel }}'
           PROMOTE_VERSION: '${{ inputs.promote_version }}'
           SIRIUS_VERSION: '${{ inputs.sirius_version }}'

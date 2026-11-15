@@ -35,6 +35,8 @@ jobs:
       packages: read
     outputs:
       build: ${{ steps.check.outputs.build }}
+      fedora_version: ${{ steps.check.outputs.fedora_version }}
+      fedora_bootc_digest: ${{ steps.check.outputs.fedora_bootc_digest }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -56,6 +58,8 @@ jobs:
 
           fedora_version="$(python3 tools/config-value.py DEFAULT_FEDORA_VERSION)"
           latest="$(python3 tools/fedora-bootc-digest.py "${fedora_version}")"
+          echo "fedora_version=${fedora_version}" >>"${GITHUB_OUTPUT}"
+          echo "fedora_bootc_digest=${latest}" >>"${GITHUB_OUTPUT}"
           namespace="$(printf '%s' "${OWNER}" | tr '[:upper:]' '[:lower:]')"
           image="docker://ghcr.io/${namespace}/luminusos-workstation:testing-${fedora_version}"
 
@@ -100,6 +104,8 @@ jobs:
       channel: testing
       build_sequence: true
       force_core: true
+      detected_fedora_version: ${{ needs.check.outputs.fedora_version }}
+      detected_base_digest: ${{ needs.check.outputs.fedora_bootc_digest }}
       security_findings_bypass: ${{ github.event_name == 'workflow_dispatch' && inputs.security_findings_bypass || false }}
     secrets:
       COSIGN_PRIVATE_KEY: ${{ secrets.COSIGN_PRIVATE_KEY }}
