@@ -119,9 +119,18 @@ def main():
         fedora = env.get("FEDORA_VERSION") or (
             match.group(1) if match else config["DEFAULT_FEDORA_VERSION"]
         )
-    base = subprocess.check_output(
-        [sys.executable, "tools/fedora-bootc-digest.py", fedora], text=True
-    ).strip()
+    detected_fedora = env.get("DETECTED_FEDORA_VERSION", "__not_supplied__")
+    detected_base = env.get("DETECTED_BASE_DIGEST", "__not_supplied__")
+    if detected_fedora == detected_base == "__not_supplied__":
+        base = subprocess.check_output(
+            [sys.executable, "tools/fedora-bootc-digest.py", fedora], text=True
+        ).strip()
+    else:
+        if detected_fedora != fedora or not re.fullmatch(
+            r"sha256:[0-9a-f]{64}", detected_base
+        ):
+            raise ValueError("invalid detected Fedora line or base digest")
+        base = detected_base
     today = datetime.datetime.now(datetime.UTC).strftime("%Y%m%d")
     sequence = 0
     if channel == "testing" and env.get("BUILD_SEQUENCE") == "true":

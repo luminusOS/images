@@ -11,6 +11,8 @@ KEY = Path("shared/trust/etc/pki/containers/luminusos.pub")
 
 
 def push_and_sign(image: str) -> str:
+    if os.environ.get("SECURITY_FINDINGS_BYPASS", "false") != "false":
+        raise ValueError("diagnostic bypass cannot publish or sign candidates")
     if "@" in image or not re.fullmatch(
         r"ghcr\.io/[a-z0-9][a-z0-9_.-]*/[a-z0-9][a-z0-9_.-]*:[A-Za-z0-9_][A-Za-z0-9_.-]{0,127}",
         image,

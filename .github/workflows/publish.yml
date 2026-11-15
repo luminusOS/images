@@ -8,7 +8,7 @@ name: Image Publication
         type: boolean
         default: false
       channel:
-        description: "testing builds a new release; stable promotes an existing testing build"
+        description: "testing builds a new release; stable is disabled pending protected promotion"
         type: choice
         options: [testing, stable]
         default: testing
@@ -38,6 +38,8 @@ name: Image Publication
         default: ""
   workflow_call:
     inputs:
+      detected_fedora_version: {type: string, default: "__not_supplied__"}
+      detected_base_digest: {type: string, default: "__not_supplied__"}
       channel: {type: string, default: testing}
       promote_version: {type: string, default: ""}
       fedora_version: {type: string, default: ""}
@@ -121,9 +123,8 @@ jobs:
           CHANNEL: ${{ inputs.channel }}
           TESTING: ${{ inputs.testing_run_id }}
           TESTING_VALIDATION: ${{ inputs.testing_validation_run_id }}
-          VERSION: ${{ inputs.promote_version }}
         run: |
-          python3 -c 'import os,sys; e=os.environ; c=e["CANDIDATE"]; v=e["VALIDATION"]; t=e["TESTING"]; tv=e["TESTING_VALIDATION"]; ok=e["CHANNEL"] in ("testing","stable") and bool(c)==bool(v) and all(not x or (x.isascii() and x.isdigit() and int(x)>0) for x in (c,v,t,tv)) and (bool(c) or e["CHANNEL"] != "stable" or (bool(t) and bool(tv) and bool(e["VERSION"]))); sys.exit(0 if ok else "invalid release phase inputs")'
+          python3 -c 'import os,sys; e=os.environ; c=e["CANDIDATE"]; v=e["VALIDATION"]; t=e["TESTING"]; tv=e["TESTING_VALIDATION"]; ok=e["CHANNEL"] == "testing" and bool(c)==bool(v) and all(not x or (x.isascii() and x.isdigit() and int(x)>0) for x in (c,v,t,tv)); sys.exit(0 if ok else "invalid release phase inputs; legacy stable publication is disabled")'
 
   quality:
     if: ${{ !(github.event_name == 'workflow_dispatch' && inputs.inert_r2_probe == true) }}
@@ -147,6 +148,8 @@ jobs:
       candidate_id: ${{ github.run_id }}-${{ github.run_attempt }}
       promote_version: ${{ inputs.promote_version }}
       fedora_version: ${{ inputs.fedora_version }}
+      detected_fedora_version: ${{ contains(github.workflow_ref, '/.github/workflows/publish.yml@') && '__not_supplied__' || inputs.detected_fedora_version }}
+      detected_base_digest: ${{ contains(github.workflow_ref, '/.github/workflows/publish.yml@') && '__not_supplied__' || inputs.detected_base_digest }}
       sirius_version: ${{ inputs.sirius_version }}
       skip_flatpaks: ${{ inputs.skip_flatpaks }}
       build_installer: ${{ inputs.channel == 'testing' }}
@@ -206,7 +209,7 @@ jobs:
   publish-images:
     name: Publish candidate containers
     needs: [containers]
-    if: ${{ !(github.event_name == 'workflow_dispatch' && inputs.inert_r2_probe == true) && (inputs.channel == 'testing' && github.ref == 'refs/heads/main') }}
+    if: ${{ !(github.event_name == 'workflow_dispatch' && inputs.inert_r2_probe == true) && !inputs.security_findings_bypass && (inputs.channel == 'testing' && github.ref == 'refs/heads/main') }}
     runs-on: ubuntu-latest
     permissions:
       contents: read

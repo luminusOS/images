@@ -21,6 +21,8 @@ An immutable Fedora bootc desktop with GNOME, atomic updates, and rollback.
 
 Use a Linux host with Buildah and sudo access; QEMU/KVM is needed for VM testing. Install `just` (CI uses 1.46.0), Python 3.11+, and `jq`. See the [development guide](CONTRIBUTING.md) for Python dependencies and build options.
 
+Fedora Toolbox is supported with a dedicated Buildah store on the shared home filesystem; see [toolbox storage setup](CONTRIBUTING.md#builds-inside-fedora-toolbox).
+
 ```bash
 git clone https://github.com/luminusOS/images.git
 cd images

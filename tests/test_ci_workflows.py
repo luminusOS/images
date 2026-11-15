@@ -496,6 +496,69 @@ class ScannerInstallerTests(unittest.TestCase):
 
 
 class CandidateSigningTests(unittest.TestCase):
+    def test_diagnostic_or_invalid_bypass_never_pushes_or_signs(self):
+        for value in ("true", "", "False", "TRUE", "0", "invalid"):
+            with (
+                self.subTest(value=value),
+                patch.dict(
+                    sign_candidates.os.environ,
+                    {"SECURITY_FINDINGS_BYPASS": value},
+                    clear=True,
+                ),
+                patch.object(sign_candidates.subprocess, "run") as run,
+                self.assertRaisesRegex(ValueError, "diagnostic"),
+            ):
+                sign_candidates.push_and_sign("ghcr.io/luminusos/image:candidate-1-1")
+            run.assert_not_called()
+
+    def test_only_absent_or_false_bypass_allows_signing(self):
+        digest = "sha256:" + "a" * 64
+        pushed = subprocess.CompletedProcess(
+            [], 0, stdout=f"digest: {digest} size: 123\n", stderr=""
+        )
+        for env in ({}, {"SECURITY_FINDINGS_BYPASS": "false"}):
+            with (
+                self.subTest(env=env),
+                patch.dict(sign_candidates.os.environ, env, clear=True),
+                patch.object(
+                    sign_candidates.subprocess, "run", side_effect=[pushed, None, None]
+                ) as run,
+            ):
+                result = sign_candidates.push_and_sign(
+                    "ghcr.io/luminusos/image:candidate-1-1"
+                )
+                self.assertEqual(result, f"ghcr.io/luminusos/image@{digest}")
+                self.assertEqual(
+                    [call.args[0][:2] for call in run.call_args_list],
+                    [["docker", "push"], ["cosign", "sign"], ["cosign", "verify"]],
+                )
+
+    def test_diagnostic_blocks_normal_and_installer_only_cli(self):
+        image = "ghcr.io/luminusos/image:candidate-1-1"
+        for arguments in ([image, image], ["--installer-only", image]):
+            with (
+                self.subTest(arguments=arguments),
+                tempfile.TemporaryDirectory() as directory,
+            ):
+                output = Path(directory) / "output"
+                with (
+                    patch.dict(
+                        sign_candidates.os.environ,
+                        {
+                            "SECURITY_FINDINGS_BYPASS": "true",
+                            "COSIGN_PRIVATE_KEY": "fixture",
+                            "GITHUB_OUTPUT": str(output),
+                        },
+                        clear=True,
+                    ),
+                    patch.object(sign_candidates.Path, "is_file", return_value=True),
+                    patch.object(sys, "argv", ["sign_candidates.py", *arguments]),
+                    patch.object(sign_candidates.subprocess, "run") as run,
+                ):
+                    self.assertEqual(sign_candidates.main(), 1)
+                run.assert_not_called()
+                self.assertFalse(output.exists())
+
     def test_candidate_metadata_captures_immutable_job_outputs(self):
         with tempfile.TemporaryDirectory() as directory:
             target = Path(directory) / "metadata.json"
@@ -513,6 +576,7 @@ class CandidateSigningTests(unittest.TestCase):
                 "BUILD_VERSION": "45.1",
                 "FEDORA_VERSION": "45",
                 "FEDORA_BOOTC_DIGEST": digest,
+                "SECURITY_FINDINGS_BYPASS": "true",
             }
             with (
                 patch.dict(sign_candidates.os.environ, env),
@@ -521,8 +585,10 @@ class CandidateSigningTests(unittest.TestCase):
                     "argv",
                     ["sign_candidates.py", "--metadata", str(target), *images],
                 ),
+                patch.object(sign_candidates.subprocess, "run") as run,
             ):
                 self.assertEqual(sign_candidates.main(), 0)
+            run.assert_not_called()
             metadata = json.loads(target.read_text(encoding="utf-8"))
             self.assertEqual(metadata["images"]["workstation"], images[1])
             self.assertEqual(metadata["run_id"], 123)

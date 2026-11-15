@@ -8,6 +8,8 @@ import unittest
 from pathlib import Path
 from unittest.mock import patch
 
+import yaml
+
 ROOT = Path(__file__).resolve().parents[1]
 
 
@@ -40,6 +42,163 @@ RELEASES = {"SUPPORTED_RELEASES": "45", "LATEST_RELEASE": "45"}
 
 
 class MetadataTests(unittest.TestCase):
+    def test_detected_digest_is_used_when_tag_changes(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            output = Path(tmp) / "output"
+            env = {
+                **ENV,
+                "GITHUB_OUTPUT": str(output),
+                "DETECTED_FEDORA_VERSION": "45",
+                "DETECTED_BASE_DIGEST": BASE,
+            }
+
+            def check_output(args, **kwargs):
+                if args[0] == "git":
+                    return "SUPPORTED_RELEASES=45\nLATEST_RELEASE=45\n"
+                return "sha256:" + "b" * 64
+
+            with (
+                patch.dict(meta.os.environ, env, clear=True),
+                patch.object(meta, "read_config", return_value=CONFIG),
+                patch.object(meta.subprocess, "run"),
+                patch.object(
+                    meta.subprocess, "check_output", side_effect=check_output
+                ) as resolve,
+            ):
+                meta.main()
+            self.assertIn(f"fedora_bootc_digest={BASE}\n", output.read_text())
+            self.assertEqual(resolve.call_count, 1)
+            self.assertEqual(resolve.call_args.args[0][0], "git")
+
+    def test_detected_pair_validation_precedes_output(self):
+        invalid = (
+            {"DETECTED_FEDORA_VERSION": "45"},
+            {"DETECTED_BASE_DIGEST": BASE},
+            {"DETECTED_FEDORA_VERSION": "", "DETECTED_BASE_DIGEST": ""},
+            {"DETECTED_FEDORA_VERSION": "44", "DETECTED_BASE_DIGEST": BASE},
+            {
+                "DETECTED_FEDORA_VERSION": "45",
+                "DETECTED_BASE_DIGEST": "sha256:" + "A" * 64,
+            },
+            {"DETECTED_FEDORA_VERSION": "45", "DETECTED_BASE_DIGEST": "bad"},
+        )
+        for pair in invalid:
+            with self.subTest(pair=pair), tempfile.TemporaryDirectory() as tmp:
+                output = Path(tmp) / "output"
+                with (
+                    patch.dict(
+                        meta.os.environ,
+                        {**ENV, **pair, "GITHUB_OUTPUT": str(output)},
+                        clear=True,
+                    ),
+                    patch.object(meta, "read_config", return_value=CONFIG),
+                    patch.object(meta.subprocess, "run"),
+                    patch.object(
+                        meta.subprocess,
+                        "check_output",
+                        return_value="SUPPORTED_RELEASES=45\nLATEST_RELEASE=45\n",
+                    ),
+                    self.assertRaises(ValueError),
+                ):
+                    meta.main()
+                self.assertFalse(output.exists())
+
+    def test_absent_detected_pair_resolves_base(self):
+        for pair in (
+            {},
+            {
+                "DETECTED_FEDORA_VERSION": "__not_supplied__",
+                "DETECTED_BASE_DIGEST": "__not_supplied__",
+            },
+        ):
+            with self.subTest(pair=pair), tempfile.TemporaryDirectory() as tmp:
+                output = Path(tmp) / "output"
+                with (
+                    patch.dict(
+                        meta.os.environ,
+                        {**ENV, **pair, "GITHUB_OUTPUT": str(output)},
+                        clear=True,
+                    ),
+                    patch.object(meta, "read_config", return_value=CONFIG),
+                    patch.object(meta.subprocess, "run"),
+                    patch.object(
+                        meta.subprocess,
+                        "check_output",
+                        side_effect=[
+                            "SUPPORTED_RELEASES=45\nLATEST_RELEASE=45\n",
+                            BASE,
+                        ],
+                    ) as resolve,
+                ):
+                    meta.main()
+                self.assertIn(f"fedora_bootc_digest={BASE}\n", output.read_text())
+                self.assertEqual(resolve.call_count, 2)
+
+    def test_detected_pair_workflow_wiring(self):
+        auto = (ROOT / ".github/workflows/auto-testing.yml").read_text()
+        publish = (ROOT / ".github/workflows/publish.yml").read_text()
+        containers = (ROOT / ".github/workflows/containers.yml").read_text()
+        self.assertIn("fedora_version: ${{ steps.check.outputs.fedora_version }}", auto)
+        self.assertIn(
+            "fedora_bootc_digest: ${{ steps.check.outputs.fedora_bootc_digest }}", auto
+        )
+        self.assertIn('echo "fedora_version=${fedora_version}"', auto)
+        self.assertIn('echo "fedora_bootc_digest=${latest}"', auto)
+        for name, output in (
+            ("detected_fedora_version", "fedora_version"),
+            ("detected_base_digest", "fedora_bootc_digest"),
+        ):
+            self.assertNotIn(name, publish.split("  workflow_call:", 1)[0])
+            self.assertIn(f"{name}: ${{{{ needs.check.outputs.{output} }}}}", auto)
+            self.assertIn(
+                f'{name}: {{type: string, default: "__not_supplied__"}}', publish
+            )
+            self.assertIn(
+                f'{name}: {{type: string, default: "__not_supplied__"}}', containers
+            )
+            self.assertIn(f"|| inputs.{name} }}}}", publish)
+            self.assertIn(f"${{{{ inputs.{name} }}}}", containers)
+        self.assertNotIn(
+            "detected_base_digest", publish.split("  workflow_call:", 1)[0]
+        )
+        auto_jobs = yaml.safe_load(auto)["jobs"]
+        publish_jobs = yaml.safe_load(publish)["jobs"]
+        container_jobs = yaml.safe_load(containers)["jobs"]
+        version = next(
+            step
+            for step in container_jobs["metadata"]["steps"]
+            if step.get("id") == "version"
+        )
+        for name, output, variable in (
+            ("detected_fedora_version", "fedora_version", "DETECTED_FEDORA_VERSION"),
+            ("detected_base_digest", "fedora_bootc_digest", "DETECTED_BASE_DIGEST"),
+        ):
+            self.assertEqual(
+                auto_jobs["check"]["outputs"][output],
+                f"${{{{ steps.check.outputs.{output} }}}}",
+            )
+            self.assertEqual(
+                auto_jobs["prepare"]["with"][name],
+                f"${{{{ needs.check.outputs.{output} }}}}",
+            )
+            self.assertEqual(
+                publish_jobs["containers"]["with"][name],
+                "${{ contains(github.workflow_ref, '/.github/workflows/publish.yml@')"
+                f" && '__not_supplied__' || inputs.{name} }}}}",
+            )
+            self.assertEqual(version["env"][variable], f"${{{{ inputs.{name} }}}}")
+        core_build = next(
+            step["with"]["build-args"]
+            for step in container_jobs["core"]["steps"]
+            if step.get("id") == "build"
+        )
+        self.assertIn(
+            "base=quay.io/fedora/fedora-bootc:"
+            "${{ needs.metadata.outputs.fedora_version }}"
+            "@${{ needs.metadata.outputs.fedora_bootc_digest }}",
+            core_build,
+        )
+
     def test_testing_and_stable_identities(self):
         result = meta.metadata(ENV, CONFIG, RELEASES, BASE, "20261105")
         self.assertEqual(
