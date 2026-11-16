@@ -777,6 +777,15 @@ class CandidateSigningTests(unittest.TestCase):
                         )
         self.assertGreater(callers, 0)
 
+    def test_boot_test_runs_when_packaging_succeeds_despite_skipped_stable_jobs(self):
+        workflow = yaml.safe_load((ROOT / ".github/workflows/publish.yml").read_text())
+        condition = workflow["jobs"]["boot-test"]["if"]
+        self.assertIn("!cancelled()", condition)
+        self.assertNotIn("always()", condition)
+        self.assertIn("needs.iso.result == 'success'", condition)
+        self.assertIn("needs.qcow2.result == 'success'", condition)
+        self.assertIn("inputs.inert_r2_probe == true", condition)
+
     def test_public_tag_writers_are_serialized_and_testing_enabled(self):
         workflow = yaml.safe_load((ROOT / ".github/workflows/publish.yml").read_text())
         for job in ("release", "publish-stable-installer"):

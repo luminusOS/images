@@ -528,7 +528,7 @@ jobs:
           if-no-files-found: error
 
   boot-test:
-    if: ${{ !(github.event_name == 'workflow_dispatch' && inputs.inert_r2_probe == true) }}
+    if: ${{ !(github.event_name == 'workflow_dispatch' && inputs.inert_r2_probe == true) && !cancelled() && needs.iso.result == 'success' && needs.qcow2.result == 'success' }}
     name: Boot smoke test
     needs: [iso, qcow2]
     runs-on: ubuntu-latest
