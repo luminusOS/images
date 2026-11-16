@@ -28,7 +28,7 @@ require = oci.require
 OUTPUT_LIMIT = 4 * 1024**2
 FILE_LIMIT = 64 * 1024**2
 WORK_LIMIT = 128 * 1024**2
-TOTAL_LIMIT = 4 * 1024**3
+TOTAL_LIMIT = 16 * 1024**3
 WALL_SECONDS = 240
 VERSIONS = {"syft": "1.34.2", "grype": "0.101.1"}
 REPORT_NAMES = ("sbom.spdx.json", "vulnerabilities.json")
@@ -598,6 +598,14 @@ def scan(value: LocalOCIInput, output: Path, *, now: datetime | None = None) -> 
         raise
 
 
+def require_budget(input_bytes: int, scratch_bytes: int, output_bytes: int) -> None:
+    require(
+        input_bytes + scratch_bytes + output_bytes + 2 * WORK_LIMIT + FILE_LIMIT
+        <= TOTAL_LIMIT,
+        "local scan total disk budget exceeded",
+    )
+
+
 def _scan(value: LocalOCIInput, output: Path, *, now: datetime | None = None) -> dict:
     clock = lambda: datetime.now(UTC) if now is None else now
     trusted, before = _validate(value)
@@ -606,15 +614,7 @@ def _scan(value: LocalOCIInput, output: Path, *, now: datetime | None = None) ->
         + charged(value.db_cache)
         + sum(v.path.stat().st_size for v in trusted)
     )
-    require(
-        input_bytes
-        + charged(value.scratch)
-        + charged(output)
-        + 2 * WORK_LIMIT
-        + FILE_LIMIT
-        <= TOTAL_LIMIT,
-        "local scan total disk budget exceeded",
-    )
+    require_budget(input_bytes, charged(value.scratch), charged(output))
     require(
         shutil.disk_usage(value.scratch).free >= WORK_LIMIT,
         "insufficient private scratch space",

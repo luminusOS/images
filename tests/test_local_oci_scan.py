@@ -571,3 +571,30 @@ class LocalScanTests(unittest.TestCase):
             ):
                 local.scan(invalid, self.root / "output", now=self.now)
             run.assert_not_called()
+
+
+class LocalScanCapacityTests(unittest.TestCase):
+    # Mirrors _scan's input_bytes: layout (uncompressed core layer as a pessimistic
+    # stand-in), db_cache (pinned DB, not part of the trusted files) and the
+    # trusted tool files, estimated at 512 MiB.
+    REAL_INPUT_BYTES = 3840933376 + 3415834624 + 512 * 1024**2
+
+    def test_real_layout_db_and_tools_fit_local_budget(self):
+        local.require_budget(self.REAL_INPUT_BYTES, 0, 0)
+
+    def test_real_inputs_exceeded_previous_four_gib_budget(self):
+        with (
+            patch.object(local, "TOTAL_LIMIT", 4 * 1024**3),
+            self.assertRaisesRegex(ValueError, "total disk budget"),
+        ):
+            local.require_budget(self.REAL_INPUT_BYTES, 0, 0)
+
+    def test_budget_counts_scratch_and_output(self):
+        spare = local.TOTAL_LIMIT - 2 * local.WORK_LIMIT - local.FILE_LIMIT
+        local.require_budget(spare - 2, 1, 1)
+        for scratch, output in ((2, 1), (1, 2)):
+            with (
+                self.subTest(scratch=scratch, output=output),
+                self.assertRaisesRegex(ValueError, "total disk budget"),
+            ):
+                local.require_budget(spare - 2, scratch, output)

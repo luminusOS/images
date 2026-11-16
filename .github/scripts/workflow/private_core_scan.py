@@ -35,7 +35,7 @@ SCOPE = {
     "channel": "testing",
     "fedora": "45",
 }
-TOTAL_LIMIT = 4 * 1024**3
+TOTAL_LIMIT = 16 * 1024**3
 JSON_LIMIT = 64 * 1024
 TOOL_ARCHIVES = {
     "syft": (
@@ -411,22 +411,26 @@ def _preflight(invocation, work):
         ),
         "independent logical image mismatch",
     )
-    maximum = invocation["layout_max_bytes"]
-    require(
-        type(maximum) is int and 0 < maximum <= TOTAL_LIMIT,
-        "finite layout admission bound required",
-    )
-    reserve = (
-        2 * supply.local_oci_scan.WORK_LIMIT
-        + supply.local_oci_scan.FILE_LIMIT
-        + 8 * JSON_LIMIT
-    )
-    require(
-        bundle["bytes"] + int(request["facts"]["archive_size"]) + maximum + reserve
-        <= TOTAL_LIMIT,
-        "whole caller admission exceeds 4 GiB",
+    reserve = _require_admission(
+        bundle["bytes"],
+        int(request["facts"]["archive_size"]),
+        invocation["layout_max_bytes"],
     )
     return expected, bundle, reserve
+
+
+def _require_admission(bundle_bytes, archive_bytes, layout_max_bytes):
+    require(
+        type(layout_max_bytes) is int and 0 < layout_max_bytes <= TOTAL_LIMIT,
+        "finite layout admission bound required",
+    )
+    local = _libraries()[1].local_oci_scan
+    reserve = 2 * local.WORK_LIMIT + local.FILE_LIMIT + 8 * JSON_LIMIT
+    require(
+        bundle_bytes + archive_bytes + layout_max_bytes + reserve <= TOTAL_LIMIT,
+        f"whole caller admission exceeds {TOTAL_LIMIT // 1024**3} GiB",
+    )
+    return reserve
 
 
 def _environment(home):
