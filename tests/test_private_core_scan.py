@@ -705,5 +705,43 @@ class PrivateCallerTests(unittest.TestCase):
             )
 
 
+# Measured: core-oci artifact of run 43802480872, its uncompressed core layer,
+# and the pinned scanner DB. The layout bound uses the uncompressed layer as a
+# deliberately pessimistic stand-in for the extracted layout. The 512 MiB for
+# scanner tools in the bundle is an estimate, not a measurement.
+REAL_CORE_ARCHIVE_BYTES = 1096347090
+REAL_CORE_LAYER_BYTES = 3840933376
+REAL_BUNDLE_BYTES = 3415834624 + 512 * 1024**2
+
+
+class AdmissionCapacityTests(unittest.TestCase):
+    def admit(self, layout=REAL_CORE_LAYER_BYTES):
+        return caller._require_admission(
+            REAL_BUNDLE_BYTES, REAL_CORE_ARCHIVE_BYTES, layout
+        )
+
+    def test_real_core_bundle_and_layout_are_admitted(self):
+        self.assertGreater(self.admit(), 0)
+
+    def test_real_core_bundle_and_layout_exceed_previous_four_gib_budget(self):
+        with (
+            mock.patch.object(caller, "TOTAL_LIMIT", 4 * 1024**3),
+            self.assertRaisesRegex(ValueError, "exceeds 4 GiB"),
+        ):
+            self.admit()
+
+    def test_layout_bound_above_budget_is_rejected(self):
+        for layout in (0, caller.TOTAL_LIMIT + 1, float(REAL_CORE_LAYER_BYTES)):
+            with (
+                self.subTest(layout=layout),
+                self.assertRaisesRegex(ValueError, "finite layout"),
+            ):
+                self.admit(layout)
+
+    def test_whole_admission_overrun_is_rejected(self):
+        with self.assertRaisesRegex(ValueError, "exceeds 16 GiB"):
+            self.admit(caller.TOTAL_LIMIT - REAL_CORE_ARCHIVE_BYTES)
+
+
 if __name__ == "__main__":
     unittest.main()
