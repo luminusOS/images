@@ -610,6 +610,134 @@ class ScannerInstallerTests(unittest.TestCase):
 
 
 class CandidateSigningTests(unittest.TestCase):
+    STAGING = "ghcr.io/luminusos/luminusos-candidates"
+
+    def anonymous(self, *codes):
+        responses = []
+        for code in codes:
+            if code == 200:
+                responses.append(io.BytesIO(b'{"token": "anonymous"}'))
+            else:
+                responses.append(
+                    sign_candidates.urllib.error.HTTPError(
+                        "https://ghcr.io", code, "denied", {}, None
+                    )
+                )
+        return patch.object(
+            sign_candidates.urllib.request, "urlopen", side_effect=responses
+        )
+
+    def test_private_staging_requires_existing_package_and_denied_anonymous_pull(self):
+        for token, manifest in ((200, 403), (200, 401), (401, None), (403, None)):
+            codes = (token,) if manifest is None else (token, manifest)
+            with (
+                self.subTest(codes=codes),
+                self.anonymous(*codes),
+                patch.object(sign_candidates.subprocess, "run") as run,
+            ):
+                sign_candidates.require_private_staging(self.STAGING)
+            self.assertEqual(
+                run.call_args.args[0],
+                ["docker", "manifest", "inspect", self.STAGING + ":placeholder"],
+            )
+
+    def test_public_or_missing_staging_is_rejected(self):
+        for codes in ((200, 200), (200, 404), (404,), (500,)):
+            with (
+                self.subTest(codes=codes),
+                self.anonymous(*codes),
+                patch.object(sign_candidates.subprocess, "run"),
+                self.assertRaisesRegex(ValueError, "private"),
+            ):
+                sign_candidates.require_private_staging(self.STAGING)
+
+    def test_staging_without_authenticated_access_is_rejected(self):
+        with (
+            patch.object(sign_candidates.urllib.request, "urlopen") as urlopen,
+            patch.object(
+                sign_candidates.subprocess,
+                "run",
+                side_effect=subprocess.CalledProcessError(1, "docker"),
+            ),
+            self.assertRaises(subprocess.CalledProcessError),
+        ):
+            sign_candidates.require_private_staging(self.STAGING)
+        urlopen.assert_not_called()
+
+    def test_public_staging_blocks_every_push(self):
+        images = [
+            f"{self.STAGING}:{role}-candidate-1-1"
+            for role in ("core", "workstation", "workstation-iso")
+        ]
+        with (
+            tempfile.NamedTemporaryFile() as output,
+            patch.dict(
+                sign_candidates.os.environ,
+                {
+                    "CANDIDATE_COSIGN_PRIVATE_KEY": "fixture",
+                    "GITHUB_OUTPUT": output.name,
+                },
+                clear=True,
+            ),
+            patch.object(sys, "argv", ["sign_candidates.py", *images]),
+            self.anonymous(200, 200),
+            patch.object(sign_candidates.subprocess, "run") as run,
+        ):
+            self.assertEqual(sign_candidates.main(), 1)
+        self.assertNotIn("push", str(run.call_args_list))
+
+    def test_candidates_in_different_repositories_are_rejected_before_probing(self):
+        images = [
+            f"{self.STAGING}:core-candidate-1-1",
+            "ghcr.io/other/luminusos-candidates:workstation-candidate-1-1",
+        ]
+        with (
+            tempfile.NamedTemporaryFile() as output,
+            patch.dict(
+                sign_candidates.os.environ,
+                {
+                    "CANDIDATE_COSIGN_PRIVATE_KEY": "fixture",
+                    "GITHUB_OUTPUT": output.name,
+                },
+                clear=True,
+            ),
+            patch.object(sys, "argv", ["sign_candidates.py", *images]),
+            patch.object(sign_candidates.urllib.request, "urlopen") as urlopen,
+            patch.object(sign_candidates.subprocess, "run") as run,
+        ):
+            self.assertEqual(sign_candidates.main(), 1)
+        urlopen.assert_not_called()
+        run.assert_not_called()
+
+    def test_pushed_candidates_are_rechecked_for_anonymous_access(self):
+        images = [
+            f"{self.STAGING}:{role}-candidate-1-1"
+            for role in ("core", "workstation", "workstation-iso")
+        ]
+        with (
+            tempfile.NamedTemporaryFile() as output,
+            patch.dict(
+                sign_candidates.os.environ,
+                {
+                    "CANDIDATE_COSIGN_PRIVATE_KEY": "fixture",
+                    "GITHUB_OUTPUT": output.name,
+                },
+                clear=True,
+            ),
+            patch.object(sys, "argv", ["sign_candidates.py", *images]),
+            patch.object(sign_candidates, "require_private_staging"),
+            patch.object(
+                sign_candidates,
+                "push_and_sign",
+                side_effect=lambda image: (
+                    image.rsplit(":", 1)[0] + "@sha256:" + "a" * 64
+                ),
+            ),
+            self.anonymous(200, 403, 200, 403, 200, 200),
+        ):
+            self.assertEqual(sign_candidates.main(), 1)
+            self.assertEqual(Path(output.name).read_text(), "")
+
     def test_public_candidate_references_are_rejected_before_push(self):
         for image in (
             "ghcr.io/luminusos/luminusos:candidate-1",
