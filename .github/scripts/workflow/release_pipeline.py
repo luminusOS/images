@@ -249,11 +249,9 @@ def validate_candidate(
     )
     owner = repo.split("/")[0].lower()
     for name, image in images.items():
-        image_name = {
-            "core": "luminusos",
-            "workstation": "luminusos-workstation",
-            "installer": "luminusos-workstation",
-        }[name]
+        # Every candidate is staged privately and promoted from there; stable reuses
+        # the testing candidate's core and workstation and pushes its own installer.
+        image_name = "luminusos-candidates"
         require(
             isinstance(image, str)
             and re.fullmatch(
