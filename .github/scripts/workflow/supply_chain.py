@@ -9,7 +9,9 @@ import subprocess
 import sys
 from datetime import UTC, datetime, timedelta
 from pathlib import Path, PurePosixPath
-from urllib.parse import parse_qs, unquote
+from urllib.parse import parse_qs, unquote, urlsplit, urlunsplit
+
+GRYPE_DB_MAX_AGE = timedelta(hours=120)
 
 _local_spec = importlib.util.spec_from_file_location(
     "local_oci_scan", Path(__file__).with_name("local_oci_scan.py")
@@ -203,6 +205,55 @@ def _timestamp(value):
     except ValueError as error:
         raise SupplyChainError("invalid exception calendar timestamp") from error
     return whole, (match[2] or "").rstrip("0")
+
+
+def _grype_db(scan, now):
+    descriptor = scan.get("descriptor") if isinstance(scan, dict) else None
+    db = descriptor.get("db") if isinstance(descriptor, dict) else None
+    status = db.get("status") if isinstance(db, dict) else None
+    _require(isinstance(status, dict), "missing Grype database status")
+    schema = status.get("schemaVersion")
+    _require(
+        isinstance(schema, str) and re.fullmatch(r"v6\.[0-9]+\.[0-9]+", schema),
+        "invalid Grype database schema",
+    )
+    _require(status.get("valid") is True, "invalid Grype database status")
+    built = status.get("built")
+    try:
+        timestamp = _timestamp(built)
+    except SupplyChainError as error:
+        raise SupplyChainError("invalid Grype database built timestamp") from error
+    clock = (_clock(now).replace(microsecond=0), f"{now.microsecond:06d}".rstrip("0"))
+    _require(
+        (clock[0] - GRYPE_DB_MAX_AGE, clock[1]) <= timestamp <= clock,
+        "Grype database is stale or built in the future",
+    )
+    source = status.get("from")
+    _require(isinstance(source, str), "invalid Grype database source")
+    try:
+        url = urlsplit(source)
+        query = parse_qs(url.query, keep_blank_values=True)
+        checksums = query.get("checksum", [])
+        valid_url = (
+            url.scheme == "https"
+            and url.netloc == "grype.anchore.io"
+            and not url.fragment
+        )
+    except ValueError as error:
+        raise SupplyChainError("invalid Grype database source") from error
+    _require(
+        valid_url
+        and set(query) == {"checksum"}
+        and len(checksums) == 1
+        and re.fullmatch(r"sha256:[0-9a-f]{64}", checksums[0]),
+        "invalid Grype database source or checksum",
+    )
+    return {
+        "schema_version": schema,
+        "built": built,
+        "archive_sha256": checksums[0][7:],
+        "source": urlunsplit((url.scheme, url.netloc, url.path, "", "")),
+    }
 
 
 def _scope(context):
@@ -618,6 +669,13 @@ def _inspect_image(
     scan_exclusion: Path | None = None,
 ) -> Path:
     bypass = authorize_bypass()
+    run_id = os.environ.get("GITHUB_RUN_ID")
+    run_attempt = os.environ.get("GITHUB_RUN_ATTEMPT")
+    _require(
+        run_id is None
+        or (run_attempt is not None and re.fullmatch(r"[1-9][0-9]*", run_attempt)),
+        "invalid or missing GitHub run attempt",
+    )
     context = dict(zip(SCOPE_FIELDS, (edition, component_scope, channel, fedora)))
     if any(value is not None for value in context.values()):
         _scope(context)
@@ -681,12 +739,13 @@ def _inspect_image(
     matches = scan.get("matches") if isinstance(scan, dict) else None
     if not isinstance(matches, list):
         raise SupplyChainError("malformed Grype scan")
+    evaluated_at = _clock(now)
+    database = _grype_db(scan, evaluated_at)
     if exclusion:
         scan["scan"] = {"exclusions": [exclusion]}
         vulnerabilities_path.write_text(
             json.dumps(scan, sort_keys=True, indent=2) + "\n", encoding="utf-8"
         )
-    evaluated_at = _clock(now)
     approved, policy_hash = _exceptions(
         exceptions,
         context=context,
@@ -770,6 +829,7 @@ def _inspect_image(
         "gate": "bypassed" if bypass else "success",
         "actor": os.environ.get("GITHUB_ACTOR"),
         "run_id": os.environ.get("GITHUB_RUN_ID"),
+        "run_attempt": os.environ.get("GITHUB_RUN_ATTEMPT"),
         "run_url": _run_url(),
         "workflow_ref": os.environ.get("GITHUB_WORKFLOW_REF"),
         "findings": sorted(blocked),
@@ -813,10 +873,12 @@ def _inspect_image(
                 "ref": os.environ.get("GITHUB_REF"),
                 "workflow": os.environ.get("GITHUB_WORKFLOW"),
                 "run_id": os.environ.get("GITHUB_RUN_ID"),
+                "run_attempt": os.environ.get("GITHUB_RUN_ATTEMPT"),
                 "run_url": _run_url(),
             },
             "inputs": {"exceptions_sha256": policy_hash},
             "tools": {"syft": syft_version, "grype": grype_version},
+            "db": database,
             "materials": {
                 "sbom.spdx.json": _file_hash(sbom_path),
                 "vulnerabilities.json": _file_hash(vulnerabilities_path),
@@ -854,6 +916,7 @@ def _inspect_image(
                     ],
                 },
                 "tools": {"syft": syft_version, "grype": grype_version},
+                "db": database,
                 "files": {
                     name: _file_hash(output / name)
                     for name in (

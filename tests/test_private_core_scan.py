@@ -14,6 +14,7 @@ from unittest import mock
 
 from test_core_build_acquisition import acquisition
 from test_release_pipeline import core_oci_sample
+from test_supply_chain import grype_scan
 
 SCRIPT = (
     Path(__file__).resolve().parents[1]
@@ -258,7 +259,7 @@ class PrivateCallerTests(unittest.TestCase):
             json.dumps({"spdxVersion": "SPDX-2.3", "packages": []})
         )
         (output / "vulnerabilities.json").write_text(
-            json.dumps({"matches": self.native_matches})
+            json.dumps(grype_scan(self.native_matches, now))
         )
         result = {
             "tools": {"syft": "synthetic test only", "grype": "synthetic test only"},
