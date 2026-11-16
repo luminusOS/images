@@ -5,7 +5,7 @@ import json
 import subprocess
 import tempfile
 import unittest
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import patch
@@ -14,6 +14,151 @@ SCRIPT = Path(__file__).parents[1] / ".github/scripts/workflow/supply_chain.py"
 SPEC = importlib.util.spec_from_file_location("supply_chain", SCRIPT)
 supply_chain = importlib.util.module_from_spec(SPEC)
 SPEC.loader.exec_module(supply_chain)
+
+
+def grype_status(now=None):
+    now = now or datetime.now(UTC)
+    return {
+        "schemaVersion": "v6.1.10",
+        "built": now.strftime("%Y-%m-%dT%H:%M:%SZ"),
+        "valid": True,
+        "from": "https://grype.anchore.io/databases/archive?checksum=sha256%3A"
+        + "a" * 64,
+    }
+
+
+def grype_scan(matches, now=None):
+    return {"matches": matches, "descriptor": {"db": {"status": grype_status(now)}}}
+
+
+class GrypeDatabaseTests(unittest.TestCase):
+    def test_database_validation_and_boundaries(self):
+        now = datetime(2026, 11, 20, tzinfo=UTC)
+        valid = grype_status(now)
+        scan = lambda status: {"descriptor": {"db": {"status": status}}}
+        result = supply_chain._grype_db(scan(valid), now)
+        self.assertEqual(
+            result,
+            {
+                "schema_version": "v6.1.10",
+                "built": "2026-11-20T00:00:00Z",
+                "archive_sha256": "a" * 64,
+                "source": "https://grype.anchore.io/databases/archive",
+            },
+        )
+        boundary = dict(
+            valid, built=(now - timedelta(hours=120)).isoformat().replace("+00:00", "Z")
+        )
+        supply_chain._grype_db(scan(boundary), now)
+        invalid = [
+            dict(boundary, built="2026-11-14T23:59:59Z"),
+            dict(valid, built="2026-11-20T00:00:01Z"),
+            dict(valid, valid=False),
+            dict(valid, valid="true"),
+            dict(valid, schemaVersion="v5.1.10"),
+            dict(valid, built="2026-11-20T00:00:00+00:00"),
+            dict(
+                valid,
+                **{"from": valid["from"].replace("grype.anchore.io", "evil.example")},
+            ),
+            dict(valid, **{"from": valid["from"].replace("https:", "http:")}),
+            dict(valid, **{"from": "https://grype.anchore.io/archive"}),
+            dict(valid, **{"from": valid["from"] + "&checksum=sha256:" + "a" * 64}),
+            dict(valid, **{"from": valid["from"].replace("a" * 64, "A" * 64)}),
+        ]
+        for status in invalid:
+            with (
+                self.subTest(status=status),
+                self.assertRaises(supply_chain.SupplyChainError),
+            ):
+                supply_chain._grype_db(scan(status), now)
+        with self.assertRaises(supply_chain.SupplyChainError):
+            supply_chain._grype_db({}, now)
+
+    def test_subsecond_boundaries(self):
+        now = datetime(2026, 11, 20, 0, 0, 0, 500000, tzinfo=UTC)
+        for delta, accepted in (
+            (timedelta(hours=-120, microseconds=-1), False),
+            (timedelta(hours=-120), True),
+            (timedelta(hours=-120, microseconds=500000), True),
+            (timedelta(microseconds=100000), False),
+        ):
+            status = grype_status(now)
+            status["built"] = (now + delta).isoformat().replace("+00:00", "Z")
+            scan = {"descriptor": {"db": {"status": status}}}
+            with self.subTest(delta=delta):
+                if accepted:
+                    supply_chain._grype_db(scan, now)
+                else:
+                    with self.assertRaises(supply_chain.SupplyChainError):
+                        supply_chain._grype_db(scan, now)
+
+    def test_url_rejects_noncanonical_hosts_and_extra_query_keys(self):
+        now = datetime(2026, 11, 20, tzinfo=UTC)
+        status = grype_status(now)
+        source = status["from"]
+        for url in (
+            source.replace("grype.anchore.io", "user@grype.anchore.io"),
+            source.replace("grype.anchore.io", "grype.anchore.io:443"),
+            source.replace("grype.anchore.io", "GRYPE.ANCHORE.IO"),
+            source.replace("grype.anchore.io", "grype.anchore.io."),
+            source.replace("checksum=", "checksum%3D"),
+            source.replace("?checksum=", "?Checksum=x&checksum="),
+        ):
+            with (
+                self.subTest(url=url),
+                self.assertRaises(supply_chain.SupplyChainError),
+            ):
+                supply_chain._grype_db(
+                    {"descriptor": {"db": {"status": status | {"from": url}}}}, now
+                )
+
+    def test_invalid_timestamp_error_identifies_database(self):
+        status = grype_status() | {"built": "not-a-time"}
+        with self.assertRaisesRegex(supply_chain.SupplyChainError, "Grype database"):
+            supply_chain._grype_db(
+                {"descriptor": {"db": {"status": status}}}, datetime.now(UTC)
+            )
+
+    def test_invalid_database_does_not_rewrite_excluded_report(self):
+        now = datetime(2026, 11, 20, tzinfo=UTC)
+        payload = grype_scan([], now)
+        payload["descriptor"]["db"]["status"]["built"] = "2020-01-01T00:00:00Z"
+        original = json.dumps(payload)
+        with tempfile.TemporaryDirectory() as temp:
+            output = Path(temp)
+
+            def run(argv, **kwargs):
+                if argv[1] == "version":
+                    return subprocess.CompletedProcess(argv, 0, "Version: 1.2.3", "")
+                value = (
+                    json.dumps({"spdxVersion": "SPDX-2.3", "packages": []})
+                    if argv[0] == "syft"
+                    else original
+                )
+                Path(argv[argv.index("--file") + 1]).write_text(value)
+                return subprocess.CompletedProcess(argv, 0, "", "")
+
+            with (
+                patch.dict("os.environ", {}, clear=True),
+                patch.object(
+                    supply_chain,
+                    "_scan_exclusion",
+                    return_value={"path": "/var/lib/flatpak"},
+                ),
+                patch.object(supply_chain.subprocess, "run", side_effect=run),
+                self.assertRaises(supply_chain.SupplyChainError),
+            ):
+                supply_chain._inspect_image(
+                    "repo@sha256:" + "a" * 64,
+                    output,
+                    "b" * 40,
+                    expected_syft_version="1.2.3",
+                    expected_grype_version="1.2.3",
+                    scan_exclusion=Path("exclusion"),
+                    now=now,
+                )
+            self.assertEqual((output / "vulnerabilities.json").read_text(), original)
 
 
 def local_input_paths(output):
@@ -156,7 +301,7 @@ class SupplyChainTests(unittest.TestCase):
                     json.dumps({"spdxVersion": "SPDX-2.3", "packages": []})
                 )
                 (destination / "vulnerabilities.json").write_text(
-                    json.dumps({"matches": []})
+                    json.dumps(grype_scan([]))
                 )
                 return {
                     "tools": {"syft": "Version: 1.34.2", "grype": "Version: 0.101.1"},
@@ -188,6 +333,12 @@ class SupplyChainTests(unittest.TestCase):
             self.assertEqual(value["local_input"]["private_binding"], binding)
             self.assertEqual(value["image"], "repo@sha256:" + "a" * 64)
             self.assertEqual(value["security"]["gate"], "success")
+            self.assertIsNone(value["security"]["run_attempt"])
+            self.assertIsNone(
+                json.loads((output / "provenance.json").read_text())["predicate"][
+                    "source"
+                ]["run_attempt"]
+            )
 
     def test_private_policy_scope_hash_and_findings_fail_without_stale_success(self):
         with tempfile.TemporaryDirectory() as temp:
@@ -244,6 +395,7 @@ class SupplyChainTests(unittest.TestCase):
                 (destination / "vulnerabilities.json").write_text(
                     json.dumps(
                         {
+                            "descriptor": grype_scan([])["descriptor"],
                             "matches": [
                                 {
                                     "vulnerability": {
@@ -252,7 +404,7 @@ class SupplyChainTests(unittest.TestCase):
                                     },
                                     "artifact": {"name": "pkg", "version": "1"},
                                 }
-                            ]
+                            ],
                         }
                     )
                 )
@@ -282,6 +434,7 @@ class SupplyChainTests(unittest.TestCase):
             "GITHUB_REF": "refs/heads/main",
             "GITHUB_ACTOR": "operator",
             "GITHUB_RUN_ID": "123",
+            "GITHUB_RUN_ATTEMPT": "1",
             "GITHUB_SERVER_URL": "https://github.com",
             "BYPASS_CHANNEL": "testing",
         }
@@ -349,7 +502,7 @@ class SupplyChainTests(unittest.TestCase):
                     payload = (
                         {"spdxVersion": "SPDX-2.3", "packages": []}
                         if argv[0] == "syft"
-                        else {"matches": matches}
+                        else grype_scan(matches)
                     )
                     Path(argv[argv.index("--file") + 1]).write_text(json.dumps(payload))
                     return subprocess.CompletedProcess(argv, 0, "", "")
@@ -382,6 +535,56 @@ class SupplyChainTests(unittest.TestCase):
                     audit,
                 )
                 self.assertIn("NOT eligible for promotion", summary.read_text())
+
+    def test_bypass_rejects_stale_database(self):
+        now = datetime(2026, 11, 20, tzinfo=UTC)
+        with tempfile.TemporaryDirectory() as temp:
+            output = Path(temp)
+
+            def run(argv, **kwargs):
+                if argv[1] == "version":
+                    return subprocess.CompletedProcess(argv, 0, "Version: 1.2.3", "")
+                payload = (
+                    {"spdxVersion": "SPDX-2.3", "packages": []}
+                    if argv[0] == "syft"
+                    else grype_scan([], now - timedelta(hours=121))
+                )
+                Path(argv[argv.index("--file") + 1]).write_text(json.dumps(payload))
+                return subprocess.CompletedProcess(argv, 0, "", "")
+
+            with (
+                patch.dict("os.environ", self.bypass_environment(), clear=True),
+                patch.object(supply_chain.subprocess, "run", side_effect=run),
+                self.assertRaisesRegex(supply_chain.SupplyChainError, "stale"),
+            ):
+                supply_chain.inspect_image(
+                    "repo@sha256:" + "a" * 64,
+                    output,
+                    "b" * 40,
+                    expected_syft_version="1.2.3",
+                    expected_grype_version="1.2.3",
+                    now=now,
+                )
+            self.assertFalse((output / "scan-evidence.json").exists())
+
+    def test_run_id_requires_valid_run_attempt(self):
+        for attempt in (None, "", "0", "01", "-1", "abc"):
+            environment = {"GITHUB_RUN_ID": "123"}
+            if attempt is not None:
+                environment["GITHUB_RUN_ATTEMPT"] = attempt
+            with (
+                self.subTest(attempt=attempt),
+                tempfile.TemporaryDirectory() as temp,
+                patch.dict("os.environ", environment, clear=True),
+                self.assertRaisesRegex(supply_chain.SupplyChainError, "run attempt"),
+            ):
+                supply_chain._inspect_image(
+                    "repo@sha256:" + "a" * 64,
+                    Path(temp),
+                    "b" * 40,
+                    expected_syft_version="1.2.3",
+                    expected_grype_version="1.2.3",
+                )
 
     def test_rejects_tag(self):
         with self.assertRaises(supply_chain.SupplyChainError):
@@ -448,6 +651,8 @@ class SupplyChainTests(unittest.TestCase):
                         if argv[0] == "syft"
                         else payload
                     )
+                    if argv[0] == "grype" and isinstance(value, dict):
+                        value = value | {"descriptor": grype_scan([])["descriptor"]}
                     Path(argv[argv.index("--file") + 1]).write_text(
                         value if isinstance(value, str) else json.dumps(value)
                     )
@@ -538,11 +743,14 @@ class SupplyChainTests(unittest.TestCase):
                     )
                 elif argv[0] == "grype":
                     Path(argv[argv.index("--file") + 1]).write_text(
-                        json.dumps({"matches": []}), encoding="utf-8"
+                        json.dumps(grype_scan([])), encoding="utf-8"
                     )
                 return subprocess.CompletedProcess(argv, 0, "", "")
 
-            with patch.object(supply_chain.subprocess, "run", side_effect=run):
+            with (
+                patch.dict("os.environ", {"GITHUB_RUN_ATTEMPT": "3"}),
+                patch.object(supply_chain.subprocess, "run", side_effect=run),
+            ):
                 manifest = supply_chain.inspect_image(
                     "registry.example/image@sha256:" + "a" * 64,
                     output,
@@ -551,6 +759,11 @@ class SupplyChainTests(unittest.TestCase):
                     expected_grype_version="1.2.3",
                 )
             evidence = json.loads(manifest.read_text(encoding="utf-8"))
+            provenance = json.loads((output / "provenance.json").read_text())
+            self.assertEqual(evidence["db"], provenance["predicate"]["db"])
+            self.assertEqual(evidence["db"]["archive_sha256"], "a" * 64)
+            self.assertEqual(evidence["security"]["run_attempt"], "3")
+            self.assertEqual(provenance["predicate"]["source"]["run_attempt"], "3")
             self.assertEqual(evidence["digest"], "a" * 64)
             self.assertEqual(
                 set(evidence["files"]),
@@ -588,6 +801,8 @@ class SupplyChainTests(unittest.TestCase):
                         ]
                     }
                 )
+                if argv[0] == "grype":
+                    payload["descriptor"] = grype_scan([])["descriptor"]
                 path.write_text(json.dumps(payload), encoding="utf-8")
                 return subprocess.CompletedProcess(argv, 0, "", "")
 
@@ -748,6 +963,7 @@ class ScopedExceptionTests(unittest.TestCase):
             (destination / "vulnerabilities.json").write_text(
                 json.dumps(
                     {
+                        "descriptor": grype_scan([], self.now)["descriptor"],
                         "matches": [
                             {
                                 "vulnerability": {
@@ -760,7 +976,7 @@ class ScopedExceptionTests(unittest.TestCase):
                                     "type": "rpm",
                                 },
                             }
-                        ]
+                        ],
                     }
                 )
             )
@@ -890,6 +1106,8 @@ class ScopedExceptionTests(unittest.TestCase):
                     ]
                 }
             )
+            if argv[0] == "grype":
+                payload["descriptor"] = grype_scan([], self.now)["descriptor"]
             Path(argv[argv.index("--file") + 1]).write_text(json.dumps(payload))
             return subprocess.CompletedProcess(argv, 0, "", "")
 
@@ -1465,7 +1683,7 @@ class FlatpakScanRiskTests(unittest.TestCase):
                 data = (
                     {"spdxVersion": "SPDX-2.3", "packages": []}
                     if argv[0] == "syft"
-                    else {"matches": []}
+                    else grype_scan([], now)
                 )
                 Path(argv[argv.index("--file") + 1]).write_text(json.dumps(data))
                 return subprocess.CompletedProcess(argv, 0, "", "")
