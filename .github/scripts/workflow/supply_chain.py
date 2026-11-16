@@ -491,16 +491,26 @@ def _rpm_nevra(package):
     return identities
 
 
+def _location_matches(binary, item):
+    if not isinstance(item, dict):
+        return False
+    if "ostree_object" not in binary:
+        return item.get("accessPath", item.get("path")) == binary["path"]
+    # Grype reports some ostree objects (the kernel) with the object as path and
+    # the hardlinked /usr file as accessPath; that access path must be the
+    # reviewed one.
+    obj = binary["ostree_object"]
+    return item.get("path", item.get("accessPath")) == obj and item.get(
+        "accessPath", obj
+    ) in (obj, binary["path"])
+
+
 def _binary_matches(binary, artifact, sbom):
     observed_path = binary.get("ostree_object", binary["path"])
     locations = artifact.get("locations")
     if not isinstance(locations, list) or not locations:
         return False
-    if any(
-        not isinstance(item, dict)
-        or item.get("accessPath", item.get("path")) != observed_path
-        for item in locations
-    ):
+    if any(not _location_matches(binary, item) for item in locations):
         return False
     files, relationships = sbom.get("files"), sbom.get("relationships")
     if "ostree_object" in binary:
