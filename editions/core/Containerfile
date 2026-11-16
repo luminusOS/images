@@ -36,6 +36,11 @@ RUN --mount=type=bind,from=ctx-scripts,source=/scripts,target=/scripts \
     dnf clean all && \
     rm -rf /var/cache/dnf /var/cache/libdnf5 /tmp/* /var/log/* /var/tmp/*
 
+# Fedora enables TCP sshd; guest validation uses only the generator's
+# socket-activated vsock/UNIX sshd@ channel, so it stays available.
+RUN systemctl disable sshd.service sshd.socket && \
+    firewall-offline-cmd --zone=public --remove-service-from-zone=ssh
+
 # Dynamic branding stays late so version-only changes reuse package layers.
 RUN --mount=type=bind,from=ctx-scripts,source=/scripts,target=/scripts \
     --mount=type=bind,from=python-tools,source=/usr,target=/opt/python,ro \
@@ -52,4 +57,13 @@ LABEL org.opencontainers.image.version="${distro_version}"
 
 RUN command -v bootc && \
     systemctl is-enabled firewalld.service && \
+    ! systemctl is-enabled sshd.service && \
+    ! systemctl is-enabled sshd.socket && \
+    ! systemctl is-enabled ssh.socket && \
+    test "$(firewall-offline-cmd --get-default-zone)" = public && \
+    ! firewall-offline-cmd --query-service=ssh && \
+    ! firewall-offline-cmd --zone=public --query-service=ssh && \
+    test -f /usr/lib/systemd/system/sshd@.service && \
+    test -x /usr/lib/systemd/system-generators/systemd-ssh-generator && \
+    test -f /etc/containers/registries.d/luminusos.yaml && \
     bootc container lint --no-truncate

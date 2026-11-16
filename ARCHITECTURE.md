@@ -177,9 +177,11 @@ Responsibilities:
 - Set `/etc/dnf/vars/releasever` and `/etc/yum/vars/releasever`.
 - Inherit bootc base packages from Fedora bootc.
 - Update `/usr/lib/os-release` branding and image version.
+- Copy `shared/trust/` (signature policy, public key and sigstore attachment opt-in).
+- Install firewalld, disable TCP SSH (`sshd.service`, `sshd.socket`) and remove SSH from the public zone. `sshd@.service` and `systemd-ssh-generator` stay available for the ephemeral vsock validation channel.
 - Recover RPM database state when the container build path leaves a temporary rebuild database.
 - Run final cleanup (DNF caches, logs, temporary files).
-- Verify `bootc` is present and run `bootc container lint`.
+- Verify `bootc`, closed TCP SSH (including that `ssh.socket` is not enabled), the preserved vsock SSH units and the attachment opt-in, then run `bootc container lint`.
 
 ```mermaid
 flowchart TD
@@ -656,7 +658,7 @@ Stable images are promoted from an existing testing build with `skopeo copy --al
 
 Release policy requires signing candidate image digests and verifying them against the expected public key before promotion. Cosign stays on v2 for containers/image compatibility. Signing alone is not approval: branch and channel tags may move only after the required quality, artifact, installation, and trust evidence has been validated. Stable promotion must preserve the approved payload digest; a rebuilt live root has its own identity and evidence.
 
-The core installs `/etc/containers/policy.json` and `/etc/pki/containers/luminusos.pub` from `shared/trust/`. The policy requires a `sigstoreSigned` signature for the two LuminusOS repositories; other images keep the Fedora default. `/etc/containers/registries.d/luminusos.yaml` enables sigstore attachments for them. Effective enforcement by `bootc upgrade` and `bootc switch` must be demonstrated on a system installed through Sirius; inspecting this configuration is not a substitute for unsigned-image and incorrect-key rejection tests.
+The core installs `/etc/containers/policy.json`, `/etc/pki/containers/luminusos.pub` and `/etc/containers/registries.d/luminusos.yaml` from `shared/trust/`, so every edition inherits them. The policy requires a `sigstoreSigned` signature for the two LuminusOS repositories; other images keep the Fedora default. The `registries.d` file enables sigstore attachments for those two repositories only. Effective enforcement by `bootc upgrade` and `bootc switch` must be demonstrated on a system installed through Sirius; inspecting this configuration is not a substitute for unsigned-image and incorrect-key rejection tests.
 
 The Sirius `enforce_sigpolicy` stays `false` for installation from the embedded OCI layout. This is distinct from the trust policy for subsequent registry updates. Do not change this setting solely from static inspection: prove offline installation and update enforcement together on an installed VM.
 

@@ -84,10 +84,11 @@ class RepositoryContracts(unittest.TestCase):
         self.assertIn("UPDATE_CHANNEL=testing", read("config/versions.env"))
 
     def test_trust_and_system_security(self):
-        self.assertIn("install firewalld", read("editions/core/Containerfile"))
+        core = read("editions/core/Containerfile")
+        self.assertIn("install firewalld", core)
+        self.assertIn("systemctl disable sshd.service sshd.socket", core)
+        self.assertIn("--remove-service-from-zone=ssh", core)
         helper = read("editions/workstation/build.py")
-        self.assertIn('["systemctl", "disable", "sshd.service"]', helper)
-        self.assertIn("--remove-service-from-zone=ssh", helper)
         self.assertIn(
             '["systemctl", "enable", "bootc-fetch-apply-updates.timer"]', helper
         )

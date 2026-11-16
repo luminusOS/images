@@ -35,8 +35,6 @@ for name, target in (
     link.unlink(missing_ok=True)
     link.symlink_to(f"/usr/lib/systemd/system/{target}")
 for command in (
-    ["systemctl", "disable", "sshd.service"],
-    ["firewall-offline-cmd", "--zone=public", "--remove-service-from-zone=ssh"],
     ["systemctl", "enable", "bootc-fetch-apply-updates.timer"],
     ["systemctl", "enable", "elastic-swap.service"],
     ["systemctl", "enable", "systemd-oomd.service"],
