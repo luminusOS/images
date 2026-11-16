@@ -47,7 +47,7 @@ mountopt = "nodev"
 
 Back up an existing storage configuration before editing it. This selects a separate image store; it does not migrate or delete images in the old store. Check `sudo buildah info` inside the toolbox to confirm the graphroot and mount program before running `just build core` or `just build workstation`. Do not change the host's storage configuration or switch a populated store between overlay and VFS.
 
-Builds still use the immutable Fedora digest in `config/versions.env`. If the registry returns `manifest unknown`, resolve and review a replacement digest from the intended Fedora release rather than falling back to a floating tag. Resolving a digest verifies content identity, not the upstream signature required by release validation.
+Builds still use the immutable Fedora digest in `config/versions.env`. If the registry returns `manifest unknown`, resolve and review a replacement digest from the intended Fedora release rather than falling back to a floating tag. Resolving a digest verifies content identity, not an upstream signature; Fedora publishes none, and the accepted, expiring risk lives in `shared/release/base-trust-risk.json`.
 
 ## Validation and Tests
 
