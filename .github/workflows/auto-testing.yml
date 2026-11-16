@@ -110,3 +110,7 @@ jobs:
     secrets:
       COSIGN_PRIVATE_KEY: ${{ secrets.COSIGN_PRIVATE_KEY }}
       COSIGN_PASSWORD: ${{ secrets.COSIGN_PASSWORD }}
+      # The caller must declare environment secrets for the reusable workflow, or they
+      # resolve empty; the candidate-staging jobs still take the environment's value.
+      CANDIDATE_COSIGN_PRIVATE_KEY: ${{ secrets.CANDIDATE_COSIGN_PRIVATE_KEY }}
+      CANDIDATE_COSIGN_PASSWORD: ${{ secrets.CANDIDATE_COSIGN_PASSWORD }}
