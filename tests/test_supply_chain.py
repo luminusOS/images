@@ -1318,6 +1318,26 @@ class ScopedExceptionTests(unittest.TestCase):
                     )["scan"]["decision"],
                     "accepted_risk",
                 )
+                self.assertEqual(
+                    self.inspect(
+                        artifact=artifact
+                        | {"locations": [{"path": obj, "accessPath": path}]},
+                        sbom=sbom,
+                    )["scan"]["decision"],
+                    "accepted_risk",
+                )
+                for location in (
+                    {"path": obj, "accessPath": "/usr/bin/other"},
+                    {"path": "/usr/bin/other", "accessPath": obj},
+                    {"path": path, "accessPath": path},
+                ):
+                    with (
+                        self.subTest(location=location),
+                        self.assertRaises(supply_chain.SupplyChainError),
+                    ):
+                        self.inspect(
+                            artifact=artifact | {"locations": [location]}, sbom=sbom
+                        )
                 for case in (
                     "wrong_sha",
                     "wrong_object",
