@@ -5,6 +5,7 @@ from __future__ import annotations
 import argparse
 import hashlib
 import json
+import os
 import re
 import subprocess
 import sys
@@ -14,6 +15,62 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 from release_policy import REQUIRED_GATES, validate_candidate
 
 DIGEST = re.compile(r"sha256:[0-9a-f]{64}\Z")
+CANDIDATE_KEY = Path(__file__).resolve().parents[3] / "shared/release/candidate.pub"
+OFFICIAL_KEY = (
+    Path(__file__).resolve().parents[3]
+    / "shared/trust/etc/pki/containers/luminusos.pub"
+)
+PUBLIC_REPOSITORIES = {
+    "core": "luminusos",
+    "workstation": "luminusos-workstation",
+    "installer": "luminusos-workstation",
+}
+
+
+def public_repository(role: str, repository: str) -> str:
+    owner = os.environ.get("GITHUB_REPOSITORY_OWNER", "").lower()
+    if (
+        role not in PUBLIC_REPOSITORIES
+        or not re.fullmatch(r"[a-z0-9](?:[a-z0-9-]*[a-z0-9])?", owner)
+        or repository.split("/", 1)[0].lower() != owner
+    ):
+        raise ValueError("invalid role or repository owner")
+    return f"ghcr.io/{owner}/{PUBLIC_REPOSITORIES[role]}"
+
+
+def inspect_version(reference: str) -> str | None:
+    try:
+        result = subprocess.run(
+            ["skopeo", "inspect", "--format", "{{.Digest}}", f"docker://{reference}"],
+            check=True,
+            capture_output=True,
+            text=True,
+        )
+    except subprocess.CalledProcessError as exc:
+        error = exc.stderr or ""
+        repository, tag = reference.rsplit(":", 1)
+        missing = r"(?:manifest unknown(?:: manifest unknown)?|manifest not found)"
+        # skopeo exits 2 for a missing image; older releases used 1.
+        if exc.returncode in (1, 2) and (
+            re.fullmatch(missing, error.strip(), re.IGNORECASE)
+            or re.search(
+                "reading manifest "
+                + re.escape(tag)
+                + " in "
+                + re.escape(repository)
+                + ": "
+                + missing
+                + r'"?\s*$',
+                error,
+                re.IGNORECASE,
+            )
+        ):
+            return None
+        raise ValueError(f"cannot inspect version tag: {reference}") from exc
+    digest = result.stdout.strip()
+    if not DIGEST.fullmatch(digest):
+        raise ValueError(f"cannot inspect version tag: {reference}")
+    return digest
 
 
 def verify_evidence_artifacts(evidence: dict, directory: Path) -> None:
@@ -60,16 +117,33 @@ def promote(
         raise ValueError("invalid expected repository")
     if not re.fullmatch(r"[0-9a-f]{40}", expected_commit):
         raise ValueError("invalid expected commit")
-    source_repository = (
-        source.split("@", 1)[0] if "@" in source else source.rsplit(":", 1)[0]
-    )
-    if not destinations or any(
-        not re.fullmatch(
-            re.escape(source_repository) + r":[A-Za-z0-9_][A-Za-z0-9_.-]{0,127}", dest
+    destination_repository = public_repository(role, expected_repository)
+    owner = os.environ["GITHUB_REPOSITORY_OWNER"].lower()
+    if source != f"ghcr.io/{owner}/luminusos-candidates@{expected_digest}":
+        raise ValueError(
+            "source does not match signed image binding or candidate repository"
         )
-        for dest in destinations
-    ):
-        raise ValueError("destination must be a tag in the source repository")
+    if public_key.resolve() != CANDIDATE_KEY.resolve():
+        raise ValueError("candidate key required")
+    suffix = "-iso" if role == "installer" else ""
+    version_pattern = r"testing-[0-9]+\.[0-9]{8}(?:\.[0-9]+)?" + suffix
+    branch_pattern = r"testing-[0-9]+" + suffix
+    tags = []
+    for destination in destinations:
+        prefix = destination_repository + ":"
+        if not destination.startswith(prefix):
+            raise ValueError("destination repository does not match role")
+        tag = destination[len(prefix) :]
+        if not (
+            re.fullmatch(version_pattern, tag)
+            or re.fullmatch(branch_pattern, tag)
+            or (role != "installer" and tag == "testing")
+        ):
+            raise ValueError("invalid destination tag")
+        tags.append(tag)
+    versions = [tag for tag in tags if re.fullmatch(version_pattern, tag)]
+    if len(versions) != 1 or len(tags) != len(set(tags)):
+        raise ValueError("exactly one version tag is required")
     candidate_digest = expected_digest
     if role is not None:
         images = evidence.get("images")
@@ -127,7 +201,12 @@ def promote(
         capture_output=True,
         text=True,
     )
-    for destination in destinations:
+    version_destination = f"{destination_repository}:{versions[0]}"
+    current = inspect_version(version_destination)
+    if current is not None and current != expected_digest:
+        raise ValueError("version tag already references a different digest")
+
+    def copy(destination: str) -> None:
         subprocess.run(
             [
                 "skopeo",
@@ -147,6 +226,38 @@ def promote(
         ).stdout.strip()
         if actual != source_digest:
             raise ValueError(f"promotion changed digest for {destination}: {actual}")
+
+    copy(version_destination)
+    immutable_destination = f"{destination_repository}@{expected_digest}"
+    subprocess.run(
+        [
+            "cosign",
+            "sign",
+            "--yes",
+            "--key",
+            "env://COSIGN_PRIVATE_KEY",
+            immutable_destination,
+        ],
+        check=True,
+    )
+    subprocess.run(
+        ["cosign", "verify", "--key", str(OFFICIAL_KEY), immutable_destination],
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+    for destination in destinations:
+        if destination != version_destination:
+            copy(destination)
+    for destination in destinations:
+        actual = subprocess.run(
+            ["skopeo", "inspect", "--format", "{{.Digest}}", f"docker://{destination}"],
+            check=True,
+            capture_output=True,
+            text=True,
+        ).stdout.strip()
+        if actual != expected_digest:
+            raise ValueError(f"destination tag changed after promotion: {destination}")
 
 
 def main() -> int:

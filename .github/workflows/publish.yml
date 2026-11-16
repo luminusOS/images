@@ -341,6 +341,9 @@ jobs:
     needs: [stable-installer, stable-source]
     if: ${{ !(github.event_name == 'workflow_dispatch' && inputs.inert_r2_probe == true) && (inputs.channel == 'stable' && github.ref == 'refs/heads/main') }}
     runs-on: ubuntu-latest
+    concurrency:
+      group: image-publication-${{ github.repository }}
+      cancel-in-progress: false
     permissions:
       contents: read
       packages: write
@@ -562,11 +565,6 @@ jobs:
       contents: read
       packages: read
     steps:
-      - name: Refuse unsupported staged candidate binding
-        if: inputs.channel == 'testing'
-        run: |
-          echo "Candidate metadata signing and private-to-public promotion require slice 5b." >&2
-          exit 1
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
@@ -675,16 +673,15 @@ jobs:
     needs: [quality, inputs, release-evidence]
     if: ${{ !(github.event_name == 'workflow_dispatch' && inputs.inert_r2_probe == true) && (!inputs.security_findings_bypass && github.ref == 'refs/heads/main' && inputs.candidate_run_id != '' && inputs.validation_run_id != '') }}
     runs-on: ubuntu-latest
+    # This group serializes public-tag writers across workflows; the workflow group does not.
+    concurrency:
+      group: image-publication-${{ github.repository }}
+      cancel-in-progress: false
     permissions:
       actions: read
       contents: write
       packages: write
     steps:
-      - name: Refuse unsupported testing promotion
-        if: inputs.channel == 'testing'
-        run: |
-          echo "Private-to-public candidate promotion and official image signing require slice 5b." >&2
-          exit 1
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
         with: {persist-credentials: false}
       - uses: sigstore/cosign-installer@d58896d6a1865668819e1d91763c7751a165e159
