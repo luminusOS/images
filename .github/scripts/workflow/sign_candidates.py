@@ -7,14 +7,18 @@ import sys
 from pathlib import Path
 
 DIGEST = re.compile(r"\bdigest:\s*(sha256:[0-9a-f]{64})\b")
-KEY = Path("shared/trust/etc/pki/containers/luminusos.pub")
+KEY = Path("shared/release/candidate.pub")
 
 
 def push_and_sign(image: str) -> str:
     if os.environ.get("SECURITY_FINDINGS_BYPASS", "false") != "false":
         raise ValueError("diagnostic bypass cannot publish or sign candidates")
+    if "COSIGN_PRIVATE_KEY" in os.environ:
+        raise ValueError("official COSIGN_PRIVATE_KEY must not be present")
+    if not os.environ.get("CANDIDATE_COSIGN_PRIVATE_KEY"):
+        raise ValueError("CANDIDATE_COSIGN_PRIVATE_KEY is required")
     if "@" in image or not re.fullmatch(
-        r"ghcr\.io/[a-z0-9][a-z0-9_.-]*/[a-z0-9][a-z0-9_.-]*:[A-Za-z0-9_][A-Za-z0-9_.-]{0,127}",
+        r"ghcr\.io/[a-z0-9][a-z0-9-]*/luminusos-candidates:(?:core|workstation|workstation-iso)-candidate-[A-Za-z0-9_][A-Za-z0-9_.-]{0,90}",
         image,
     ):
         raise ValueError("invalid candidate image reference")
@@ -26,7 +30,14 @@ def push_and_sign(image: str) -> str:
         raise ValueError(f"push did not return one manifest digest for {image}")
     immutable = f"{image.rsplit(':', 1)[0]}@{matches[0]}"
     subprocess.run(
-        ["cosign", "sign", "--yes", "--key", "env://COSIGN_PRIVATE_KEY", immutable],
+        [
+            "cosign",
+            "sign",
+            "--yes",
+            "--key",
+            "env://CANDIDATE_COSIGN_PRIVATE_KEY",
+            immutable,
+        ],
         check=True,
     )
     subprocess.run(
@@ -69,8 +80,10 @@ def main() -> int:
             raise ValueError("expected one installer image")
         if not args.installer_only and len(args.images) not in (2, 3):
             raise ValueError("expected core and workstation, optionally installer")
-        if not os.environ.get("COSIGN_PRIVATE_KEY"):
-            raise ValueError("COSIGN_PRIVATE_KEY is required")
+        if "COSIGN_PRIVATE_KEY" in os.environ:
+            raise ValueError("official COSIGN_PRIVATE_KEY must not be present")
+        if not os.environ.get("CANDIDATE_COSIGN_PRIVATE_KEY"):
+            raise ValueError("CANDIDATE_COSIGN_PRIVATE_KEY is required")
         if not KEY.is_file():
             raise ValueError("trusted signing key is unavailable")
         references = [push_and_sign(image) for image in args.images]
