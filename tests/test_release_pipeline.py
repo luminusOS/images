@@ -183,15 +183,8 @@ def sample(tmp_path):
         "fedora_version": "42",
         "fedora_bootc_digest": "sha256:" + "1" * 64,
         "images": {
-            name: f"ghcr.io/owner/{image}@sha256:" + str(index) * 64
-            for index, (name, image) in enumerate(
-                (
-                    ("core", "luminusos"),
-                    ("workstation", "luminusos-workstation"),
-                    ("installer", "luminusos-workstation"),
-                ),
-                1,
-            )
+            name: "ghcr.io/owner/luminusos-candidates@sha256:" + str(index) * 64
+            for index, name in enumerate(("core", "workstation", "installer"), 1)
         },
         "artifacts": {"disk.qcow2": pipeline.digest(artifact)},
     }
@@ -2093,6 +2086,41 @@ class ReleasePipelineTests(unittest.TestCase):
                 with self.assertRaisesRegex(ValueError, "checksum"):
                     pipeline.validate_candidate(result, tmp_path)
                 screenshot.write_bytes(original)
+
+    def test_candidate_images_must_match_channel_repositories(self):
+        _, _, document = self.sample
+        public = {
+            "core": "ghcr.io/owner/luminusos@sha256:" + "1" * 64,
+            "workstation": "ghcr.io/owner/luminusos-workstation@sha256:" + "2" * 64,
+            "installer": "ghcr.io/owner/luminusos-workstation@sha256:" + "3" * 64,
+        }
+        staged = dict(document["images"])
+        for channel, images, accepted in (
+            ("testing", staged, True),
+            ("testing", public, False),
+            ("stable", public, False),
+            ("stable", staged, True),
+            (
+                "testing",
+                {
+                    **staged,
+                    "core": "ghcr.io/other/luminusos-candidates@sha256:" + "1" * 64,
+                },
+                False,
+            ),
+            (
+                "testing",
+                {**staged, "installer": staged["installer"].replace("@sha256:", ":")},
+                False,
+            ),
+        ):
+            candidate = {**document, "channel": channel, "images": images}
+            with self.subTest(channel=channel, images=images):
+                if accepted:
+                    pipeline.validate_candidate(candidate, self.tmp_path)
+                else:
+                    with self.assertRaisesRegex(ValueError, "image"):
+                        pipeline.validate_candidate(candidate, self.tmp_path)
 
     def test_create_candidate_rejects_wrong_context(self):
         tmp_path = self.tmp_path
