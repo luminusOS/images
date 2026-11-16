@@ -59,6 +59,12 @@ name: Image Publication
       R2_INERT_HANDOFF_SECRET_ACCESS_KEY:
         description: "Dedicated inert R2 producer credential; probe uses the inert-r2-handoff environment"
         required: false
+      CANDIDATE_COSIGN_PRIVATE_KEY:
+        description: "Isolated candidate signing key; read from the candidate-staging environment"
+        required: false
+      CANDIDATE_COSIGN_PASSWORD:
+        description: "Isolated candidate signing key; read from the candidate-staging environment"
+        required: false
       COSIGN_PRIVATE_KEY: {required: true}
       COSIGN_PASSWORD: {required: false}
       R2_ACCESS_KEY_ID: {required: false}
@@ -211,6 +217,7 @@ jobs:
     needs: [containers]
     if: ${{ !(github.event_name == 'workflow_dispatch' && inputs.inert_r2_probe == true) && !inputs.security_findings_bypass && (inputs.channel == 'testing' && github.ref == 'refs/heads/main') }}
     runs-on: ubuntu-latest
+    environment: candidate-staging
     permissions:
       contents: read
       packages: write
@@ -272,9 +279,18 @@ jobs:
           CORE_IMAGE: ${{ needs.containers.outputs.core_image }}
           WORKSTATION_IMAGE: ${{ needs.containers.outputs.workstation_image }}
           INSTALLER_IMAGE: ${{ needs.containers.outputs.workstation_iso_image }}
-          COSIGN_PRIVATE_KEY: ${{ secrets.COSIGN_PRIVATE_KEY }}
-          COSIGN_PASSWORD: ${{ secrets.COSIGN_PASSWORD }}
-        run: python3 .github/scripts/workflow/sign_candidates.py "$CORE_IMAGE" "$WORKSTATION_IMAGE" "$INSTALLER_IMAGE"
+          CANDIDATE_COSIGN_PRIVATE_KEY: ${{ secrets.CANDIDATE_COSIGN_PRIVATE_KEY }}
+          COSIGN_PASSWORD: ${{ secrets.CANDIDATE_COSIGN_PASSWORD }}
+        run: |
+          repository="ghcr.io/${GITHUB_REPOSITORY_OWNER,,}/luminusos-candidates"
+          candidate="${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
+          core="$repository:core-candidate-$candidate"
+          workstation="$repository:workstation-candidate-$candidate"
+          installer="$repository:workstation-iso-candidate-$candidate"
+          docker tag "$CORE_IMAGE" "$core"
+          docker tag "$WORKSTATION_IMAGE" "$workstation"
+          docker tag "$INSTALLER_IMAGE" "$installer"
+          python3 .github/scripts/workflow/sign_candidates.py "$core" "$workstation" "$installer"
       - name: Install pinned scanners
         if: inputs.channel == 'testing'
         run: |
@@ -544,6 +560,11 @@ jobs:
       contents: read
       packages: read
     steps:
+      - name: Refuse unsupported staged candidate binding
+        if: inputs.channel == 'testing'
+        run: |
+          echo "Candidate metadata signing and private-to-public promotion require slice 5b." >&2
+          exit 1
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
@@ -611,6 +632,11 @@ jobs:
       contents: write
       packages: write
     steps:
+      - name: Refuse unsupported testing promotion
+        if: inputs.channel == 'testing'
+        run: |
+          echo "Private-to-public candidate promotion and official image signing require slice 5b." >&2
+          exit 1
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
         with: {persist-credentials: false}
       - uses: sigstore/cosign-installer@d58896d6a1865668819e1d91763c7751a165e159

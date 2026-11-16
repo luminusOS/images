@@ -496,6 +496,92 @@ class ScannerInstallerTests(unittest.TestCase):
 
 
 class CandidateSigningTests(unittest.TestCase):
+    def test_public_candidate_references_are_rejected_before_push(self):
+        for image in (
+            "ghcr.io/luminusos/luminusos:candidate-1",
+            "ghcr.io/luminusos/luminusos-workstation:candidate-1",
+        ):
+            with (
+                self.subTest(image=image),
+                patch.dict(
+                    sign_candidates.os.environ,
+                    {"CANDIDATE_COSIGN_PRIVATE_KEY": "fixture"},
+                    clear=True,
+                ),
+                patch.object(sign_candidates.subprocess, "run") as run,
+                self.assertRaises(ValueError),
+            ):
+                sign_candidates.push_and_sign(image)
+            run.assert_not_called()
+
+    def test_candidate_key_is_required_and_official_key_forbidden(self):
+        image = "ghcr.io/luminusos/luminusos-candidates:core-candidate-1"
+        for env in (
+            {"COSIGN_PRIVATE_KEY": "fixture"},
+            {"CANDIDATE_COSIGN_PRIVATE_KEY": "fixture", "COSIGN_PRIVATE_KEY": ""},
+            {},
+        ):
+            with (
+                self.subTest(env=env),
+                patch.dict(sign_candidates.os.environ, env, clear=True),
+                patch.object(sign_candidates.subprocess, "run") as run,
+                self.assertRaises(ValueError),
+            ):
+                sign_candidates.push_and_sign(image)
+            run.assert_not_called()
+
+    def test_candidate_signing_uses_isolated_key(self):
+        digest = "sha256:" + "a" * 64
+        pushed = subprocess.CompletedProcess(
+            [], 0, stdout=f"digest: {digest}", stderr=""
+        )
+        with (
+            patch.dict(
+                sign_candidates.os.environ,
+                {"CANDIDATE_COSIGN_PRIVATE_KEY": "fixture"},
+                clear=True,
+            ),
+            patch.object(
+                sign_candidates.subprocess, "run", side_effect=[pushed, None, None]
+            ) as run,
+        ):
+            sign_candidates.push_and_sign(
+                "ghcr.io/luminusos/luminusos-candidates:core-candidate-1"
+            )
+        self.assertIn(
+            "env://CANDIDATE_COSIGN_PRIVATE_KEY", run.call_args_list[1].args[0]
+        )
+        self.assertIn("shared/release/candidate.pub", run.call_args_list[2].args[0])
+
+    def test_candidate_workflow_uses_isolated_environment(self):
+        workflow = yaml.safe_load((ROOT / ".github/workflows/publish.yml").read_text())
+        job = workflow["jobs"]["publish-images"]
+        self.assertEqual(job["environment"], "candidate-staging")
+        self.assertEqual(job["permissions"]["packages"], "write")
+        step = next(s for s in job["steps"] if s.get("id") == "candidates")
+        self.assertEqual(
+            step["env"]["CANDIDATE_COSIGN_PRIVATE_KEY"],
+            "${{ secrets.CANDIDATE_COSIGN_PRIVATE_KEY }}",
+        )
+        self.assertEqual(
+            step["env"]["COSIGN_PASSWORD"], "${{ secrets.CANDIDATE_COSIGN_PASSWORD }}"
+        )
+        self.assertNotIn("COSIGN_PRIVATE_KEY", step["env"])
+        self.assertNotIn("secrets.COSIGN_PRIVATE_KEY", str(job))
+        self.assertNotIn("secrets.COSIGN_PASSWORD", str(job))
+        self.assertIn("/luminusos-candidates", step["run"])
+        for role in ("core", "workstation", "workstation-iso"):
+            self.assertIn(f"{role}-candidate-", step["run"])
+
+    def test_testing_candidate_binding_and_promotion_are_blocked(self):
+        workflow = yaml.safe_load((ROOT / ".github/workflows/publish.yml").read_text())
+        for job in ("prepare-candidate", "release"):
+            with self.subTest(job=job):
+                step = workflow["jobs"][job]["steps"][0]
+                self.assertIn("inputs.channel == 'testing'", step["if"])
+                self.assertIn("exit 1", step["run"])
+                self.assertIn("slice 5b", step["run"])
+
     def test_diagnostic_or_invalid_bypass_never_pushes_or_signs(self):
         for value in ("true", "", "False", "TRUE", "0", "invalid"):
             with (
@@ -516,7 +602,13 @@ class CandidateSigningTests(unittest.TestCase):
         pushed = subprocess.CompletedProcess(
             [], 0, stdout=f"digest: {digest} size: 123\n", stderr=""
         )
-        for env in ({}, {"SECURITY_FINDINGS_BYPASS": "false"}):
+        for env in (
+            {"CANDIDATE_COSIGN_PRIVATE_KEY": "fixture"},
+            {
+                "SECURITY_FINDINGS_BYPASS": "false",
+                "CANDIDATE_COSIGN_PRIVATE_KEY": "fixture",
+            },
+        ):
             with (
                 self.subTest(env=env),
                 patch.dict(sign_candidates.os.environ, env, clear=True),
@@ -525,16 +617,18 @@ class CandidateSigningTests(unittest.TestCase):
                 ) as run,
             ):
                 result = sign_candidates.push_and_sign(
-                    "ghcr.io/luminusos/image:candidate-1-1"
+                    "ghcr.io/luminusos/luminusos-candidates:core-candidate-1-1"
                 )
-                self.assertEqual(result, f"ghcr.io/luminusos/image@{digest}")
+                self.assertEqual(
+                    result, f"ghcr.io/luminusos/luminusos-candidates@{digest}"
+                )
                 self.assertEqual(
                     [call.args[0][:2] for call in run.call_args_list],
                     [["docker", "push"], ["cosign", "sign"], ["cosign", "verify"]],
                 )
 
     def test_diagnostic_blocks_normal_and_installer_only_cli(self):
-        image = "ghcr.io/luminusos/image:candidate-1-1"
+        image = "ghcr.io/luminusos/luminusos-candidates:core-candidate-1-1"
         for arguments in ([image, image], ["--installer-only", image]):
             with (
                 self.subTest(arguments=arguments),
@@ -546,7 +640,7 @@ class CandidateSigningTests(unittest.TestCase):
                         sign_candidates.os.environ,
                         {
                             "SECURITY_FINDINGS_BYPASS": "true",
-                            "COSIGN_PRIVATE_KEY": "fixture",
+                            "CANDIDATE_COSIGN_PRIVATE_KEY": "fixture",
                             "GITHUB_OUTPUT": str(output),
                         },
                         clear=True,
@@ -598,13 +692,20 @@ class CandidateSigningTests(unittest.TestCase):
         pushed = subprocess.CompletedProcess(
             [], 0, stdout=f"digest: {digest} size: 123\n", stderr=""
         )
-        with patch.object(
-            sign_candidates.subprocess, "run", side_effect=[pushed, None, None]
-        ) as run:
+        with (
+            patch.dict(
+                sign_candidates.os.environ,
+                {"CANDIDATE_COSIGN_PRIVATE_KEY": "fixture"},
+                clear=True,
+            ),
+            patch.object(
+                sign_candidates.subprocess, "run", side_effect=[pushed, None, None]
+            ) as run,
+        ):
             result = sign_candidates.push_and_sign(
-                "ghcr.io/luminusos/image:candidate-1-1"
+                "ghcr.io/luminusos/luminusos-candidates:core-candidate-1-1"
             )
-        self.assertEqual(result, f"ghcr.io/luminusos/image@{digest}")
+        self.assertEqual(result, f"ghcr.io/luminusos/luminusos-candidates@{digest}")
         self.assertEqual(run.call_args_list[1].args[0][-1], result)
         self.assertEqual(run.call_args_list[2].args[0][-1], result)
         self.assertEqual(run.call_args_list[1].args[0][:2], ["cosign", "sign"])
@@ -613,14 +714,26 @@ class CandidateSigningTests(unittest.TestCase):
     def test_missing_push_digest_never_signs(self):
         pushed = subprocess.CompletedProcess([], 0, stdout="success", stderr="")
         with (
+            patch.dict(
+                sign_candidates.os.environ,
+                {"CANDIDATE_COSIGN_PRIVATE_KEY": "fixture"},
+                clear=True,
+            ),
             patch.object(sign_candidates.subprocess, "run", return_value=pushed) as run,
             self.assertRaises(ValueError),
         ):
-            sign_candidates.push_and_sign("ghcr.io/luminusos/image:candidate-1-1")
+            sign_candidates.push_and_sign(
+                "ghcr.io/luminusos/luminusos-candidates:core-candidate-1-1"
+            )
         self.assertEqual(run.call_count, 1)
 
     def test_invalid_reference_never_pushes(self):
         with (
+            patch.dict(
+                sign_candidates.os.environ,
+                {"CANDIDATE_COSIGN_PRIVATE_KEY": "fixture"},
+                clear=True,
+            ),
             patch.object(sign_candidates.subprocess, "run") as run,
             self.assertRaises(ValueError),
         ):

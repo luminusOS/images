@@ -146,7 +146,7 @@ class RepositoryContracts(unittest.TestCase):
             read(".github/workflows/installer.yml"),
         )
         self.assertIn(
-            '"cosign", "sign", "--yes", "--key", "env://COSIGN_PRIVATE_KEY"',
+            '"env://CANDIDATE_COSIGN_PRIVATE_KEY"',
             read(".github/scripts/workflow/sign_candidates.py"),
         )
         self.assertIn("cosign-release: v2.", publish)
@@ -219,9 +219,7 @@ class RepositoryContracts(unittest.TestCase):
     def test_published_images_are_signed(self):
         publish = read(".github/workflows/publish.yml")
         signing = read(".github/scripts/workflow/sign_candidates.py")
-        self.assertIn(
-            '"cosign", "sign", "--yes", "--key", "env://COSIGN_PRIVATE_KEY"', signing
-        )
+        self.assertIn('"env://CANDIDATE_COSIGN_PRIVATE_KEY"', signing)
         self.assertIn('["cosign", "verify", "--key", str(KEY), immutable]', signing)
         self.assertIn("sign_candidates.py", publish)
         self.assertIn("cosign-release: v2.", publish)
