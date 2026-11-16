@@ -48,6 +48,86 @@ PUBLISH_SPEC.loader.exec_module(release_publish)
 
 
 class ReleasePublisherTests(unittest.TestCase):
+    def test_candidate_and_publication_keys_are_separate(self):
+        self.assertEqual(release_publish.CANDIDATE_KEY, "shared/release/candidate.pub")
+        self.assertEqual(
+            release_publish.OFFICIAL_KEY,
+            "shared/trust/etc/pki/containers/luminusos.pub",
+        )
+
+    def test_checksum_signature_uses_fixed_official_key(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            artifact = root / "candidate.json"
+            artifact.write_text("original")
+            (root / "SHA256SUMS").write_text(
+                f"{hashlib.sha256(b'original').hexdigest()}  candidate.json\n"
+            )
+            (root / "SHA256SUMS.sig").write_text("signature")
+            with patch.object(release_publish.subprocess, "run") as run:
+                release_publish.verify_checksums(root)
+            command = run.call_args.args[0]
+            self.assertEqual(command[:2], ["cosign", "verify-blob"])
+            self.assertEqual(
+                command[command.index("--key") + 1], release_publish.OFFICIAL_KEY
+            )
+
+    def test_candidate_results_use_candidate_key(self):
+        helper = types.SimpleNamespace(
+            candidate=unittest.mock.Mock(side_effect=ValueError("stop"))
+        )
+        with (
+            patch.object(release_publish, "load_helper", return_value=helper),
+            self.assertRaisesRegex(ValueError, "stop"),
+        ):
+            release_publish.prepare_results(Path("candidate"))
+        helper.candidate.assert_called_once_with(
+            Path("candidate/candidate.json"), Path("shared/release/candidate.pub")
+        )
+
+    def test_candidate_gate_image_verification_uses_candidate_key(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            scan = root / "scan/core/scan-evidence.json"
+            scan.parent.mkdir(parents=True)
+            scan.write_text('{"security":{"gate":"bypassed"}}')
+            with (
+                patch.dict(
+                    release_publish.os.environ,
+                    {
+                        "SECURITY_FINDINGS_BYPASS": "false",
+                        "QUALITY_RESULT": "success",
+                        "BOOT_RESULT": "success",
+                        "SCAN_RESULT": "success",
+                        "CORE": "core",
+                        "WORKSTATION": "workstation",
+                        "INSTALLER": "installer",
+                    },
+                ),
+                patch.object(release_publish.subprocess, "run") as run,
+                self.assertRaisesRegex(ValueError, "bypass"),
+            ):
+                release_publish.prepare_gates(root)
+            self.assertEqual(
+                run.call_args.args[0],
+                ["cosign", "verify", "--key", "shared/release/candidate.pub", "core"],
+            )
+
+    def test_candidate_signing_jobs_never_receive_official_key(self):
+        workflow = yaml.safe_load((ROOT / ".github/workflows/publish.yml").read_text())
+        for name in ("stable-source", "prepare-candidate", "release-evidence"):
+            with self.subTest(job=name):
+                job = workflow["jobs"][name]
+                self.assertEqual(job["environment"], "candidate-staging")
+                self.assertNotIn("secrets.COSIGN_PRIVATE_KEY", str(job))
+                commands = " ".join(step.get("run", "") for step in job["steps"])
+                self.assertNotIn(
+                    "shared/trust/etc/pki/containers/luminusos.pub", commands
+                )
+        self.assertIn("release-evidence", workflow["jobs"]["release"]["needs"])
+        release = workflow["jobs"]["release"]
+        self.assertNotIn("secrets.CANDIDATE_COSIGN_PRIVATE_KEY", str(release))
+
     def test_testing_candidate_cannot_be_promoted_as_stable(self):
         with (
             patch.object(
@@ -315,12 +395,12 @@ class ReleasePublisherTests(unittest.TestCase):
                 f"{hashlib.sha256(b'original').hexdigest()}  candidate.json\n",
                 encoding="utf-8",
             )
-            helper = types.SimpleNamespace(verify=lambda *_: None)
-            with patch.object(release_publish, "load_helper", return_value=helper):
-                release_publish.verify_checksums(root, Path("key"))
+            (root / "SHA256SUMS.sig").write_text("signature")
+            with patch.object(release_publish.subprocess, "run"):
+                release_publish.verify_checksums(root)
                 artifact.write_text("tampered", encoding="utf-8")
                 with self.assertRaisesRegex(ValueError, "checksum manifest mismatch"):
-                    release_publish.verify_checksums(root, Path("key"))
+                    release_publish.verify_checksums(root)
 
     def test_failed_scanner_prevents_signatures_and_registry_calls(self):
         with (
@@ -1488,12 +1568,15 @@ class ContainerWorkflowTests(unittest.TestCase):
         jobs = workflow["jobs"]
         self.assertIn("inputs.candidate_run_id == ''", jobs["containers"]["if"])
         resume = jobs["release"]
-        self.assertEqual(resume["needs"], ["quality", "inputs"])
+        self.assertEqual(resume["needs"], ["quality", "inputs", "release-evidence"])
         self.assertIn("inputs.candidate_run_id != ''", resume["if"])
         self.assertIn("inputs.validation_run_id != ''", resume["if"])
         commands = "\n".join(step.get("run", "") for step in resume["steps"])
         self.assertIn("fetch-candidate", commands)
-        self.assertIn("fetch-validation", commands)
+        evidence_commands = "\n".join(
+            step.get("run", "") for step in jobs["release-evidence"]["steps"]
+        )
+        self.assertIn("fetch-validation", evidence_commands)
         self.assertIn("--candidate candidate/candidate.json", commands)
         self.assertIn("--evidence dist/release-evidence.json", commands)
 

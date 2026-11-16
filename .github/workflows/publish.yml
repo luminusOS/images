@@ -169,6 +169,7 @@ jobs:
     needs: [quality, inputs]
     if: ${{ !(github.event_name == 'workflow_dispatch' && inputs.inert_r2_probe == true) && (!inputs.security_findings_bypass && github.ref == 'refs/heads/main' && inputs.candidate_run_id == '' && inputs.validation_run_id == '' && inputs.channel == 'stable') }}
     runs-on: ubuntu-latest
+    environment: candidate-staging
     permissions: {contents: read, actions: read}
     outputs:
       core: ${{ steps.source.outputs.core_candidate }}
@@ -189,28 +190,28 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           TESTING_RUN_ID: ${{ inputs.testing_run_id }}
-        run: python3 .github/scripts/workflow/release_pipeline.py fetch-candidate --repository "$GITHUB_REPOSITORY" --run-id "$TESTING_RUN_ID" --output testing-candidate --public-key shared/trust/etc/pki/containers/luminusos.pub
+        run: python3 .github/scripts/workflow/release_pipeline.py fetch-candidate --repository "$GITHUB_REPOSITORY" --run-id "$TESTING_RUN_ID" --output testing-candidate --public-key shared/release/candidate.pub
       - name: Fetch matching testing installation validation
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           TESTING_VALIDATION_RUN_ID: ${{ inputs.testing_validation_run_id }}
-        run: python3 .github/scripts/workflow/release_pipeline.py fetch-validation --repository "$GITHUB_REPOSITORY" --run-id "$TESTING_VALIDATION_RUN_ID" --candidate testing-candidate/candidate.json --output testing-validation --public-key shared/trust/etc/pki/containers/luminusos.pub
+        run: python3 .github/scripts/workflow/release_pipeline.py fetch-validation --repository "$GITHUB_REPOSITORY" --run-id "$TESTING_VALIDATION_RUN_ID" --candidate testing-candidate/candidate.json --output testing-validation --public-key shared/release/candidate.pub
       - name: Reconstruct testing gate results
         run: python3 .github/scripts/workflow/release_publish.py prepare-results testing-candidate
       - name: Assemble testing approval evidence
         env:
-          COSIGN_PRIVATE_KEY: ${{ secrets.COSIGN_PRIVATE_KEY }}
-          COSIGN_PASSWORD: ${{ secrets.COSIGN_PASSWORD }}
-        run: python3 .github/scripts/workflow/release_pipeline.py assemble-evidence --candidate testing-candidate/candidate.json --validation testing-validation/validation.json --results testing-candidate/results.json --output testing-evidence/release-evidence.json --public-key shared/trust/etc/pki/containers/luminusos.pub
+          CANDIDATE_COSIGN_PRIVATE_KEY: ${{ secrets.CANDIDATE_COSIGN_PRIVATE_KEY }}
+          COSIGN_PASSWORD: ${{ secrets.CANDIDATE_COSIGN_PASSWORD }}
+        run: python3 .github/scripts/workflow/release_pipeline.py assemble-evidence --candidate testing-candidate/candidate.json --validation testing-validation/validation.json --results testing-candidate/results.json --output testing-evidence/release-evidence.json --public-key shared/release/candidate.pub
       - name: Verify complete testing approval
-        run: python3 .github/scripts/workflow/release_publish.py verify-release --candidate testing-candidate/candidate.json --evidence testing-evidence/release-evidence.json --public-key shared/trust/etc/pki/containers/luminusos.pub
+        run: python3 .github/scripts/workflow/release_publish.py verify-release --candidate testing-candidate/candidate.json --evidence testing-evidence/release-evidence.json --public-key shared/release/candidate.pub
       - name: Install upstream inspection tool
         run: sudo apt-get update && sudo apt-get install -y skopeo
       - name: Check testing version and payload
         id: check
         env:
           PROMOTE_VERSION: ${{ inputs.promote_version }}
-        run: python3 .github/scripts/workflow/release_publish.py verify-source --candidate testing-candidate/candidate.json --public-key shared/trust/etc/pki/containers/luminusos.pub --promote-version "$PROMOTE_VERSION"
+        run: python3 .github/scripts/workflow/release_publish.py verify-source --candidate testing-candidate/candidate.json --public-key shared/release/candidate.pub --promote-version "$PROMOTE_VERSION"
 
   publish-images:
     name: Publish candidate containers
@@ -556,6 +557,7 @@ jobs:
     needs: [quality, containers, publish-images, stable-source, stable-installer, publish-stable-installer, iso, qcow2, boot-test]
     if: ${{ !(github.event_name == 'workflow_dispatch' && inputs.inert_r2_probe == true) && (always() && !inputs.security_findings_bypass && github.ref == 'refs/heads/main' && inputs.candidate_run_id == '' && needs.quality.result == 'success' && needs.iso.result == 'success' && needs.qcow2.result == 'success' && needs.boot-test.result == 'success' && ((inputs.channel == 'testing' && needs.publish-images.result == 'success') || (inputs.channel == 'stable' && needs.publish-stable-installer.result == 'success'))) }}
     runs-on: ubuntu-latest
+    environment: candidate-staging
     permissions:
       contents: read
       packages: read
@@ -598,6 +600,11 @@ jobs:
           WORKSTATION: ${{ needs.publish-images.outputs.workstation_candidate || needs.stable-source.outputs.workstation }}
           INSTALLER: ${{ needs.publish-images.outputs.installer_candidate || needs.publish-stable-installer.outputs.installer_candidate }}
         run: python3 .github/scripts/workflow/sign_candidates.py --metadata candidate-metadata.json "$CORE" "$WORKSTATION" "$INSTALLER"
+      - uses: docker/login-action@81c6f93d4bc991e510b342a00b419b3bb4efc5c6
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
       - name: Bind real gate outcomes
         env:
           QUALITY_RESULT: ${{ needs.quality.result }}
@@ -610,9 +617,9 @@ jobs:
         run: python3 .github/scripts/workflow/release_publish.py prepare-gates candidate
       - name: Sign candidate manifest
         env:
-          COSIGN_PRIVATE_KEY: ${{ secrets.COSIGN_PRIVATE_KEY }}
-          COSIGN_PASSWORD: ${{ secrets.COSIGN_PASSWORD }}
-        run: python3 .github/scripts/workflow/release_pipeline.py create-candidate --metadata candidate-metadata.json --directory candidate --output candidate/candidate.json --public-key shared/trust/etc/pki/containers/luminusos.pub
+          CANDIDATE_COSIGN_PRIVATE_KEY: ${{ secrets.CANDIDATE_COSIGN_PRIVATE_KEY }}
+          COSIGN_PASSWORD: ${{ secrets.CANDIDATE_COSIGN_PASSWORD }}
+        run: python3 .github/scripts/workflow/release_pipeline.py create-candidate --metadata candidate-metadata.json --directory candidate --output candidate/candidate.json --public-key shared/release/candidate.pub
       - name: Bind gate results to signed candidate
         run: python3 .github/scripts/workflow/release_publish.py prepare-results candidate
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
@@ -622,9 +629,50 @@ jobs:
           compression-level: 0
           if-no-files-found: error
 
+  release-evidence:
+    name: Assemble candidate evidence
+    needs: [quality, inputs]
+    if: ${{ !(github.event_name == 'workflow_dispatch' && inputs.inert_r2_probe == true) && (!inputs.security_findings_bypass && github.ref == 'refs/heads/main' && inputs.candidate_run_id != '' && inputs.validation_run_id != '') }}
+    runs-on: ubuntu-latest
+    environment: candidate-staging
+    permissions:
+      actions: read
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with: {persist-credentials: false}
+      - uses: sigstore/cosign-installer@d58896d6a1865668819e1d91763c7751a165e159
+        with: {cosign-release: v2.5.3}
+      - name: Fetch signed candidate from prior successful run
+        id: candidate
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          CANDIDATE_RUN_ID: ${{ inputs.candidate_run_id }}
+        run: python3 .github/scripts/workflow/release_pipeline.py fetch-candidate --repository "$GITHUB_REPOSITORY" --run-id "$CANDIDATE_RUN_ID" --output candidate --public-key shared/release/candidate.pub
+      - name: Fetch matching installation validation
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          VALIDATION_RUN_ID: ${{ inputs.validation_run_id }}
+        run: python3 .github/scripts/workflow/release_pipeline.py fetch-validation --repository "$GITHUB_REPOSITORY" --run-id "$VALIDATION_RUN_ID" --candidate candidate/candidate.json --output validation --public-key shared/release/candidate.pub
+      - name: Reconstruct signed gate results
+        run: python3 .github/scripts/workflow/release_publish.py prepare-results candidate
+      - name: Assemble release evidence
+        env:
+          CANDIDATE_COSIGN_PRIVATE_KEY: ${{ secrets.CANDIDATE_COSIGN_PRIVATE_KEY }}
+          COSIGN_PASSWORD: ${{ secrets.CANDIDATE_COSIGN_PASSWORD }}
+        run: python3 .github/scripts/workflow/release_pipeline.py assemble-evidence --candidate candidate/candidate.json --validation validation/validation.json --results candidate/results.json --output dist/release-evidence.json --public-key shared/release/candidate.pub
+      - name: Verify candidate evidence
+        run: python3 .github/scripts/workflow/release_publish.py verify-release --candidate candidate/candidate.json --evidence dist/release-evidence.json --public-key shared/release/candidate.pub
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: release-evidence
+          path: dist/
+          include-hidden-files: true
+          if-no-files-found: error
+
   release:
     name: Promote validated candidate
-    needs: [quality, inputs]
+    needs: [quality, inputs, release-evidence]
     if: ${{ !(github.event_name == 'workflow_dispatch' && inputs.inert_r2_probe == true) && (!inputs.security_findings_bypass && github.ref == 'refs/heads/main' && inputs.candidate_run_id != '' && inputs.validation_run_id != '') }}
     runs-on: ubuntu-latest
     permissions:
@@ -642,23 +690,14 @@ jobs:
       - uses: sigstore/cosign-installer@d58896d6a1865668819e1d91763c7751a165e159
         with: {cosign-release: v2.5.3}
       - name: Fetch signed candidate from prior successful run
-        id: candidate
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           CANDIDATE_RUN_ID: ${{ inputs.candidate_run_id }}
-        run: python3 .github/scripts/workflow/release_pipeline.py fetch-candidate --repository "$GITHUB_REPOSITORY" --run-id "$CANDIDATE_RUN_ID" --output candidate --public-key shared/trust/etc/pki/containers/luminusos.pub
-      - name: Fetch matching installation validation
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          VALIDATION_RUN_ID: ${{ inputs.validation_run_id }}
-        run: python3 .github/scripts/workflow/release_pipeline.py fetch-validation --repository "$GITHUB_REPOSITORY" --run-id "$VALIDATION_RUN_ID" --candidate candidate/candidate.json --output validation --public-key shared/trust/etc/pki/containers/luminusos.pub
-      - name: Reconstruct signed gate results
-        run: python3 .github/scripts/workflow/release_publish.py prepare-results candidate
-      - name: Assemble release evidence
-        env:
-          COSIGN_PRIVATE_KEY: ${{ secrets.COSIGN_PRIVATE_KEY }}
-          COSIGN_PASSWORD: ${{ secrets.COSIGN_PASSWORD }}
-        run: python3 .github/scripts/workflow/release_pipeline.py assemble-evidence --candidate candidate/candidate.json --validation validation/validation.json --results candidate/results.json --output dist/release-evidence.json --public-key shared/trust/etc/pki/containers/luminusos.pub
+        run: python3 .github/scripts/workflow/release_pipeline.py fetch-candidate --repository "$GITHUB_REPOSITORY" --run-id "$CANDIDATE_RUN_ID" --output candidate --public-key shared/release/candidate.pub
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: release-evidence
+          path: dist/
       - name: Install promotion tools
         run: sudo apt-get update && sudo apt-get install -y skopeo rsync
       - uses: docker/login-action@81c6f93d4bc991e510b342a00b419b3bb4efc5c6
@@ -671,7 +710,7 @@ jobs:
           COSIGN_PRIVATE_KEY: ${{ secrets.COSIGN_PRIVATE_KEY }}
           COSIGN_PASSWORD: ${{ secrets.COSIGN_PASSWORD }}
           CHANNEL: ${{ inputs.channel }}
-        run: python3 .github/scripts/workflow/release_publish.py promote --candidate candidate/candidate.json --evidence dist/release-evidence.json --public-key shared/trust/etc/pki/containers/luminusos.pub --channel "$CHANNEL"
+        run: python3 .github/scripts/workflow/release_publish.py promote --candidate candidate/candidate.json --evidence dist/release-evidence.json --public-key shared/release/candidate.pub --channel "$CHANNEL"
       - name: Publish verified downloads and release
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -684,4 +723,4 @@ jobs:
           SF_USER: ${{ secrets.SF_USER }}
           SF_SSH_KEY: ${{ secrets.SF_SSH_KEY }}
           CHANNEL: ${{ inputs.channel }}
-        run: python3 .github/scripts/workflow/release_publish.py publish --candidate candidate/candidate.json --evidence dist/release-evidence.json --public-key shared/trust/etc/pki/containers/luminusos.pub --channel "$CHANNEL" --directory dist
+        run: python3 .github/scripts/workflow/release_publish.py publish --candidate candidate/candidate.json --evidence dist/release-evidence.json --public-key shared/release/candidate.pub --channel "$CHANNEL" --directory dist
