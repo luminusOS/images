@@ -6,6 +6,7 @@ import argparse
 import json
 import re
 import sys
+from datetime import datetime, timedelta
 from pathlib import Path
 
 REQUIRED_GATES = (
@@ -18,6 +19,11 @@ REQUIRED_GATES = (
 )
 DIGEST = re.compile(r"sha256:[0-9a-f]{64}\Z")
 SHA256 = re.compile(r"[0-9a-f]{64}\Z")
+REGISTRY_REPOSITORY = re.compile(
+    r"[a-z0-9.-]+\.[a-z]{2,}(?::[0-9]+)?(?:/[a-z0-9._-]+)+\Z"
+)
+BASE_RISK_KIND = "fedora-bootc-upstream-signature-risk"
+BASE_RISK_MAX_AGE = timedelta(days=30)
 
 
 def validate_candidate(
@@ -76,6 +82,68 @@ def validate_candidate(
             errors.append(f"gate evidence sha256 is invalid: {name}")
         if item.get("candidate_digest") != candidate:
             errors.append(f"gate evidence candidate digest mismatch: {name}")
+    return errors
+
+
+def _instant(value: object) -> datetime | None:
+    if not isinstance(value, str):
+        return None
+    try:
+        parsed = datetime.fromisoformat(value)
+    except ValueError:
+        return None
+    return parsed if parsed.tzinfo is not None else None
+
+
+def validate_base_risk(
+    record: object, base_reference: str, fedora_version: str, now: datetime
+) -> list[str]:
+    """Check the accepted risk of building on an upstream-unsigned Fedora base.
+
+    The record never stands in for a signature: it only allows a digest-pinned
+    reference from the recorded repository and release while it is in force.
+    """
+    if not isinstance(record, dict):
+        return ["base risk record must be a JSON object"]
+    if now.tzinfo is None:
+        return ["base risk evaluation time must be timezone-aware"]
+    errors: list[str] = []
+    version = record.get("schema_version")
+    if type(version) is not int or version != 1 or record.get("kind") != BASE_RISK_KIND:
+        errors.append("base risk record kind or schema is unsupported")
+    if not isinstance(record.get("owner"), str) or not record["owner"].strip():
+        errors.append("base risk record needs an owner")
+    mitigations = record.get("mitigations")
+    if (
+        not isinstance(mitigations, list)
+        or not mitigations
+        or not all(isinstance(item, str) and item.strip() for item in mitigations)
+    ):
+        errors.append("base risk record needs its mitigations")
+    accepted = _instant(record.get("accepted_at"))
+    expires = _instant(record.get("expires_at"))
+    if accepted is None or expires is None:
+        errors.append("base risk record needs timezone-aware accepted_at/expires_at")
+    elif not accepted <= now < expires:
+        errors.append("base risk record is not in force")
+    elif expires - accepted > BASE_RISK_MAX_AGE:
+        errors.append("base risk record exceeds the 30-day review window")
+    repository = record.get("repository")
+    if (
+        not isinstance(repository, str)
+        or not REGISTRY_REPOSITORY.fullmatch(repository)
+        or not re.fullmatch(
+            re.escape(repository) + r"@sha256:[0-9a-f]{64}", base_reference
+        )
+    ):
+        errors.append("base reference is not digest-pinned to the recorded repository")
+    release = record.get("fedora_version")
+    if not (
+        isinstance(release, str)
+        and isinstance(fedora_version, str)
+        and release == fedora_version
+    ):
+        errors.append("base risk record covers a different Fedora release")
     return errors
 
 
