@@ -164,10 +164,10 @@ def prepare_gates(directory: Path) -> None:
         scan = directory / "scan" / name / "scan-evidence.json"
         data = json.loads(scan.read_text(encoding="utf-8"))
         security = data.get("security")
-        if security is not None and (
-            not isinstance(security, dict) or security.get("gate") != "success"
-        ):
-            raise ValueError("security bypass scan cannot authorize release gates")
+        if not isinstance(security, dict) or security.get("gate") != "success":
+            raise ValueError(
+                "scan without a successful security gate (or a bypass) cannot authorize release gates"
+            )
         source_sha = (
             os.environ.get("SOURCE_IMAGE_SHA", os.environ["GITHUB_SHA"])
             if name in ("core", "workstation")

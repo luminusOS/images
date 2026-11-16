@@ -3,6 +3,7 @@ import hashlib
 import importlib.util
 import io
 import json
+import re
 import subprocess
 import sys
 import tarfile
@@ -463,6 +464,36 @@ class ReleasePublisherTests(unittest.TestCase):
                 release_publish.prepare_gates(directory)
             self.assertFalse((directory / "gates").exists())
 
+    def test_scan_without_successful_security_gate_cannot_become_release_gate(self):
+        for evidence in ({}, {"security": None}, {"security": []}, {"security": {}}):
+            with self.subTest(evidence=evidence):
+                self.assert_scan_rejected(evidence)
+
+    def assert_scan_rejected(self, evidence):
+        with tempfile.TemporaryDirectory() as temporary:
+            directory = Path(temporary)
+            scan = directory / "scan/core/scan-evidence.json"
+            scan.parent.mkdir(parents=True)
+            scan.write_text(json.dumps(evidence))
+            with (
+                patch.dict(
+                    release_publish.os.environ,
+                    {
+                        "SECURITY_FINDINGS_BYPASS": "false",
+                        "QUALITY_RESULT": "success",
+                        "BOOT_RESULT": "success",
+                        "SCAN_RESULT": "success",
+                        "CORE": "core",
+                        "WORKSTATION": "workstation",
+                        "INSTALLER": "installer",
+                    },
+                ),
+                patch.object(release_publish.subprocess, "run"),
+                self.assertRaisesRegex(ValueError, "security"),
+            ):
+                release_publish.prepare_gates(directory)
+            self.assertFalse((directory / "gates").exists())
+
     def test_failed_third_image_preflight_prevents_all_tag_changes(self):
         digest = "sha256:" + "a" * 64
         images = {
@@ -655,6 +686,61 @@ class CandidateSigningTests(unittest.TestCase):
         self.assertIn("/luminusos-candidates", step["run"])
         for role in ("core", "workstation", "workstation-iso"):
             self.assertIn(f"{role}-candidate-", step["run"])
+
+    def test_candidate_scan_runs_read_only_with_reviewed_policies(self):
+        workflow = yaml.safe_load((ROOT / ".github/workflows/publish.yml").read_text())
+        jobs = workflow["jobs"]
+        self.assertNotIn("supply_chain.py inspect", str(jobs["publish-images"]))
+        job = jobs["scan-candidates"]
+        self.assertNotIn("environment", job)
+        self.assertEqual(job["permissions"], {"contents": "read", "packages": "read"})
+        self.assertIn("publish-images", job["needs"])
+        self.assertEqual(
+            set(re.findall(r"secrets\.[A-Z_]+", str(job))), {"secrets.GITHUB_TOKEN"}
+        )
+        runs = [step.get("run", "") for step in job["steps"]]
+        verify = next(i for i, r in enumerate(runs) if "cosign verify" in r)
+        scan = next(i for i, r in enumerate(runs) if "supply_chain.py inspect" in r)
+        self.assertLess(verify, scan)
+        self.assertIn("shared/release/candidate.pub", runs[verify])
+        self.assertNotIn("luminusos.pub", runs[verify])
+        command = runs[scan]
+        policies = ROOT / "shared/release/exceptions"
+        for edition, scope, excluded in (
+            ("core", "core_payload", False),
+            ("workstation", "workstation_payload", True),
+            ("workstation", "installer_live", True),
+        ):
+            name = f"{edition}-{scope}-testing-45.json"
+            digest = hashlib.sha256((policies / name).read_bytes()).hexdigest()
+            line = next(
+                item
+                for item in command.splitlines()
+                if f"--component-scope {scope}" in item
+            )
+            with self.subTest(scope=scope):
+                self.assertIn(f"--exceptions shared/release/exceptions/{name}", line)
+                self.assertIn(f"--policy-sha256 {digest}", line)
+                self.assertIn(f"--edition {edition}", line)
+                self.assertIn("--channel testing", line)
+                self.assertIn('--fedora "$FEDORA"', line)
+                self.assertEqual(
+                    "--scan-exclusion shared/release/flatpak-scan-risk.json" in line,
+                    excluded,
+                )
+        upload = next(
+            step
+            for step in job["steps"]
+            if step.get("uses", "").startswith("actions/upload-artifact@")
+        )
+        self.assertEqual(upload["with"]["name"], "candidate-scans")
+        prepare = jobs["prepare-candidate"]
+        self.assertIn("scan-candidates", prepare["needs"])
+        self.assertIn("needs.scan-candidates.result == 'success'", prepare["if"])
+        gates = next(
+            s for s in prepare["steps"] if s.get("name") == "Bind real gate outcomes"
+        )
+        self.assertIn("needs.scan-candidates.result", gates["env"]["SCAN_RESULT"])
 
     def test_public_tag_writers_are_serialized_and_testing_enabled(self):
         workflow = yaml.safe_load((ROOT / ".github/workflows/publish.yml").read_text())
