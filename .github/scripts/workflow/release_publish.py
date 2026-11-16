@@ -374,7 +374,8 @@ def promote(
     )
     for role in ("core", "workstation", "installer"):
         image = candidate["images"][role]
-        repository, digest = image.split("@", 1)
+        _, digest = image.split("@", 1)
+        repository = promotion.public_repository(role, candidate["repository"])
         suffix = "-iso" if role == "installer" else ""
         destinations = [
             f"{repository}:{version}{suffix}",

@@ -210,7 +210,10 @@ class ReleasePublisherTests(unittest.TestCase):
                 for name in ("core", "workstation", "installer")
             },
         }
-        promotion = types.SimpleNamespace(promote=unittest.mock.Mock())
+        promotion = types.SimpleNamespace(
+            promote=unittest.mock.Mock(),
+            public_repository=lambda role, repository: f"ghcr.io/org/{role}",
+        )
         inspect = subprocess.CompletedProcess([], 0, stdout=digest)
         with (
             patch.object(release_publish, "verify_release", return_value=candidate),
@@ -653,14 +656,31 @@ class CandidateSigningTests(unittest.TestCase):
         for role in ("core", "workstation", "workstation-iso"):
             self.assertIn(f"{role}-candidate-", step["run"])
 
-    def test_testing_candidate_binding_and_promotion_are_blocked(self):
+    def test_public_tag_writers_are_serialized_and_testing_enabled(self):
         workflow = yaml.safe_load((ROOT / ".github/workflows/publish.yml").read_text())
-        for job in ("prepare-candidate", "release"):
+        for job in ("release", "publish-stable-installer"):
             with self.subTest(job=job):
-                step = workflow["jobs"][job]["steps"][0]
-                self.assertIn("inputs.channel == 'testing'", step["if"])
-                self.assertIn("exit 1", step["run"])
-                self.assertIn("slice 5b", step["run"])
+                self.assertEqual(
+                    workflow["jobs"][job]["concurrency"],
+                    {
+                        "group": "image-publication-${{ github.repository }}",
+                        "cancel-in-progress": False,
+                    },
+                )
+        self.assertNotIn("require slice 5b", str(workflow["jobs"]["prepare-candidate"]))
+        self.assertNotIn("require slice 5b", str(workflow["jobs"]["release"]))
+        self.assertIn(
+            "legacy stable publication is disabled", str(workflow["jobs"]["inputs"])
+        )
+        release = workflow["jobs"]["release"]
+        self.assertEqual(release["permissions"]["packages"], "write")
+        login = next(
+            step
+            for step in release["steps"]
+            if step.get("uses", "").startswith("docker/login-action@")
+        )
+        self.assertEqual(login["with"]["registry"], "ghcr.io")
+        self.assertEqual(login["with"]["password"], "${{ secrets.GITHUB_TOKEN }}")
 
     def test_diagnostic_or_invalid_bypass_never_pushes_or_signs(self):
         for value in ("true", "", "False", "TRUE", "0", "invalid"):
@@ -828,6 +848,10 @@ class ReleasePolicyTests(unittest.TestCase):
         return {
             "repository": "org/repository",
             "candidate_digest": digest,
+            "images": {
+                role: "ghcr.io/org/luminusos-candidates@" + digest
+                for role in ("core", "workstation", "installer")
+            },
             "source": {
                 "repository": "org/repository",
                 "ref": "refs/heads/main",
@@ -901,6 +925,474 @@ class ReleasePolicyTests(unittest.TestCase):
 
 
 class PromotionTests(unittest.TestCase):
+    def setUp(self):
+        environment = patch.dict("os.environ", {"GITHUB_REPOSITORY_OWNER": "org"})
+        environment.start()
+        self.addCleanup(environment.stop)
+        self.real_inspect_version = promote_images.inspect_version
+        inspection = patch.object(promote_images, "inspect_version", return_value=None)
+        inspection.start()
+        self.addCleanup(inspection.stop)
+
+    def test_version_inspection_only_accepts_precise_missing_manifest(self):
+        ref = "ghcr.io/org/luminusos:testing-45.20261105"
+        for returncode, error, accepted in (
+            (
+                1,
+                'time="now" level=fatal msg="reading manifest testing-45.20261105 in ghcr.io/org/luminusos: manifest unknown"',
+                True,
+            ),
+            (
+                2,
+                (
+                    'time="2026-11-16T09:04:42-03:00" level=fatal msg="Error parsing image name '
+                    '\\"docker://ghcr.io/org/luminusos:testing-45.20261105\\": reading manifest '
+                    'testing-45.20261105 in ghcr.io/org/luminusos: manifest unknown"'
+                ),
+                True,
+            ),
+            (1, "manifest unknown: manifest unknown", True),
+            (2, "manifest unknown", True),
+            (1, "unauthorized: access denied", False),
+            (2, "unauthorized: access denied", False),
+            (1, "connection refused", False),
+            (3, "manifest unknown", False),
+            (1, "manifest unknown: access denied", False),
+            (
+                2,
+                (
+                    "reading manifest testing-45.20261105 in ghcr.io/org/luminusos: "
+                    "unauthorized: manifest unknown"
+                ),
+                False,
+            ),
+            (
+                2,
+                (
+                    "reading manifest testing-45.20261105 in ghcr.io/org/other: "
+                    "manifest unknown"
+                ),
+                False,
+            ),
+        ):
+            with (
+                self.subTest(returncode=returncode, error=error),
+                patch.object(
+                    promote_images.subprocess,
+                    "run",
+                    side_effect=subprocess.CalledProcessError(
+                        returncode, "skopeo", stderr=error
+                    ),
+                ),
+            ):
+                if accepted:
+                    self.assertIsNone(self.real_inspect_version(ref))
+                else:
+                    with self.assertRaisesRegex(
+                        ValueError, "cannot inspect version tag"
+                    ):
+                        self.real_inspect_version(ref)
+        with patch.object(
+            promote_images.subprocess,
+            "run",
+            return_value=subprocess.CompletedProcess(
+                [], 0, stdout="sha256:" + "a" * 64
+            ),
+        ):
+            self.assertEqual(self.real_inspect_version(ref), "sha256:" + "a" * 64)
+
+    def test_private_to_public_copy_signature_and_conflict(self):
+        evidence = ReleasePolicyTests().evidence()
+        digest = evidence["candidate_digest"]
+        source = f"ghcr.io/org/luminusos-candidates@{digest}"
+        evidence["images"] = {
+            role: source for role in ("core", "workstation", "installer")
+        }
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            self.write_artifacts(root, evidence)
+            manifest = root / "evidence.json"
+            manifest.write_text(json.dumps(evidence))
+            signature = root / "signature"
+            signature.touch()
+            key = root / "candidate.pub"
+            key.touch()
+            version = "ghcr.io/org/luminusos:testing-45.20261105"
+            destinations = [version, "ghcr.io/org/luminusos:testing-45"]
+
+            def invoke(tags, existing_digest=digest):
+                def command(argv, **kwargs):
+                    if argv[:2] == ["skopeo", "inspect"]:
+                        return subprocess.CompletedProcess(argv, 0, stdout=digest)
+                    return subprocess.CompletedProcess(argv, 0, stdout="")
+
+                with (
+                    patch.dict("os.environ", {"GITHUB_REPOSITORY_OWNER": "Org"}),
+                    patch.object(promote_images, "CANDIDATE_KEY", key),
+                    patch.object(
+                        promote_images,
+                        "inspect_version",
+                        return_value=existing_digest if tags else None,
+                    ),
+                    patch.object(
+                        promote_images.subprocess, "run", side_effect=command
+                    ) as run,
+                ):
+                    promote_images.promote(
+                        source,
+                        digest,
+                        destinations,
+                        key,
+                        manifest,
+                        signature,
+                        "org/repository",
+                        "c" * 40,
+                        "core",
+                    )
+                return [call.args[0] for call in run.call_args_list]
+
+            for tags in ([], ["testing-45.20261105"]):
+                calls = invoke(tags)
+                self.assertEqual(sum(c[:2] == ["skopeo", "copy"] for c in calls), 2)
+                signs = [c for c in calls if c[:2] == ["cosign", "sign"]]
+                self.assertEqual(len(signs), 1)
+                self.assertEqual(signs[0][-1], f"ghcr.io/org/luminusos@{digest}")
+                self.assertIn("env://COSIGN_PRIVATE_KEY", signs[0])
+                version_copy = next(
+                    i for i, c in enumerate(calls) if c[:2] == ["skopeo", "copy"]
+                )
+                signing = next(
+                    i for i, c in enumerate(calls) if c[:2] == ["cosign", "sign"]
+                )
+                official_verify = next(
+                    i
+                    for i, c in enumerate(calls)
+                    if c[:2] == ["cosign", "verify"]
+                    and str(promote_images.OFFICIAL_KEY) in c
+                )
+                moving_copy = next(
+                    i
+                    for i, c in enumerate(calls)
+                    if c[:2] == ["skopeo", "copy"] and c[-1].endswith(":testing-45")
+                )
+                self.assertLess(version_copy, signing)
+                self.assertLess(signing, official_verify)
+                self.assertLess(official_verify, moving_copy)
+            with self.assertRaisesRegex(ValueError, "different digest"):
+                invoke(["testing-45.20261105"], "sha256:" + "f" * 64)
+
+    def test_public_repository_is_fixed_by_role_and_owner(self):
+        with patch.dict("os.environ", {"GITHUB_REPOSITORY_OWNER": "Org"}):
+            self.assertEqual(
+                promote_images.public_repository("core", "org/repository"),
+                "ghcr.io/org/luminusos",
+            )
+            self.assertEqual(
+                promote_images.public_repository("installer", "org/repository"),
+                "ghcr.io/org/luminusos-workstation",
+            )
+            with self.assertRaises(ValueError):
+                promote_images.public_repository("core", "other/repository")
+
+    def test_moving_tags_can_replace_other_digests(self):
+        evidence = ReleasePolicyTests().evidence()
+        digest = evidence["candidate_digest"]
+        source = evidence["images"]["core"]
+        prefix = "ghcr.io/org/luminusos:"
+        targets = [
+            prefix + "testing-45.20261105",
+            prefix + "testing-45",
+            prefix + "testing",
+        ]
+        registry = {targets[1]: "sha256:" + "f" * 64, targets[2]: "sha256:" + "f" * 64}
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            self.write_artifacts(root, evidence)
+            manifest = root / "evidence.json"
+            manifest.write_text(json.dumps(evidence))
+            signature = root / "sig"
+            signature.touch()
+
+            def command(argv, **kwargs):
+                if argv[:2] == ["skopeo", "inspect"]:
+                    ref = argv[-1].removeprefix("docker://")
+                    if ref == source:
+                        return subprocess.CompletedProcess(argv, 0, stdout=digest)
+                    if ref not in registry:
+                        raise subprocess.CalledProcessError(
+                            1, argv, stderr="manifest unknown"
+                        )
+                    return subprocess.CompletedProcess(argv, 0, stdout=registry[ref])
+                if argv[:2] == ["skopeo", "copy"]:
+                    registry[argv[-1].removeprefix("docker://")] = digest
+                return subprocess.CompletedProcess(argv, 0, stdout="")
+
+            with (
+                patch.object(
+                    promote_images, "inspect_version", self.real_inspect_version
+                ),
+                patch.object(promote_images.subprocess, "run", side_effect=command),
+            ):
+                promote_images.promote(
+                    source,
+                    digest,
+                    targets,
+                    promote_images.CANDIDATE_KEY,
+                    manifest,
+                    signature,
+                    "org/repository",
+                    "c" * 40,
+                    "core",
+                )
+            self.assertEqual([registry[target] for target in targets], [digest] * 3)
+
+    def test_failed_official_signature_verification_never_moves_floating_tags(self):
+        evidence = ReleasePolicyTests().evidence()
+        digest = evidence["candidate_digest"]
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            self.write_artifacts(root, evidence)
+            manifest = root / "evidence.json"
+            manifest.write_text(json.dumps(evidence))
+            signature = root / "sig"
+            signature.touch()
+            commands = [
+                None,
+                subprocess.CompletedProcess([], 0, stdout=digest),
+                None,
+                None,
+                subprocess.CompletedProcess([], 0, stdout=digest),
+                None,
+                subprocess.CalledProcessError(1, "cosign"),
+            ]
+            with (
+                patch.object(
+                    promote_images.subprocess, "run", side_effect=commands
+                ) as run,
+                self.assertRaises(subprocess.CalledProcessError),
+            ):
+                promote_images.promote(
+                    evidence["images"]["core"],
+                    digest,
+                    [
+                        "ghcr.io/org/luminusos:testing-45.20261105",
+                        "ghcr.io/org/luminusos:testing",
+                    ],
+                    promote_images.CANDIDATE_KEY,
+                    manifest,
+                    signature,
+                    "org/repository",
+                    "c" * 40,
+                    "core",
+                )
+            copies = [
+                c.args[0][-1]
+                for c in run.call_args_list
+                if c.args[0][:2] == ["skopeo", "copy"]
+            ]
+            self.assertEqual(
+                copies, ["docker://ghcr.io/org/luminusos:testing-45.20261105"]
+            )
+
+    def test_missing_candidate_key_and_foreign_source_owner_are_rejected(self):
+        evidence = ReleasePolicyTests().evidence()
+        digest = evidence["candidate_digest"]
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            manifest = root / "evidence.json"
+            manifest.write_text(json.dumps(evidence))
+            signature = root / "sig"
+            signature.touch()
+            missing = root / "missing.pub"
+            for source, key in (
+                (evidence["images"]["core"], missing),
+                (
+                    "ghcr.io/other/luminusos-candidates@" + digest,
+                    promote_images.CANDIDATE_KEY,
+                ),
+            ):
+                with (
+                    self.subTest(source=source, key=key),
+                    patch.object(
+                        promote_images,
+                        "CANDIDATE_KEY",
+                        missing if key == missing else promote_images.CANDIDATE_KEY,
+                    ),
+                    patch.object(promote_images.subprocess, "run") as run,
+                    self.assertRaises(ValueError),
+                ):
+                    promote_images.promote(
+                        source,
+                        digest,
+                        ["ghcr.io/org/luminusos:testing-45.20261105"],
+                        key,
+                        manifest,
+                        signature,
+                        "org/repository",
+                        "c" * 40,
+                        "core",
+                    )
+                run.assert_not_called()
+            foreign = root / "foreign.pub"
+            foreign.write_text("-----BEGIN PUBLIC KEY-----\n")
+            for key in (foreign, promote_images.OFFICIAL_KEY):
+                with (
+                    self.subTest(trusted_key=key.name),
+                    patch.object(promote_images.subprocess, "run") as run,
+                    self.assertRaisesRegex(ValueError, "candidate key required"),
+                ):
+                    promote_images.promote(
+                        evidence["images"]["core"],
+                        digest,
+                        ["ghcr.io/org/luminusos:testing-45.20261105"],
+                        key,
+                        manifest,
+                        signature,
+                        "org/repository",
+                        "c" * 40,
+                        "core",
+                    )
+                run.assert_not_called()
+
+    def test_rejects_wrong_destinations_and_digests_before_registry_access(self):
+        evidence = ReleasePolicyTests().evidence()
+        digest = evidence["candidate_digest"]
+        source = evidence["images"]["core"]
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            manifest = root / "evidence.json"
+            manifest.write_text(json.dumps(evidence))
+            for bad_source, expected, destinations in (
+                (
+                    source,
+                    "sha256:" + "f" * 64,
+                    ["ghcr.io/org/luminusos:testing-45.20261105"],
+                ),
+                (
+                    source,
+                    digest,
+                    ["ghcr.io/org/luminusos-workstation:testing-45.20261105"],
+                ),
+                (source, digest, ["ghcr.io/other/luminusos:testing-45.20261105"]),
+                (source, digest, ["ghcr.io/org/luminusos:latest"]),
+                (source, digest, ["ghcr.io/org/luminusos:testing-45.20261105-iso"]),
+            ):
+                with (
+                    self.subTest(source=bad_source, destinations=destinations),
+                    patch.object(promote_images.subprocess, "run") as run,
+                    self.assertRaises(ValueError),
+                ):
+                    promote_images.promote(
+                        bad_source,
+                        expected,
+                        destinations,
+                        promote_images.CANDIDATE_KEY,
+                        manifest,
+                        root / "signature",
+                        "org/repository",
+                        "c" * 40,
+                        "core",
+                    )
+                run.assert_not_called()
+
+    def test_post_copy_digest_change_prevents_official_signing(self):
+        evidence = ReleasePolicyTests().evidence()
+        digest = evidence["candidate_digest"]
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            self.write_artifacts(root, evidence)
+            manifest = root / "evidence.json"
+            manifest.write_text(json.dumps(evidence))
+            signature = root / "sig"
+            signature.touch()
+            commands = [
+                None,
+                subprocess.CompletedProcess([], 0, stdout=digest),
+                None,
+                None,
+                subprocess.CompletedProcess([], 0, stdout="sha256:" + "f" * 64),
+            ]
+            with (
+                patch.object(
+                    promote_images.subprocess, "run", side_effect=commands
+                ) as run,
+                self.assertRaisesRegex(ValueError, "changed digest"),
+            ):
+                promote_images.promote(
+                    evidence["images"]["core"],
+                    digest,
+                    ["ghcr.io/org/luminusos:testing-45.20261105"],
+                    promote_images.CANDIDATE_KEY,
+                    manifest,
+                    signature,
+                    "org/repository",
+                    "c" * 40,
+                    "core",
+                )
+            self.assertFalse(
+                any(c.args[0][:2] == ["cosign", "sign"] for c in run.call_args_list)
+            )
+
+    def test_final_tag_recheck_detects_change_after_copy(self):
+        evidence = ReleasePolicyTests().evidence()
+        digest = evidence["candidate_digest"]
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            self.write_artifacts(root, evidence)
+            manifest = root / "evidence.json"
+            manifest.write_text(json.dumps(evidence))
+            signature = root / "sig"
+            signature.touch()
+            commands = [
+                None,
+                subprocess.CompletedProcess([], 0, stdout=digest),
+                None,
+                None,
+                subprocess.CompletedProcess([], 0, stdout=digest),
+                None,
+                None,
+                subprocess.CompletedProcess([], 0, stdout="sha256:" + "f" * 64),
+            ]
+            with (
+                patch.object(
+                    promote_images.subprocess, "run", side_effect=commands
+                ) as run,
+                self.assertRaisesRegex(ValueError, "changed after promotion"),
+            ):
+                promote_images.promote(
+                    evidence["images"]["core"],
+                    digest,
+                    ["ghcr.io/org/luminusos:testing-45.20261105"],
+                    promote_images.CANDIDATE_KEY,
+                    manifest,
+                    signature,
+                    "org/repository",
+                    "c" * 40,
+                    "core",
+                )
+            self.assertTrue(
+                any(c.args[0][:2] == ["cosign", "sign"] for c in run.call_args_list)
+            )
+
+    def test_missing_evidence_refuses_publication(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            with (
+                patch.object(promote_images.subprocess, "run") as run,
+                self.assertRaisesRegex(ValueError, "evidence"),
+            ):
+                promote_images.promote(
+                    "ghcr.io/org/luminusos-candidates@sha256:" + "a" * 64,
+                    "sha256:" + "a" * 64,
+                    ["ghcr.io/org/luminusos:testing-45.20261105"],
+                    promote_images.CANDIDATE_KEY,
+                    Path(temporary) / "absent",
+                    Path(temporary) / "sig",
+                    "org/repository",
+                    "c" * 40,
+                    "core",
+                )
+            run.assert_not_called()
+
     def write_artifacts(self, root, evidence):
         for name, entry in evidence["evidence"].items():
             data = ("evidence:" + name).encode()
@@ -911,9 +1403,9 @@ class PromotionTests(unittest.TestCase):
         evidence = ReleasePolicyTests().evidence()
         digest = "sha256:" + "a" * 64
         evidence["images"] = {
-            "core": "ghcr.io/org/core@" + digest,
-            "workstation": "ghcr.io/org/workstation@" + digest,
-            "installer": "ghcr.io/org/workstation@sha256:" + "b" * 64,
+            "core": "ghcr.io/org/luminusos-candidates@" + digest,
+            "workstation": "ghcr.io/org/luminusos-candidates@" + digest,
+            "installer": "ghcr.io/org/luminusos-candidates@sha256:" + "b" * 64,
         }
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
@@ -930,8 +1422,8 @@ class PromotionTests(unittest.TestCase):
                     promote_images.promote(
                         repository + "@sha256:" + "f" * 64,
                         digest,
-                        [repository + ":testing"],
-                        root / "key",
+                        ["ghcr.io/org/luminusos:testing-45.20261105"],
+                        promote_images.CANDIDATE_KEY,
                         manifest,
                         root / "signature",
                         "org/repository",
@@ -943,11 +1435,12 @@ class PromotionTests(unittest.TestCase):
     def test_other_image_role_is_bound_to_signed_evidence(self):
         evidence = ReleasePolicyTests().evidence()
         core_digest = "sha256:" + "d" * 64
-        core = "ghcr.io/org/core@" + core_digest
+        core = "ghcr.io/org/luminusos-candidates@" + core_digest
         evidence["images"] = {
             "core": core,
-            "workstation": "ghcr.io/org/image@" + evidence["candidate_digest"],
-            "installer": "ghcr.io/org/image@sha256:" + "e" * 64,
+            "workstation": "ghcr.io/org/luminusos-candidates@"
+            + evidence["candidate_digest"],
+            "installer": "ghcr.io/org/luminusos-candidates@sha256:" + "e" * 64,
         }
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
@@ -959,17 +1452,26 @@ class PromotionTests(unittest.TestCase):
             )
             manifest.write_text(json.dumps(evidence), encoding="utf-8")
             signature.touch()
-            key.touch()
+            key = promote_images.CANDIDATE_KEY
             inspect = subprocess.CompletedProcess([], 0, stdout=core_digest)
             with patch.object(
                 promote_images.subprocess,
                 "run",
-                side_effect=[None, inspect, None, None, inspect],
+                side_effect=[
+                    None,
+                    inspect,
+                    None,
+                    None,
+                    inspect,
+                    None,
+                    None,
+                    inspect,
+                ],
             ) as run:
                 promote_images.promote(
                     core,
                     core_digest,
-                    ["ghcr.io/org/core:stable"],
+                    ["ghcr.io/org/luminusos:testing-45.20261105"],
                     key,
                     manifest,
                     signature,
@@ -983,9 +1485,9 @@ class PromotionTests(unittest.TestCase):
                 self.assertRaisesRegex(ValueError, "source does not match"),
             ):
                 promote_images.promote(
-                    "ghcr.io/org/core@sha256:" + "f" * 64,
+                    "ghcr.io/org/luminusos-candidates@sha256:" + "f" * 64,
                     core_digest,
-                    ["ghcr.io/org/core:stable"],
+                    ["ghcr.io/org/luminusos:testing-45.20261105"],
                     key,
                     manifest,
                     signature,
@@ -1007,24 +1509,34 @@ class PromotionTests(unittest.TestCase):
             self.write_artifacts(root, evidence)
             manifest.write_text(json.dumps(evidence), encoding="utf-8")
             signature.touch()
-            key.touch()
+            key = promote_images.CANDIDATE_KEY
             inspect = subprocess.CompletedProcess(
                 [], 0, stdout=evidence["candidate_digest"]
             )
             with patch.object(
                 promote_images.subprocess,
                 "run",
-                side_effect=[None, inspect, None, None, inspect],
+                side_effect=[
+                    None,
+                    inspect,
+                    None,
+                    None,
+                    inspect,
+                    None,
+                    None,
+                    inspect,
+                ],
             ) as run:
                 promote_images.promote(
-                    "ghcr.io/org/image:testing-1",
+                    evidence["images"]["workstation"],
                     evidence["candidate_digest"],
-                    ["ghcr.io/org/image:stable"],
+                    ["ghcr.io/org/luminusos-workstation:testing-45.20261105"],
                     key,
                     manifest,
                     signature,
                     "org/repository",
                     "c" * 40,
+                    "workstation",
                 )
         calls = [entry.args[0] for entry in run.call_args_list]
         self.assertEqual(calls[0][:2], ["cosign", "verify-blob"])
@@ -1049,25 +1561,35 @@ class PromotionTests(unittest.TestCase):
             )
             manifest.write_text(json.dumps(evidence), encoding="utf-8")
             signature.touch()
-            key.touch()
+            key = promote_images.CANDIDATE_KEY
             inspect = subprocess.CompletedProcess(
                 [], 0, stdout=evidence["candidate_digest"]
             )
-            source = "ghcr.io/org/image@" + evidence["candidate_digest"]
+            source = evidence["images"]["workstation"]
             with patch.object(
                 promote_images.subprocess,
                 "run",
-                side_effect=[None, inspect, None, None, inspect],
+                side_effect=[
+                    None,
+                    inspect,
+                    None,
+                    None,
+                    inspect,
+                    None,
+                    None,
+                    inspect,
+                ],
             ) as run:
                 promote_images.promote(
                     source,
                     evidence["candidate_digest"],
-                    ["ghcr.io/org/image:stable"],
+                    ["ghcr.io/org/luminusos-workstation:testing-45.20261105"],
                     key,
                     manifest,
                     signature,
                     "org/repository",
                     "c" * 40,
+                    "workstation",
                 )
             self.assertEqual(run.call_args_list[2].args[0][-1], source)
             self.assertEqual(run.call_args_list[3].args[0][4], "docker://" + source)
@@ -1078,21 +1600,21 @@ class PromotionTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             evidence_path = Path(directory) / "evidence.json"
             evidence_path.write_text(json.dumps(evidence), encoding="utf-8")
-            key = Path(directory) / "key.pub"
-            key.write_text("key", encoding="utf-8")
+            key = promote_images.CANDIDATE_KEY
             with (
                 patch.object(promote_images.subprocess, "run") as run,
                 self.assertRaisesRegex(ValueError, "installation"),
             ):
                 promote_images.promote(
-                    "ghcr.io/org/image:testing-1",
+                    evidence["images"]["workstation"],
                     evidence["candidate_digest"],
-                    ["ghcr.io/org/image:stable"],
+                    ["ghcr.io/org/luminusos-workstation:testing-45.20261105"],
                     key,
                     evidence_path,
                     Path(directory) / "signature",
                     "org/repository",
                     "c" * 40,
+                    "workstation",
                 )
             run.assert_not_called()
 
@@ -1102,8 +1624,7 @@ class PromotionTests(unittest.TestCase):
             self.write_artifacts(Path(directory), evidence)
             evidence_path = Path(directory) / "evidence.json"
             evidence_path.write_text(json.dumps(evidence), encoding="utf-8")
-            key = Path(directory) / "key.pub"
-            key.write_text("key", encoding="utf-8")
+            key = promote_images.CANDIDATE_KEY
             signature = Path(directory) / "signature"
             signature.write_text("signature", encoding="utf-8")
             inspect = type("Completed", (), {"stdout": evidence["candidate_digest"]})()
@@ -1120,14 +1641,15 @@ class PromotionTests(unittest.TestCase):
                 self.assertRaises(subprocess.CalledProcessError),
             ):
                 promote_images.promote(
-                    "ghcr.io/org/image:testing-1",
+                    evidence["images"]["workstation"],
                     evidence["candidate_digest"],
-                    ["ghcr.io/org/image:stable"],
+                    ["ghcr.io/org/luminusos-workstation:testing-45.20261105"],
                     key,
                     evidence_path,
                     signature,
                     "org/repository",
                     "c" * 40,
+                    "workstation",
                 )
             self.assertEqual(run.call_count, 3)
 
@@ -1142,7 +1664,7 @@ class PromotionTests(unittest.TestCase):
             )
             manifest.write_text(json.dumps(evidence), encoding="utf-8")
             signature.touch()
-            key.touch()
+            key = promote_images.CANDIDATE_KEY
             with (
                 patch.object(
                     promote_images.subprocess,
@@ -1152,14 +1674,15 @@ class PromotionTests(unittest.TestCase):
                 self.assertRaises(subprocess.CalledProcessError),
             ):
                 promote_images.promote(
-                    "ghcr.io/org/image:testing-1",
+                    evidence["images"]["workstation"],
                     evidence["candidate_digest"],
-                    ["ghcr.io/org/image:stable"],
+                    ["ghcr.io/org/luminusos-workstation:testing-45.20261105"],
                     key,
                     manifest,
                     signature,
                     "org/repository",
                     "c" * 40,
+                    "workstation",
                 )
             self.assertEqual(run.call_count, 1)
             self.assertEqual(run.call_args.args[0][:2], ["cosign", "verify-blob"])
@@ -1176,7 +1699,7 @@ class PromotionTests(unittest.TestCase):
             )
             manifest.write_text(json.dumps(evidence), encoding="utf-8")
             signature.touch()
-            key.touch()
+            key = promote_images.CANDIDATE_KEY
             (root / evidence["evidence"]["installation"]["artifact"]).write_text(
                 "tampered"
             )
@@ -1185,14 +1708,15 @@ class PromotionTests(unittest.TestCase):
                 self.assertRaisesRegex(ValueError, "checksum mismatch"),
             ):
                 promote_images.promote(
-                    "ghcr.io/org/image:testing-1",
+                    evidence["images"]["workstation"],
                     evidence["candidate_digest"],
-                    ["ghcr.io/org/image:stable"],
+                    ["ghcr.io/org/luminusos-workstation:testing-45.20261105"],
                     key,
                     manifest,
                     signature,
                     "org/repository",
                     "c" * 40,
+                    "workstation",
                 )
             self.assertEqual(run.call_count, 1)
             self.assertEqual(run.call_args.args[0][:2], ["cosign", "verify-blob"])
