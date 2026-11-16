@@ -21,6 +21,151 @@ pipeline = importlib.util.module_from_spec(SPEC)
 SPEC.loader.exec_module(pipeline)
 
 
+class CandidateSigningTests(unittest.TestCase):
+    def test_candidate_artifact_apis_reject_official_key(self):
+        with tempfile.TemporaryDirectory() as temp:
+            path = Path(temp) / "candidate.json"
+            path.write_text("{}")
+            Path(str(path) + ".sig").write_text("signature")
+            key = (
+                Path(__file__).resolve().parents[1]
+                / "shared/trust/etc/pki/containers/luminusos.pub"
+            )
+            with (
+                mock.patch.dict(
+                    pipeline.os.environ,
+                    {"CANDIDATE_COSIGN_PRIVATE_KEY": "fixture"},
+                    clear=True,
+                ),
+                mock.patch.object(pipeline.subprocess, "run") as run,
+            ):
+                for operation in (
+                    lambda: pipeline.sign(path, key),
+                    lambda: pipeline.verify(path, key),
+                    lambda: pipeline.candidate(path, key),
+                    lambda: pipeline.validate_validation(path, key, {}),
+                ):
+                    with (
+                        self.subTest(operation=operation),
+                        self.assertRaises(ValueError),
+                    ):
+                        operation()
+                with self.assertRaises(TypeError):
+                    pipeline.sign(path, key, private_key="COSIGN_PRIVATE_KEY")
+                run.assert_not_called()
+
+    def test_cli_rejects_official_key_for_all_candidate_actions(self):
+        key = str(
+            Path(__file__).resolve().parents[1]
+            / "shared/trust/etc/pki/containers/luminusos.pub"
+        )
+        arguments = {
+            "create-candidate": [
+                "--metadata",
+                "in",
+                "--directory",
+                ".",
+                "--output",
+                "out",
+            ],
+            "fetch-candidate": [
+                "--repository",
+                "org/repo",
+                "--run-id",
+                "1",
+                "--output",
+                "out",
+            ],
+            "record-validation": [
+                "--candidate",
+                "in",
+                "--receipts",
+                ".",
+                "--output",
+                "out",
+            ],
+            "fetch-validation": [
+                "--repository",
+                "org/repo",
+                "--run-id",
+                "1",
+                "--candidate",
+                "in",
+                "--output",
+                "out",
+            ],
+            "assemble-evidence": [
+                "--candidate",
+                "in",
+                "--validation",
+                "in",
+                "--results",
+                "in",
+                "--output",
+                "out",
+            ],
+        }
+        for action, args in arguments.items():
+            with (
+                self.subTest(action=action),
+                mock.patch.object(
+                    pipeline.sys,
+                    "argv",
+                    ["release_pipeline", action, *args, "--public-key", key],
+                ),
+                mock.patch.object(pipeline.sys, "stderr", new_callable=io.StringIO),
+                mock.patch.object(pipeline.subprocess, "run") as run,
+            ):
+                self.assertEqual(pipeline.main(), 1)
+                run.assert_not_called()
+
+    def test_candidate_signing_uses_candidate_key(self):
+        with tempfile.TemporaryDirectory() as temp:
+            path = Path(temp) / "candidate.json"
+            key = Path(temp) / "candidate.pub"
+            path.write_text("{}")
+            key.write_text("public key")
+
+            def command(argv, **kwargs):
+                if argv[1] == "sign-blob":
+                    Path(argv[argv.index("--output-signature") + 1]).write_text("sig")
+
+            with (
+                mock.patch.object(pipeline, "CANDIDATE_PUBLIC_KEY", key),
+                mock.patch.dict(
+                    pipeline.os.environ,
+                    {"CANDIDATE_COSIGN_PRIVATE_KEY": "fixture"},
+                    clear=True,
+                ),
+                mock.patch.object(
+                    pipeline.subprocess, "run", side_effect=command
+                ) as run,
+            ):
+                pipeline.sign(path, key)
+            self.assertIn(
+                "env://CANDIDATE_COSIGN_PRIVATE_KEY", run.call_args_list[0].args[0]
+            )
+            self.assertIn(str(key), run.call_args_list[1].args[0])
+
+    def test_candidate_signing_refuses_official_or_missing_key(self):
+        with tempfile.TemporaryDirectory() as temp:
+            path = Path(temp) / "candidate.json"
+            key = Path(temp) / "candidate.pub"
+            for env in (
+                {},
+                {"CANDIDATE_COSIGN_PRIVATE_KEY": "candidate", "COSIGN_PRIVATE_KEY": ""},
+            ):
+                with (
+                    self.subTest(env=env),
+                    mock.patch.object(pipeline, "CANDIDATE_PUBLIC_KEY", key),
+                    mock.patch.dict(pipeline.os.environ, env, clear=True),
+                    mock.patch.object(pipeline.subprocess, "run") as run,
+                ):
+                    with self.assertRaises(ValueError):
+                        pipeline.sign(path, key)
+                    run.assert_not_called()
+
+
 def sample(tmp_path):
     artifact = tmp_path / "disk.qcow2"
     artifact.write_bytes(b"disk")
@@ -615,6 +760,9 @@ class ReleasePipelineTests(unittest.TestCase):
         self.addCleanup(self.directory.cleanup)
         self.tmp_path = Path(self.directory.name)
         self.sample = sample(self.tmp_path)
+        patcher = mock.patch.object(pipeline, "CANDIDATE_PUBLIC_KEY", self.sample[1])
+        patcher.start()
+        self.addCleanup(patcher.stop)
 
     def test_core_v2_reader_without_workstation_artifacts(self):
         path, key, _ = self.sample
@@ -1526,6 +1674,7 @@ class ReleasePipelineTests(unittest.TestCase):
             "GITHUB_REF": "refs/heads/main",
             "GITHUB_SHA": "b" * 40,
             "GITHUB_RUN_ID": "456",
+            "CANDIDATE_COSIGN_PRIVATE_KEY": "fixture",
         }
 
         def command(argv, **kwargs):

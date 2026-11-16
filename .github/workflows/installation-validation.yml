@@ -20,7 +20,7 @@ jobs:
   installation:
     if: github.ref == 'refs/heads/main' && github.event_name == 'workflow_dispatch'
     runs-on: [self-hosted, linux, x64, luminusos-validation]
-    environment: release-validation
+    environment: candidate-staging
     timeout-minutes: 360
     permissions:
       contents: read
@@ -38,7 +38,7 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           CANDIDATE_RUN_ID: ${{ inputs.candidate_run_id }}
-        run: python3 .github/scripts/workflow/release_pipeline.py fetch-candidate --repository "$GITHUB_REPOSITORY" --run-id "$CANDIDATE_RUN_ID" --output candidate --public-key shared/trust/etc/pki/containers/luminusos.pub
+        run: python3 .github/scripts/workflow/release_pipeline.py fetch-candidate --repository "$GITHUB_REPOSITORY" --run-id "$CANDIDATE_RUN_ID" --output candidate --public-key shared/release/candidate.pub
       - name: Run installation and trust validation
         id: validate
         env:
@@ -47,9 +47,9 @@ jobs:
       - name: Record and sign observed validation
         env:
           RECEIPTS: ${{ steps.validate.outputs.receipts }}
-          COSIGN_PRIVATE_KEY: ${{ secrets.COSIGN_PRIVATE_KEY }}
-          COSIGN_PASSWORD: ${{ secrets.COSIGN_PASSWORD }}
-        run: python3 .github/scripts/workflow/release_pipeline.py record-validation --candidate candidate/candidate.json --receipts "$RECEIPTS" --output "$RECEIPTS/validation.json" --public-key shared/trust/etc/pki/containers/luminusos.pub
+          CANDIDATE_COSIGN_PRIVATE_KEY: ${{ secrets.CANDIDATE_COSIGN_PRIVATE_KEY }}
+          COSIGN_PASSWORD: ${{ secrets.CANDIDATE_COSIGN_PASSWORD }}
+        run: python3 .github/scripts/workflow/release_pipeline.py record-validation --candidate candidate/candidate.json --receipts "$RECEIPTS" --output "$RECEIPTS/validation.json" --public-key shared/release/candidate.pub
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: installation-validation

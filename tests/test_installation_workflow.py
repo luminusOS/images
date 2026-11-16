@@ -207,13 +207,21 @@ class WorkflowTests(unittest.TestCase):
         self.assertEqual(
             job["runs-on"], ["self-hosted", "linux", "x64", "luminusos-validation"]
         )
-        self.assertEqual(job["environment"], "release-validation")
+        self.assertEqual(job["environment"], "candidate-staging")
         self.assertEqual(job["permissions"], {"contents": "read", "actions": "read"})
         steps = job["steps"]
         self.assertEqual(steps[0]["with"]["persist-credentials"], "false")
         self.assertIn("fetch-candidate", steps[3]["run"])
         self.assertIn("validation_runner.py", steps[4]["run"])
         self.assertIn("record-validation", steps[5]["run"])
+        self.assertIn("shared/release/candidate.pub", steps[3]["run"])
+        self.assertIn("shared/release/candidate.pub", steps[5]["run"])
+        self.assertEqual(
+            steps[5]["env"]["CANDIDATE_COSIGN_PRIVATE_KEY"],
+            "${{ secrets.CANDIDATE_COSIGN_PRIVATE_KEY }}",
+        )
+        self.assertNotIn("secrets.COSIGN_PRIVATE_KEY", str(job))
+        self.assertEqual(runner.PUBLIC_KEY, Path("shared/release/candidate.pub"))
         self.assertEqual(steps[6]["with"]["name"], "installation-validation")
         self.assertNotIn("COSIGN_PRIVATE_KEY", str(steps[4]))
 
