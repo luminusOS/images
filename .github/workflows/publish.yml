@@ -292,24 +292,53 @@ jobs:
           docker tag "$WORKSTATION_IMAGE" "$workstation"
           docker tag "$INSTALLER_IMAGE" "$installer"
           python3 .github/scripts/workflow/sign_candidates.py "$core" "$workstation" "$installer"
+
+  scan-candidates:
+    name: Scan staged candidates
+    needs: [containers, publish-images]
+    if: ${{ needs.publish-images.result == 'success' }}
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: sigstore/cosign-installer@d58896d6a1865668819e1d91763c7751a165e159 # v3.9.2
+        with:
+          cosign-release: v2.5.3
+      - uses: docker/login-action@81c6f93d4bc991e510b342a00b419b3bb4efc5c6 # v4.7.0
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - name: Verify staged candidate signatures
+        env:
+          CORE: ${{ needs.publish-images.outputs.core_candidate }}
+          WORKSTATION: ${{ needs.publish-images.outputs.workstation_candidate }}
+          INSTALLER: ${{ needs.publish-images.outputs.installer_candidate }}
+        run: |
+          for image in "$CORE" "$WORKSTATION" "$INSTALLER"; do
+            cosign verify --key shared/release/candidate.pub "$image" > /dev/null
+          done
       - name: Install pinned scanners
-        if: inputs.channel == 'testing'
         run: |
           python3 .github/scripts/workflow/install_tools.py --destination "$HOME/.local/bin"
           echo "$HOME/.local/bin" >> "$GITHUB_PATH"
-      - name: Inspect signed candidates
+      - name: Inspect staged candidates
         id: inspect-candidates
-        if: inputs.channel == 'testing'
         env:
-          CORE: ${{ steps.candidates.outputs.core }}
-          WORKSTATION: ${{ steps.candidates.outputs.workstation }}
-          INSTALLER: ${{ steps.candidates.outputs.installer }}
+          CORE: ${{ needs.publish-images.outputs.core_candidate }}
+          WORKSTATION: ${{ needs.publish-images.outputs.workstation_candidate }}
+          INSTALLER: ${{ needs.publish-images.outputs.installer_candidate }}
+          FEDORA: ${{ needs.containers.outputs.fedora_version }}
         run: |
-          python3 .github/scripts/workflow/supply_chain.py inspect --image "$CORE" --output scan/core --source-sha "$GITHUB_SHA" --syft-version 1.34.2 --grype-version 0.101.1
-          python3 .github/scripts/workflow/supply_chain.py inspect --image "$WORKSTATION" --output scan/workstation --source-sha "$GITHUB_SHA" --syft-version 1.34.2 --grype-version 0.101.1
-          python3 .github/scripts/workflow/supply_chain.py inspect --image "$INSTALLER" --output scan/installer --source-sha "$GITHUB_SHA" --syft-version 1.34.2 --grype-version 0.101.1
+          python3 .github/scripts/workflow/supply_chain.py inspect --image "$CORE" --output scan/core --source-sha "$GITHUB_SHA" --syft-version 1.34.2 --grype-version 0.101.1 --channel testing --fedora "$FEDORA" --edition core --component-scope core_payload --exceptions shared/release/exceptions/core-core_payload-testing-45.json --policy-sha256 f0d448a718900d38f37c923001e26a33778a03b7c16413dd6a1236458a00166c
+          python3 .github/scripts/workflow/supply_chain.py inspect --image "$WORKSTATION" --output scan/workstation --source-sha "$GITHUB_SHA" --syft-version 1.34.2 --grype-version 0.101.1 --channel testing --fedora "$FEDORA" --edition workstation --component-scope workstation_payload --exceptions shared/release/exceptions/workstation-workstation_payload-testing-45.json --policy-sha256 b0a8e3ac855e82698f0790a576f4eaf2d75103b421ed5db1fe54bb93c99805b8 --scan-exclusion shared/release/flatpak-scan-risk.json
+          python3 .github/scripts/workflow/supply_chain.py inspect --image "$INSTALLER" --output scan/installer --source-sha "$GITHUB_SHA" --syft-version 1.34.2 --grype-version 0.101.1 --channel testing --fedora "$FEDORA" --edition workstation --component-scope installer_live --exceptions shared/release/exceptions/workstation-installer_live-testing-45.json --policy-sha256 122efda79fc3e223b9e6efa5f8ec31b7e1c0160d4a468dcef6b1b83cc36a0fe3 --scan-exclusion shared/release/flatpak-scan-risk.json
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
-        if: always() && inputs.channel == 'testing' && steps.inspect-candidates.outcome != 'skipped'
+        if: always() && steps.inspect-candidates.outcome != 'skipped'
         with:
           name: candidate-scans
           path: scan/
@@ -557,8 +586,8 @@ jobs:
 
   prepare-candidate:
     name: Bind candidate artifacts
-    needs: [quality, containers, publish-images, stable-source, stable-installer, publish-stable-installer, iso, qcow2, boot-test]
-    if: ${{ !(github.event_name == 'workflow_dispatch' && inputs.inert_r2_probe == true) && (always() && !inputs.security_findings_bypass && github.ref == 'refs/heads/main' && inputs.candidate_run_id == '' && needs.quality.result == 'success' && needs.iso.result == 'success' && needs.qcow2.result == 'success' && needs.boot-test.result == 'success' && ((inputs.channel == 'testing' && needs.publish-images.result == 'success') || (inputs.channel == 'stable' && needs.publish-stable-installer.result == 'success'))) }}
+    needs: [quality, containers, publish-images, scan-candidates, stable-source, stable-installer, publish-stable-installer, iso, qcow2, boot-test]
+    if: ${{ !(github.event_name == 'workflow_dispatch' && inputs.inert_r2_probe == true) && (always() && !inputs.security_findings_bypass && github.ref == 'refs/heads/main' && inputs.candidate_run_id == '' && needs.quality.result == 'success' && needs.iso.result == 'success' && needs.qcow2.result == 'success' && needs.boot-test.result == 'success' && ((inputs.channel == 'testing' && needs.publish-images.result == 'success' && needs.scan-candidates.result == 'success') || (inputs.channel == 'stable' && needs.publish-stable-installer.result == 'success'))) }}
     runs-on: ubuntu-latest
     environment: candidate-staging
     permissions:
@@ -607,7 +636,7 @@ jobs:
         env:
           QUALITY_RESULT: ${{ needs.quality.result }}
           BOOT_RESULT: ${{ needs.boot-test.result }}
-          SCAN_RESULT: ${{ needs.publish-images.result == 'success' && needs.publish-images.result || needs.publish-stable-installer.result }}
+          SCAN_RESULT: ${{ inputs.channel == 'testing' && needs.scan-candidates.result || needs.publish-stable-installer.result }}
           SOURCE_IMAGE_SHA: ${{ needs.stable-source.outputs.source_sha || github.sha }}
           CORE: ${{ needs.publish-images.outputs.core_candidate || needs.stable-source.outputs.core }}
           WORKSTATION: ${{ needs.publish-images.outputs.workstation_candidate || needs.stable-source.outputs.workstation }}
