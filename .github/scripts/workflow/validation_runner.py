@@ -10,7 +10,7 @@ from pathlib import Path
 import release_pipeline
 
 DRIVER = Path("/usr/local/libexec/luminusos/validate-candidate")
-PUBLIC_KEY = Path("shared/trust/etc/pki/containers/luminusos.pub")
+PUBLIC_KEY = Path("shared/release/candidate.pub")
 
 
 def reject_symlink_components(path):

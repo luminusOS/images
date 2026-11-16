@@ -17,6 +17,10 @@ import tempfile
 import zipfile
 from pathlib import Path, PurePosixPath
 
+CANDIDATE_PUBLIC_KEY = (
+    Path(__file__).resolve().parents[3] / "shared/release/candidate.pub"
+)
+
 CHECKS = (
     "sirius_install",
     "first_boot",
@@ -117,6 +121,7 @@ def checked_file(
 
 
 def verify(path: Path, key: Path) -> None:
+    require(key.resolve() == CANDIDATE_PUBLIC_KEY.resolve(), "untrusted candidate key")
     require(key.is_file(), "public key missing")
     sig = safe_file(path.parent, path.name + ".sig")
     subprocess.run(
@@ -136,6 +141,11 @@ def verify(path: Path, key: Path) -> None:
 
 
 def sign(path: Path, key: Path) -> None:
+    require(key.resolve() == CANDIDATE_PUBLIC_KEY.resolve(), "untrusted candidate key")
+    require("COSIGN_PRIVATE_KEY" not in os.environ, "official private key present")
+    require(
+        bool(os.environ.get("CANDIDATE_COSIGN_PRIVATE_KEY")), "candidate key required"
+    )
     signature = Path(str(path) + ".sig")
     require(not signature.is_symlink(), "symlink signature destination")
     signature.unlink(missing_ok=True)
@@ -145,7 +155,7 @@ def sign(path: Path, key: Path) -> None:
             "sign-blob",
             "--yes",
             "--key",
-            "env://COSIGN_PRIVATE_KEY",
+            "env://CANDIDATE_COSIGN_PRIVATE_KEY",
             "--output-signature",
             str(path) + ".sig",
             str(path),
@@ -1152,6 +1162,10 @@ def main() -> int:
         e.add_argument("--" + x, required=True, type=Path)
     a = parser.parse_args()
     try:
+        require(
+            a.public_key.resolve() == CANDIDATE_PUBLIC_KEY.resolve(),
+            "untrusted candidate key",
+        )
         if a.action == "create-candidate":
             c = create_candidate(a.metadata, a.directory, a.output, a.public_key)
             candidate_outputs(c, a.output)
