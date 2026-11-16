@@ -11,7 +11,8 @@ import tempfile
 from pathlib import Path
 
 GATES = ("quality", "boot", "signature", "sbom", "vulnerability")
-KEY = "shared/trust/etc/pki/containers/luminusos.pub"
+CANDIDATE_KEY = "shared/release/candidate.pub"
+OFFICIAL_KEY = "shared/trust/etc/pki/containers/luminusos.pub"
 EVIDENCE_NAMES = {
     "sbom.spdx.json",
     "provenance.json",
@@ -42,9 +43,25 @@ def checksum_inputs(directory: Path) -> dict[str, Path]:
     return files
 
 
-def verify_checksums(directory: Path, key: Path) -> None:
+def verify_checksums(directory: Path) -> None:
     manifest = directory / "SHA256SUMS"
-    load_helper("release_pipeline").verify(manifest, key)
+    signature = directory / "SHA256SUMS.sig"
+    if any(path.is_symlink() or not path.is_file() for path in (manifest, signature)):
+        raise ValueError("publication checksum signature missing or unsafe")
+    subprocess.run(
+        [
+            "cosign",
+            "verify-blob",
+            "--insecure-ignore-tlog",
+            "--key",
+            OFFICIAL_KEY,
+            "--signature",
+            str(signature),
+            str(manifest),
+        ],
+        check=True,
+        capture_output=True,
+    )
     expected = "".join(
         f"{sha256(path)}  {name}\n"
         for name, path in sorted(checksum_inputs(directory).items())
@@ -140,7 +157,7 @@ def prepare_gates(directory: Path) -> None:
     files = {}
     for name, image in images.items():
         subprocess.run(
-            ["cosign", "verify", "--key", KEY, image],
+            ["cosign", "verify", "--key", CANDIDATE_KEY, image],
             check=True,
             stdout=subprocess.DEVNULL,
         )
@@ -208,7 +225,7 @@ def prepare_gates(directory: Path) -> None:
 
 def prepare_results(directory: Path) -> None:
     pipeline = load_helper("release_pipeline")
-    candidate = pipeline.candidate(directory / "candidate.json", Path(KEY))
+    candidate = pipeline.candidate(directory / "candidate.json", Path(CANDIDATE_KEY))
     candidate_digest = candidate["images"]["workstation"].split("@", 1)[1]
     binding = {
         key: candidate[key]
@@ -289,7 +306,7 @@ def verify_staged_distribution(
     candidate: dict,
     key: Path,
 ) -> None:
-    verify_checksums(directory, key)
+    verify_checksums(directory)
     release_artifacts(directory, candidate)
     pipeline = load_helper("release_pipeline")
     pipeline.verify(directory / "candidate.json", key)
@@ -491,8 +508,8 @@ def stage(
         shutil.copytree(evidence_path.parent, directory, dirs_exist_ok=True)
     supply = load_helper("supply_chain")
     sums = supply.write_checksums(directory)
-    supply.sign_file(sums, key)
-    verify_checksums(directory, key)
+    supply.sign_file(sums, Path(OFFICIAL_KEY))
+    verify_checksums(directory)
 
 
 def publish_downloads(candidate_path: Path, directory: Path, key: Path) -> None:

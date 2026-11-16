@@ -297,7 +297,13 @@ class WorkflowPhasesTest(unittest.TestCase):
             (validation, {"build-containers"}),
             (
                 publication,
-                {"containers", "stable-installer", "stable-source", "release"},
+                {
+                    "containers",
+                    "stable-installer",
+                    "stable-source",
+                    "release-evidence",
+                    "release",
+                },
             ),
         ):
             self.assertEqual(
@@ -912,15 +918,20 @@ class WorkflowPhasesTest(unittest.TestCase):
             < prepare_commands.index("prepare-results")
         )
         commands = "\n".join(step.get("run", "") for step in jobs["release"]["steps"])
+        evidence_commands = "\n".join(
+            step.get("run", "") for step in jobs["release-evidence"]["steps"]
+        )
         assert "fetch-candidate" in commands
-        assert "fetch-validation" in commands
-        assert "prepare-results" in commands
-        assert "assemble-evidence" in commands
-        assert commands.index("fetch-validation") < commands.index("assemble-evidence")
-        assert commands.index("assemble-evidence") < commands.index(" promote ")
+        assert "fetch-validation" in evidence_commands
+        assert "prepare-results" in evidence_commands
+        assert "assemble-evidence" in evidence_commands
+        assert evidence_commands.index("fetch-validation") < evidence_commands.index(
+            "assemble-evidence"
+        )
+        assert "release-evidence" in jobs["release"]["needs"]
         assert commands.index(" promote ") < commands.index(" publish ")
         assert "--output candidate" in commands
-        assert "--output dist/release-evidence.json" in commands
+        assert "--output dist/release-evidence.json" in evidence_commands
         assert "--candidate candidate/candidate.json" in commands
         assert "--evidence dist/release-evidence.json" in commands
         assert '--channel "$CHANNEL"' in commands
