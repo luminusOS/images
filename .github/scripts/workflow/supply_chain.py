@@ -232,6 +232,15 @@ def _exception_key(entry):
     )
 
 
+def _binary_identity(entry):
+    # Identity is the location the scanner reports. Two entries on one ostree
+    # object would both match it, whatever /usr path each asserts.
+    binary = entry.get("binary")
+    if binary is None:
+        return None
+    return binary.get("ostree_object", binary["path"])
+
+
 def _exception_hash(entry):
     raw = (
         json.dumps(entry, sort_keys=True, indent=2, ensure_ascii=True, allow_nan=False)
@@ -268,13 +277,14 @@ def _exceptions(path, *, context=None, now=None, expected_sha256=None):
     evaluation = (clock.replace(microsecond=0), f"{clock.microsecond:06d}".rstrip("0"))
     for entry in raw["exceptions"]:
         _require(isinstance(entry, dict), "exception must be an object")
-        embedded = entry.get("component_type") == "embedded_go"
+        embedded = entry.get("component_type") in ("embedded_go", "linux_kernel")
         _require(
             set(entry) == EXCEPTION_FIELDS | ({"binary"} if embedded else set()),
             "unknown or missing exception fields",
         )
         _require(
-            entry["component_type"] in ("rpm", "embedded_go"), "unknown component type"
+            entry["component_type"] in ("rpm", "embedded_go", "linux_kernel"),
+            "unknown component type",
         )
         _require(_matches(ADVISORY, entry["advisory"]), "invalid exact advisory")
         for field in ("package", "package_version"):
@@ -315,18 +325,40 @@ def _exceptions(path, *, context=None, now=None, expected_sha256=None):
             binary = entry["binary"]
             _require(
                 isinstance(binary, dict)
-                and set(binary) == {"path", "sha256", "rpm_nevra"},
+                and set(binary)
+                in (
+                    {"path", "sha256", "rpm_nevra"},
+                    {"path", "sha256", "rpm_nevra", "ostree_object"},
+                ),
                 "embedded Go requires owning binary identity",
             )
             binary_path = binary["path"]
             _require(
-                _matches(r"/(?:usr/)?(?:s?bin|libexec)/[A-Za-z0-9._/-]+", binary_path)
+                (
+                    entry["component_type"] == "embedded_go"
+                    and _matches(
+                        r"/(?:usr/)?(?:s?bin|libexec)/[A-Za-z0-9._/-]+", binary_path
+                    )
+                    or entry["component_type"] == "linux_kernel"
+                    and entry["package"] == "linux-kernel"
+                    and binary_path
+                    == f"/usr/lib/modules/{entry['package_version']}/vmlinuz"
+                    and binary["rpm_nevra"] == f"kernel-core-{entry['package_version']}"
+                )
                 and PurePosixPath(binary_path).as_posix() == binary_path
                 and ".." not in PurePosixPath(binary_path).parts
                 and _matches(SHA256, binary["sha256"])
                 and _matches(EXACT_NAME, binary["rpm_nevra"])
                 and binary["rpm_nevra"] != "all",
                 "invalid owning binary identity",
+            )
+            _require(
+                "ostree_object" not in binary
+                or _matches(
+                    r"/sysroot/ostree/repo/objects/[0-9a-f]{2}/[0-9a-f]{62}\.file",
+                    binary["ostree_object"],
+                ),
+                "invalid ostree object path",
             )
         evidence = entry["evidence"]
         _require(isinstance(evidence, list) and evidence, "exception requires evidence")
@@ -357,9 +389,15 @@ def _exceptions(path, *, context=None, now=None, expected_sha256=None):
                 and hashlib.sha256(content).hexdigest() == descriptor["sha256"],
                 "exception evidence bytes mismatch",
             )
-        key = _exception_key(entry)
-        _require(key not in approved, "duplicate or conflicting exception")
-        approved[key] = entry
+        same_finding = approved.setdefault(_exception_key(entry), [])
+        _require(
+            all(
+                _binary_identity(other) != _binary_identity(entry)
+                for other in same_finding
+            ),
+            "duplicate or conflicting exception",
+        )
+        same_finding.append(entry)
     return approved, digest
 
 
@@ -393,16 +431,47 @@ def _rpm_nevra(package):
 
 
 def _binary_matches(binary, artifact, sbom):
+    observed_path = binary.get("ostree_object", binary["path"])
     locations = artifact.get("locations")
     if not isinstance(locations, list) or not locations:
         return False
     if any(
         not isinstance(item, dict)
-        or item.get("accessPath", item.get("path")) != binary["path"]
+        or item.get("accessPath", item.get("path")) != observed_path
         for item in locations
     ):
         return False
     files, relationships = sbom.get("files"), sbom.get("relationships")
+    if "ostree_object" in binary:
+        if not isinstance(files, list):
+            return False
+        matching = [
+            file
+            for file in files
+            if isinstance(file, dict)
+            and isinstance(file.get("fileName"), str)
+            and "/" + file["fileName"].removeprefix("/") == observed_path
+        ]
+        if not matching:
+            return False
+        for file in matching:
+            checksums = file.get("checksums")
+            if not isinstance(checksums, list):
+                return False
+            if any(
+                not isinstance(item.get("checksumValue"), str)
+                for item in checksums
+                if isinstance(item, dict) and item.get("algorithm") == "SHA256"
+            ):
+                return False
+            hashes = {
+                item.get("checksumValue")
+                for item in checksums
+                if isinstance(item, dict) and item.get("algorithm") == "SHA256"
+            }
+            if hashes != {binary["sha256"]}:
+                return False
+        return True
     if not isinstance(files, list) or not isinstance(relationships, list):
         return False
     packages = sbom.get("packages")
@@ -568,22 +637,31 @@ def _inspect_image(
         ):
             raise SupplyChainError("malformed Grype fix versions")
         if severity in {"High", "Critical", "Unknown"}:
-            entry = approved.get(
+            candidates = approved.get(
                 (
                     vulnerability_id,
                     package,
                     version,
                     *(context[name] for name in SCOPE_FIELDS),
-                )
+                ),
+                [],
             )
-            accepted = entry is not None and (
-                entry["component_type"] == "rpm"
-                and artifact.get("type") == "rpm"
-                or entry["component_type"] == "embedded_go"
-                and artifact.get("type") == "go-module"
-                and _binary_matches(entry["binary"], artifact, sbom)
+            entry = next(
+                (
+                    candidate
+                    for candidate in candidates
+                    if candidate["component_type"] == "rpm"
+                    and artifact.get("type") == "rpm"
+                    or candidate["component_type"] == "embedded_go"
+                    and artifact.get("type") == "go-module"
+                    and _binary_matches(candidate["binary"], artifact, sbom)
+                    or candidate["component_type"] == "linux_kernel"
+                    and artifact.get("type") == "linux-kernel"
+                    and _binary_matches(candidate["binary"], artifact, sbom)
+                ),
+                None,
             )
-            if accepted:
+            if entry is not None:
                 applied[_exception_hash(entry)] = entry
             else:
                 fixes = ", ".join(versions)

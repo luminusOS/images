@@ -1167,6 +1167,212 @@ class ScopedExceptionTests(unittest.TestCase):
         with self.assertRaises(supply_chain.SupplyChainError):
             self.inspect(artifact=artifact, sbom=sbom)
 
+    def test_same_advisory_in_several_binaries_needs_one_entry_per_binary(self):
+        binaries = {
+            "skopeo": (
+                "/usr/bin/skopeo",
+                "skopeo-1:1.24.1-1.fc45.x86_64",
+                "/sysroot/ostree/repo/objects/2b/9e05183517660c9d28a9d875e6db695708f3a91fb75e7b7bd4b88fcb29c29f.file",
+                "effe157831c2d72c21885b4cf97f021a3ff6957b6b6bc3715f57b95a926944b9",
+            ),
+            "podman": (
+                "/usr/bin/podman",
+                "podman-5:6.1.3-1.fc45.x86_64",
+                "/sysroot/ostree/repo/objects/90/51a1cb1dfada1c2a0dbae6257990b03537238eaaa112a9f9c398384de6e855.file",
+                "246b121ff1063dc42de1b2d9c0db4be61dde67106b99abd0934aafb865a74bb1",
+            ),
+        }
+        entries = {}
+        for name, (path, nevra, obj, sha) in binaries.items():
+            entries[name] = copy.deepcopy(self.entry) | {
+                "component_type": "embedded_go",
+                "package": "stdlib",
+                "package_version": "go1.27.1-X:nodwarf5",
+                "binary": {
+                    "path": path,
+                    "rpm_nevra": nevra,
+                    "sha256": sha,
+                    "ostree_object": obj,
+                },
+            }
+        sbom = {
+            "spdxVersion": "SPDX-2.3",
+            "packages": [],
+            "files": [
+                {
+                    "SPDXID": f"file-{name}",
+                    "fileName": obj.lstrip("/"),
+                    "checksums": [{"algorithm": "SHA256", "checksumValue": sha}],
+                }
+                for name, (_, _, obj, sha) in binaries.items()
+            ],
+            "relationships": [],
+        }
+        self.policy["exceptions"] = list(entries.values())
+        self.entry = entries["skopeo"]
+        for name, (_, _, obj, _) in binaries.items():
+            artifact = {
+                "name": "stdlib",
+                "version": "go1.27.1-X:nodwarf5",
+                "type": "go-module",
+                "locations": [{"path": obj}],
+            }
+            with self.subTest(binary=name):
+                self.assertEqual(
+                    self.inspect(artifact=artifact, sbom=sbom)["scan"]["decision"],
+                    "accepted_risk",
+                )
+        self.policy["exceptions"] = [entries["skopeo"]]
+        artifact = {
+            "name": "stdlib",
+            "version": "go1.27.1-X:nodwarf5",
+            "type": "go-module",
+            "locations": [{"path": binaries["podman"][2]}],
+        }
+        with self.assertRaises(supply_chain.SupplyChainError):
+            self.inspect(artifact=artifact, sbom=sbom)
+        duplicate = copy.deepcopy(entries["skopeo"]) | {
+            "reason": "Another reviewed reason."
+        }
+        self.policy["exceptions"] = [entries["skopeo"], duplicate]
+        with self.assertRaisesRegex(supply_chain.SupplyChainError, "duplicate"):
+            self.load()
+        relabelled = copy.deepcopy(entries["skopeo"])
+        relabelled["binary"]["path"] = "/usr/bin/other"
+        for order in (
+            [entries["skopeo"], relabelled],
+            [relabelled, entries["skopeo"]],
+        ):
+            self.policy["exceptions"] = order
+            with (
+                self.subTest(first=order[0]["binary"]["path"]),
+                self.assertRaisesRegex(supply_chain.SupplyChainError, "duplicate"),
+            ):
+                self.load()
+
+    def test_ostree_binary_exceptions_bind_content_and_all_locations(self):
+        cases = [
+            (
+                "embedded_go",
+                "go-module",
+                "stdlib",
+                "go1.27.1-X:nodwarf5",
+                "/usr/bin/skopeo",
+                "skopeo-1:1.24.1-1.fc45.x86_64",
+                "/sysroot/ostree/repo/objects/2b/9e05183517660c9d28a9d875e6db695708f3a91fb75e7b7bd4b88fcb29c29f.file",
+                "effe157831c2d72c21885b4cf97f021a3ff6957b6b6bc3715f57b95a926944b9",
+            ),
+            (
+                "linux_kernel",
+                "linux-kernel",
+                "linux-kernel",
+                "7.3.3-300.fc45.x86_64",
+                "/usr/lib/modules/7.3.3-300.fc45.x86_64/vmlinuz",
+                "kernel-core-7.3.3-300.fc45.x86_64",
+                "/sysroot/ostree/repo/objects/4f/4679842b77b7bb6e4220f08582cd52d848d34f618fbcffaaa8f9294a01bb6a.file",
+                "0e04d9abb6bad511aee3780746033797da092cbb436d6749b97dccf8bc57ab23",
+            ),
+        ]
+        for component, kind, name, version, path, nevra, obj, sha in cases:
+            with self.subTest(component=component):
+                binary = {
+                    "path": path,
+                    "rpm_nevra": nevra,
+                    "sha256": sha,
+                    "ostree_object": obj,
+                }
+                self.entry.update(
+                    component_type=component,
+                    package=name,
+                    package_version=version,
+                    binary=binary,
+                )
+                artifact = {
+                    "name": name,
+                    "version": version,
+                    "type": kind,
+                    "locations": [{"path": obj}],
+                }
+                sbom = {
+                    "spdxVersion": "SPDX-2.3",
+                    "packages": [],
+                    "files": [
+                        {
+                            "SPDXID": "file",
+                            "fileName": obj.lstrip("/"),
+                            "checksums": [
+                                {"algorithm": "SHA256", "checksumValue": sha}
+                            ],
+                        }
+                    ],
+                    "relationships": [],
+                }
+                self.assertEqual(
+                    self.inspect(artifact=artifact, sbom=sbom)["scan"]["decision"],
+                    "accepted_risk",
+                )
+                self.assertEqual(
+                    self.inspect(
+                        artifact=artifact | {"locations": [{"accessPath": obj}]},
+                        sbom=sbom,
+                    )["scan"]["decision"],
+                    "accepted_risk",
+                )
+                for case in (
+                    "wrong_sha",
+                    "wrong_object",
+                    "extra_location",
+                    "missing_file",
+                    "missing_checksum",
+                    "duplicate_file_wrong_sha",
+                    "wrong_type",
+                ):
+                    changed_artifact, changed_sbom = (
+                        copy.deepcopy(artifact),
+                        copy.deepcopy(sbom),
+                    )
+                    if case == "wrong_sha":
+                        changed_sbom["files"][0]["checksums"][0]["checksumValue"] = (
+                            "a" * 64
+                        )
+                    elif case == "wrong_object":
+                        changed_artifact["locations"][0]["path"] = "/other"
+                    elif case == "extra_location":
+                        changed_artifact["locations"].append({"path": "/other"})
+                    elif case == "missing_file":
+                        changed_sbom["files"] = []
+                    elif case == "missing_checksum":
+                        changed_sbom["files"][0]["checksums"] = []
+                    elif case == "duplicate_file_wrong_sha":
+                        duplicate = copy.deepcopy(changed_sbom["files"][0])
+                        duplicate["SPDXID"] = "file-duplicate"
+                        duplicate["checksums"][0]["checksumValue"] = "a" * 64
+                        changed_sbom["files"].append(duplicate)
+                    else:
+                        changed_artifact["type"] = "rpm"
+                    with (
+                        self.subTest(case=case),
+                        self.assertRaises(supply_chain.SupplyChainError),
+                    ):
+                        self.inspect(artifact=changed_artifact, sbom=changed_sbom)
+                self.entry["binary"] = binary | {"ostree_object": obj.upper()}
+                with self.assertRaises(supply_chain.SupplyChainError):
+                    self.load()
+                self.entry["binary"] = binary
+                if component == "linux_kernel":
+                    for change in (
+                        {"package": "other"},
+                        {"package_version": "other"},
+                        {"binary": binary | {"path": "/usr/bin/kernel"}},
+                        {"binary": binary | {"rpm_nevra": "kernel-core-other"}},
+                    ):
+                        old = copy.deepcopy(self.entry)
+                        self.entry.update(change)
+                        with self.assertRaises(supply_chain.SupplyChainError):
+                            self.load()
+                        self.entry.clear()
+                        self.entry.update(old)
+
     def test_scanner_failures_cannot_be_excepted(self):
         for tool in ("syft", "grype"):
             with (
