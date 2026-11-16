@@ -232,6 +232,15 @@ def _exception_key(entry):
     )
 
 
+def _binary_identity(entry):
+    # Identity is the location the scanner reports. Two entries on one ostree
+    # object would both match it, whatever /usr path each asserts.
+    binary = entry.get("binary")
+    if binary is None:
+        return None
+    return binary.get("ostree_object", binary["path"])
+
+
 def _exception_hash(entry):
     raw = (
         json.dumps(entry, sort_keys=True, indent=2, ensure_ascii=True, allow_nan=False)
@@ -380,9 +389,15 @@ def _exceptions(path, *, context=None, now=None, expected_sha256=None):
                 and hashlib.sha256(content).hexdigest() == descriptor["sha256"],
                 "exception evidence bytes mismatch",
             )
-        key = _exception_key(entry)
-        _require(key not in approved, "duplicate or conflicting exception")
-        approved[key] = entry
+        same_finding = approved.setdefault(_exception_key(entry), [])
+        _require(
+            all(
+                _binary_identity(other) != _binary_identity(entry)
+                for other in same_finding
+            ),
+            "duplicate or conflicting exception",
+        )
+        same_finding.append(entry)
     return approved, digest
 
 
@@ -622,25 +637,31 @@ def _inspect_image(
         ):
             raise SupplyChainError("malformed Grype fix versions")
         if severity in {"High", "Critical", "Unknown"}:
-            entry = approved.get(
+            candidates = approved.get(
                 (
                     vulnerability_id,
                     package,
                     version,
                     *(context[name] for name in SCOPE_FIELDS),
-                )
+                ),
+                [],
             )
-            accepted = entry is not None and (
-                entry["component_type"] == "rpm"
-                and artifact.get("type") == "rpm"
-                or entry["component_type"] == "embedded_go"
-                and artifact.get("type") == "go-module"
-                and _binary_matches(entry["binary"], artifact, sbom)
-                or entry["component_type"] == "linux_kernel"
-                and artifact.get("type") == "linux-kernel"
-                and _binary_matches(entry["binary"], artifact, sbom)
+            entry = next(
+                (
+                    candidate
+                    for candidate in candidates
+                    if candidate["component_type"] == "rpm"
+                    and artifact.get("type") == "rpm"
+                    or candidate["component_type"] == "embedded_go"
+                    and artifact.get("type") == "go-module"
+                    and _binary_matches(candidate["binary"], artifact, sbom)
+                    or candidate["component_type"] == "linux_kernel"
+                    and artifact.get("type") == "linux-kernel"
+                    and _binary_matches(candidate["binary"], artifact, sbom)
+                ),
+                None,
             )
-            if accepted:
+            if entry is not None:
                 applied[_exception_hash(entry)] = entry
             else:
                 fixes = ", ".join(versions)

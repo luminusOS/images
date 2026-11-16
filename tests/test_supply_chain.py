@@ -1167,6 +1167,89 @@ class ScopedExceptionTests(unittest.TestCase):
         with self.assertRaises(supply_chain.SupplyChainError):
             self.inspect(artifact=artifact, sbom=sbom)
 
+    def test_same_advisory_in_several_binaries_needs_one_entry_per_binary(self):
+        binaries = {
+            "skopeo": (
+                "/usr/bin/skopeo",
+                "skopeo-1:1.24.1-1.fc45.x86_64",
+                "/sysroot/ostree/repo/objects/2b/9e05183517660c9d28a9d875e6db695708f3a91fb75e7b7bd4b88fcb29c29f.file",
+                "effe157831c2d72c21885b4cf97f021a3ff6957b6b6bc3715f57b95a926944b9",
+            ),
+            "podman": (
+                "/usr/bin/podman",
+                "podman-5:6.1.3-1.fc45.x86_64",
+                "/sysroot/ostree/repo/objects/90/51a1cb1dfada1c2a0dbae6257990b03537238eaaa112a9f9c398384de6e855.file",
+                "246b121ff1063dc42de1b2d9c0db4be61dde67106b99abd0934aafb865a74bb1",
+            ),
+        }
+        entries = {}
+        for name, (path, nevra, obj, sha) in binaries.items():
+            entries[name] = copy.deepcopy(self.entry) | {
+                "component_type": "embedded_go",
+                "package": "stdlib",
+                "package_version": "go1.27.1-X:nodwarf5",
+                "binary": {
+                    "path": path,
+                    "rpm_nevra": nevra,
+                    "sha256": sha,
+                    "ostree_object": obj,
+                },
+            }
+        sbom = {
+            "spdxVersion": "SPDX-2.3",
+            "packages": [],
+            "files": [
+                {
+                    "SPDXID": f"file-{name}",
+                    "fileName": obj.lstrip("/"),
+                    "checksums": [{"algorithm": "SHA256", "checksumValue": sha}],
+                }
+                for name, (_, _, obj, sha) in binaries.items()
+            ],
+            "relationships": [],
+        }
+        self.policy["exceptions"] = list(entries.values())
+        self.entry = entries["skopeo"]
+        for name, (_, _, obj, _) in binaries.items():
+            artifact = {
+                "name": "stdlib",
+                "version": "go1.27.1-X:nodwarf5",
+                "type": "go-module",
+                "locations": [{"path": obj}],
+            }
+            with self.subTest(binary=name):
+                self.assertEqual(
+                    self.inspect(artifact=artifact, sbom=sbom)["scan"]["decision"],
+                    "accepted_risk",
+                )
+        self.policy["exceptions"] = [entries["skopeo"]]
+        artifact = {
+            "name": "stdlib",
+            "version": "go1.27.1-X:nodwarf5",
+            "type": "go-module",
+            "locations": [{"path": binaries["podman"][2]}],
+        }
+        with self.assertRaises(supply_chain.SupplyChainError):
+            self.inspect(artifact=artifact, sbom=sbom)
+        duplicate = copy.deepcopy(entries["skopeo"]) | {
+            "reason": "Another reviewed reason."
+        }
+        self.policy["exceptions"] = [entries["skopeo"], duplicate]
+        with self.assertRaisesRegex(supply_chain.SupplyChainError, "duplicate"):
+            self.load()
+        relabelled = copy.deepcopy(entries["skopeo"])
+        relabelled["binary"]["path"] = "/usr/bin/other"
+        for order in (
+            [entries["skopeo"], relabelled],
+            [relabelled, entries["skopeo"]],
+        ):
+            self.policy["exceptions"] = order
+            with (
+                self.subTest(first=order[0]["binary"]["path"]),
+                self.assertRaisesRegex(supply_chain.SupplyChainError, "duplicate"),
+            ):
+                self.load()
+
     def test_ostree_binary_exceptions_bind_content_and_all_locations(self):
         cases = [
             (
