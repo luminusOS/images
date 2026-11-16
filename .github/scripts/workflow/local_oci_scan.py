@@ -587,12 +587,20 @@ def _validate(value: LocalOCIInput):
     return trusted, before
 
 
-def scan(value: LocalOCIInput, output: Path, *, now: datetime | None = None) -> dict:
+def scan(
+    value: LocalOCIInput,
+    output: Path,
+    *,
+    now: datetime | None = None,
+    exclusion: str | None = None,
+) -> dict:
     """Scan a caller-authenticated local handoff; never acquire or import inputs."""
     validate_output_relationships(value, output)
     try:
         _cleanup_managed(output)
-        return _scan(value, output, now=now)
+        return _scan(
+            value, output, now=now, **({"exclusion": exclusion} if exclusion else {})
+        )
     except BaseException as error:
         _cleanup_failure(output, error)
         raise
@@ -606,7 +614,13 @@ def require_budget(input_bytes: int, scratch_bytes: int, output_bytes: int) -> N
     )
 
 
-def _scan(value: LocalOCIInput, output: Path, *, now: datetime | None = None) -> dict:
+def _scan(
+    value: LocalOCIInput,
+    output: Path,
+    *,
+    now: datetime | None = None,
+    exclusion: str | None = None,
+) -> dict:
     clock = lambda: datetime.now(UTC) if now is None else now
     trusted, before = _validate(value)
     input_bytes = (
@@ -674,7 +688,8 @@ def _scan(value: LocalOCIInput, output: Path, *, now: datetime | None = None) ->
                         fmt,
                         "--file",
                         "/reports/" + filename,
-                    ],
+                    ]
+                    + (["--exclude", exclusion + "/**"] if exclusion else []),
                 ),
                 work,
             )

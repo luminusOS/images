@@ -1418,5 +1418,125 @@ class ScopedExceptionTests(unittest.TestCase):
         self.assertEqual(inspect.call_args.kwargs["component_scope"], "core_payload")
 
 
+class FlatpakScanRiskTests(unittest.TestCase):
+    def test_scan_exclusion_and_validation(self):
+        record = {
+            "schema_version": 1,
+            "kind": "flatpak-preinstall-scan-exclusion",
+            "excluded_path": "/var/lib/flatpak",
+            "editions": ["workstation"],
+            "component_scopes": ["workstation_payload", "installer_live"],
+            "owner": "leandromqrs",
+            "accepted_at": "2026-11-16T00:00:00Z",
+            "expires_at": "2026-12-16T00:00:00Z",
+            "reason": "Offline essential apps",
+            "follow_up": "replace with exact per-finding exceptions",
+        }
+        now = datetime(2026, 11, 20, tzinfo=UTC)
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            path = root / "risk.json"
+            commands = []
+
+            def run(argv, **kwargs):
+                commands.append(argv)
+                if argv[1] == "version":
+                    return subprocess.CompletedProcess(argv, 0, "Version: 1.2.3\n", "")
+                data = (
+                    {"spdxVersion": "SPDX-2.3", "packages": []}
+                    if argv[0] == "syft"
+                    else {"matches": []}
+                )
+                Path(argv[argv.index("--file") + 1]).write_text(json.dumps(data))
+                return subprocess.CompletedProcess(argv, 0, "", "")
+
+            def inspect(value, **changes):
+                path.write_text(json.dumps(value))
+                args = {
+                    "expected_syft_version": "1.2.3",
+                    "expected_grype_version": "1.2.3",
+                    "edition": "workstation",
+                    "component_scope": "workstation_payload",
+                    "channel": "testing",
+                    "fedora": "45",
+                    "now": now,
+                    "scan_exclusion": path,
+                }
+                args.update(changes)
+                with patch.object(supply_chain.subprocess, "run", side_effect=run):
+                    return supply_chain.inspect_image(
+                        "repo@sha256:" + "a" * 64, root / "out", "b" * 40, **args
+                    )
+
+            manifest = inspect(record)
+            exclusion = {
+                "path": "/var/lib/flatpak",
+                "record_sha256": hashlib.sha256(path.read_bytes()).hexdigest(),
+                "expires_at": record["expires_at"],
+            }
+            evidence = json.loads(manifest.read_text())
+            self.assertEqual(evidence["scan"]["exclusions"], [exclusion])
+            self.assertEqual(evidence["security"]["decision"], "accepted_risk")
+            vulnerabilities = root / "out" / "vulnerabilities.json"
+            self.assertEqual(
+                json.loads(vulnerabilities.read_text())["scan"]["exclusions"],
+                [exclusion],
+            )
+            self.assertEqual(
+                evidence["files"]["vulnerabilities.json"],
+                hashlib.sha256(vulnerabilities.read_bytes()).hexdigest(),
+            )
+            for tool in ("syft", "grype"):
+                command = next(c for c in commands if c[0] == tool and "--file" in c)
+                self.assertEqual(
+                    command[command.index("--exclude") + 1], "/var/lib/flatpak/**"
+                )
+            for change in (
+                {"schema_version": True},
+                {"kind": "other"},
+                {"owner": ""},
+                {"expires_at": "2026-11-19T00:00:00Z"},
+                {"accepted_at": "2026-11-21T00:00:00Z"},
+                {"expires_at": "2026-12-17T00:00:00Z"},
+                {"excluded_path": "/"},
+                {"editions": ["core"]},
+            ):
+                with (
+                    self.subTest(change=change),
+                    self.assertRaises(supply_chain.SupplyChainError),
+                ):
+                    inspect({**record, **change})
+            with self.assertRaises(supply_chain.SupplyChainError):
+                inspect(record, edition="core", component_scope="core_payload")
+            with self.assertRaises(supply_chain.SupplyChainError):
+                inspect({key: value for key, value in record.items() if key != "owner"})
+            inspect(record, component_scope="installer_live")
+            commands.clear()
+            inspect(record, scan_exclusion=None)
+            self.assertFalse(any("--exclude" in c for c in commands))
+
+    def test_cli_forwards_exclusion(self):
+        with patch.object(supply_chain, "inspect_image") as inspect:
+            result = supply_chain.main(
+                [
+                    "inspect",
+                    "--image",
+                    "repo@sha256:" + "a" * 64,
+                    "--output",
+                    "/tmp/output",
+                    "--source-sha",
+                    "b" * 40,
+                    "--syft-version",
+                    "1.34.2",
+                    "--grype-version",
+                    "0.101.1",
+                    "--scan-exclusion",
+                    "risk.json",
+                ]
+            )
+        self.assertEqual(result, 0)
+        self.assertEqual(inspect.call_args.kwargs["scan_exclusion"], Path("risk.json"))
+
+
 if __name__ == "__main__":
     unittest.main()
