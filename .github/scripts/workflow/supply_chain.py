@@ -225,6 +225,67 @@ def _scope(context):
     )
 
 
+def _scan_exclusion(path, context, now):
+    raw = _safe_bytes(path)
+    record = _decode_json(raw, "scan exclusion")
+    fields = {
+        "schema_version",
+        "kind",
+        "excluded_path",
+        "editions",
+        "component_scopes",
+        "owner",
+        "accepted_at",
+        "expires_at",
+        "reason",
+        "follow_up",
+    }
+    _require(
+        isinstance(record, dict) and set(record) == fields,
+        "invalid scan exclusion fields",
+    )
+    _require(
+        type(record["schema_version"]) is int and record["schema_version"] == 1,
+        "invalid scan exclusion schema",
+    )
+    _require(
+        record["kind"] == "flatpak-preinstall-scan-exclusion"
+        and record["excluded_path"] == "/var/lib/flatpak",
+        "invalid scan exclusion kind or path",
+    )
+    _require(
+        record["editions"] == ["workstation"]
+        and record["component_scopes"] == ["workstation_payload", "installer_live"],
+        "invalid scan exclusion scope",
+    )
+    _require(
+        context["edition"] == "workstation"
+        and context["component_scope"] in record["component_scopes"],
+        "scan exclusion does not cover context",
+    )
+    for key in ("owner", "reason", "follow_up"):
+        _require(
+            isinstance(record[key], str) and bool(record[key].strip()),
+            "invalid scan exclusion metadata",
+        )
+    accepted = _timestamp(record["accepted_at"])
+    expires = _timestamp(record["expires_at"])
+    clock = (_clock(now), "")
+    _require(
+        accepted <= clock < expires
+        and expires[0] - accepted[0] <= timedelta(days=30)
+        and (
+            expires[0] - accepted[0] < timedelta(days=30) or expires[1] <= accepted[1]
+        ),
+        "scan exclusion is not in force or exceeds 30 days",
+    )
+    return {
+        "path": record["excluded_path"],
+        "record_sha256": hashlib.sha256(raw).hexdigest(),
+        "expires_at": record["expires_at"],
+    }
+
+
 def _exception_key(entry):
     return tuple(
         entry[name]
@@ -544,12 +605,18 @@ def _inspect_image(
     expected_policy_sha256: str | None = None,
     now: datetime | None = None,
     local_input: local_oci_scan.LocalOCIInput | None = None,
+    scan_exclusion: Path | None = None,
 ) -> Path:
     bypass = authorize_bypass()
     context = dict(zip(SCOPE_FIELDS, (edition, component_scope, channel, fedora)))
     if any(value is not None for value in context.values()):
         _scope(context)
     _clock(now)
+    exclusion = (
+        _scan_exclusion(scan_exclusion, context, now)
+        if scan_exclusion is not None
+        else None
+    )
     digest = _digest_image(image)
     if not re.fullmatch(r"[0-9a-f]{40,64}", source_sha):
         raise SupplyChainError("invalid source commit")
@@ -569,7 +636,12 @@ def _inspect_image(
             local_input.manifest_digest == "sha256:" + digest,
             "logical image and local manifest differ",
         )
-        local_result = local_oci_scan.scan(local_input, output, now=now)
+        local_result = local_oci_scan.scan(
+            local_input,
+            output,
+            now=now,
+            **({"exclusion": exclusion["path"]} if exclusion else {}),
+        )
         syft_version = local_result["tools"]["syft"]
         grype_version = local_result["tools"]["grype"]
     else:
@@ -579,7 +651,10 @@ def _inspect_image(
     sbom_path = output / "sbom.spdx.json"
     vulnerabilities_path = output / "vulnerabilities.json"
     if local_input is None:
-        _run(["syft", image, "-o", "spdx-json", "--file", str(sbom_path)])
+        _run(
+            ["syft", image, "-o", "spdx-json", "--file", str(sbom_path)]
+            + (["--exclude", exclusion["path"] + "/**"] if exclusion else [])
+        )
     sbom = _load_json(sbom_path)
     if (
         not isinstance(sbom, dict)
@@ -588,11 +663,19 @@ def _inspect_image(
     ):
         raise SupplyChainError("malformed SPDX SBOM")
     if local_input is None:
-        _run(["grype", image, "-o", "json", "--file", str(vulnerabilities_path)])
+        _run(
+            ["grype", image, "-o", "json", "--file", str(vulnerabilities_path)]
+            + (["--exclude", exclusion["path"] + "/**"] if exclusion else [])
+        )
     scan = _load_json(vulnerabilities_path)
     matches = scan.get("matches") if isinstance(scan, dict) else None
     if not isinstance(matches, list):
         raise SupplyChainError("malformed Grype scan")
+    if exclusion:
+        scan["scan"] = {"exclusions": [exclusion]}
+        vulnerabilities_path.write_text(
+            json.dumps(scan, sort_keys=True, indent=2) + "\n", encoding="utf-8"
+        )
     evaluated_at = _clock(now)
     approved, policy_hash = _exceptions(
         exceptions,
@@ -680,7 +763,11 @@ def _inspect_image(
         "run_url": _run_url(),
         "workflow_ref": os.environ.get("GITHUB_WORKFLOW_REF"),
         "findings": sorted(blocked),
-        "decision": "diagnostic" if bypass else "accepted_risk" if applied else "clean",
+        "decision": "diagnostic"
+        if bypass
+        else "accepted_risk"
+        if applied or exclusion
+        else "clean",
         "policy_sha256": policy_hash,
         "policy_schema_version": 2 if exceptions is not None else None,
         "evaluated_at": evaluated_at.isoformat().replace("+00:00", "Z"),
@@ -742,10 +829,11 @@ def _inspect_image(
                 "policy_sha256": policy_hash,
                 **({"local_input": local_result} if local_result is not None else {}),
                 "scan": None
-                if bypass
+                if bypass and not exclusion
                 else {
                     "decision": security["decision"],
                     "applied_exceptions": sorted(applied),
+                    **({"exclusions": [exclusion]} if exclusion else {}),
                     "reports": [
                         {
                             "path": path.name,
@@ -792,6 +880,7 @@ def inspect_image(
     expected_policy_sha256: str | None = None,
     now: datetime | None = None,
     local_input: local_oci_scan.LocalOCIInput | None = None,
+    scan_exclusion: Path | None = None,
 ) -> Path:
     arguments = locals()
     if local_input is None:
@@ -800,6 +889,10 @@ def inspect_image(
         local_oci_scan.validate_output_relationships(
             local_input, output, exceptions=exceptions
         )
+        if scan_exclusion is not None:
+            local_oci_scan.validate_output_relationships(
+                local_input, output, exceptions=scan_exclusion
+            )
     except (OSError, ValueError, TypeError, AttributeError) as error:
         raise SupplyChainError("invalid private scan output relationships") from error
     try:
@@ -920,6 +1013,7 @@ def main(argv: list[str] | None = None) -> int:
     inspect.add_argument("--output", type=Path, required=True)
     inspect.add_argument("--source-sha", required=True)
     inspect.add_argument("--exceptions", type=Path)
+    inspect.add_argument("--scan-exclusion", type=Path)
     inspect.add_argument("--edition")
     inspect.add_argument("--component-scope")
     inspect.add_argument("--channel")
@@ -949,6 +1043,7 @@ def main(argv: list[str] | None = None) -> int:
                 channel=args.channel,
                 fedora=args.fedora,
                 expected_policy_sha256=args.policy_sha256,
+                scan_exclusion=args.scan_exclusion,
             )
         elif args.command == "checksums":
             write_checksums(args.directory)
