@@ -742,6 +742,41 @@ class CandidateSigningTests(unittest.TestCase):
         )
         self.assertIn("needs.scan-candidates.result", gates["env"]["SCAN_RESULT"])
 
+    def test_publish_callers_pass_candidate_environment_secrets(self):
+        workflows = ROOT / ".github/workflows"
+        publish = yaml.safe_load((workflows / "publish.yml").read_text())
+        declared = set(publish.get("on", publish.get(True))["workflow_call"]["secrets"])
+        staged = {
+            name
+            for job in publish["jobs"].values()
+            if job.get("environment") == "candidate-staging"
+            for name in re.findall(r"secrets\.([A-Z_]+)", str(job))
+        } & declared
+        self.assertTrue(
+            {"CANDIDATE_COSIGN_PRIVATE_KEY", "CANDIDATE_COSIGN_PASSWORD"} <= staged
+        )
+        for name, job in publish["jobs"].items():
+            read = set(re.findall(r"secrets\.([A-Z_]+)", str(job))) - {"GITHUB_TOKEN"}
+            with self.subTest(job=name):
+                if job.get("environment") == "candidate-staging":
+                    self.assertLessEqual(read, declared)
+                if any(secret.startswith("CANDIDATE_") for secret in read):
+                    self.assertEqual(job.get("environment"), "candidate-staging")
+        callers = 0
+        for path in workflows.glob("*.yml"):
+            for name, job in (yaml.safe_load(path.read_text())["jobs"] or {}).items():
+                if job.get("uses") != "./.github/workflows/publish.yml":
+                    continue
+                callers += 1
+                passed = job.get("secrets")
+                with self.subTest(workflow=path.name, job=name):
+                    self.assertIsInstance(passed, dict)
+                    for secret in staged:
+                        self.assertEqual(
+                            passed.get(secret), f"${{{{ secrets.{secret} }}}}"
+                        )
+        self.assertGreater(callers, 0)
+
     def test_public_tag_writers_are_serialized_and_testing_enabled(self):
         workflow = yaml.safe_load((ROOT / ".github/workflows/publish.yml").read_text())
         for job in ("release", "publish-stable-installer"):
