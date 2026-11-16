@@ -286,6 +286,8 @@ RUN set -eux; \
       iwlwifi-mvm-firmware iwlwifi-mld-firmware iwlbluetooth-firmware && \
     systemctl is-enabled firewalld.service && \
     ! systemctl is-enabled sshd.service && \
+    ! systemctl is-enabled sshd.socket && \
+    ! systemctl is-enabled ssh.socket && \
     systemctl is-enabled bootc-fetch-apply-updates.timer && \
     rpm -q elastic-swap && \
     systemctl is-enabled elastic-swap.service && \
