@@ -203,7 +203,7 @@ def installed_facts(vm: VM) -> dict:
     }
     for name, command, key in (
         ("bootc-status", "bootc status --json", "bootc_status"),
-        ("findmnt", "findmnt -J / /home /var /boot", "mounts"),
+        ("findmnt", "findmnt -J -o TARGET,SOURCE,FSTYPE,OPTIONS", "mounts"),
     ):
         result = remote(vm, name, command)
         if result.returncode != 0:

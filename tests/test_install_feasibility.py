@@ -164,6 +164,28 @@ class InstallFeasibilityTests(unittest.TestCase):
             ):
                 probe.installed_facts(self.vm)
 
+    def test_mounts_are_listed_in_one_findmnt_call_without_targets(self):
+        # findmnt takes at most a source and a target, so several targets exit 1,
+        # and on bootc /home is a symlink to /var/home rather than a mount point.
+        commands = {}
+        ok = subprocess.CompletedProcess([], 0, "{}", "")
+
+        def remote(_vm, name, command, *_a, **_k):
+            commands[name] = command
+            if name == "is-system-running":
+                return subprocess.CompletedProcess([], 0, "running\n", "")
+            if name == "getenforce":
+                return subprocess.CompletedProcess([], 0, "Enforcing\n", "")
+            if name == "failed-units":
+                return subprocess.CompletedProcess([], 0, "", "")
+            return ok
+
+        with mock.patch.object(probe, "remote", side_effect=remote):
+            probe.installed_facts(self.vm)
+        self.assertEqual(
+            commands["findmnt"], "findmnt -J -o TARGET,SOURCE,FSTYPE,OPTIONS"
+        )
+
     def test_degraded_system_is_recorded_not_fatal(self):
         ok = subprocess.CompletedProcess([], 0, "{}", "")
         outputs = {
