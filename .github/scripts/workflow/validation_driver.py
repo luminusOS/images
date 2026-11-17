@@ -633,12 +633,12 @@ def first_boot(
 def live_isolation(guest: Guest, receipts: Receipts) -> None:
     started = now()
     checks = " && ".join(
-        ["! id liveuser", "! rpm -q sirius-installer"]
+        ["! id liveuser", "! rpm -q --quiet sirius-installer"]
         + [f"! test -e {path}" for path in LIVE_ONLY]
         + ["! grep -rqsiE '^\\s*AutomaticLoginEnable\\s*=\\s*true' /etc/gdm"]
     )
     argv, result = guest.run("live-isolation", f"{checks} && echo isolated")
-    if result.returncode != 0 or result.stdout.strip() != "isolated":
+    if result.returncode != 0 or result.stdout.splitlines()[-1:] != ["isolated"]:
         raise CheckFailed("live-only state is present on the installed system")
     receipts.write("live_isolation", argv, started, transcript(argv, result))
 

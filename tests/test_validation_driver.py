@@ -184,18 +184,32 @@ class DriverTests(unittest.TestCase):
                 )
 
     def test_live_isolation_checks_every_live_only_path(self):
-        guest = FakeGuest({"live-isolation": done("isolated\n")})
+        # Observed in run 44028202057: rpm reports the missing package on stdout.
+        guest = FakeGuest(
+            {
+                "live-isolation": done(
+                    "package sirius-installer is not installed\nisolated\n"
+                )
+            }
+        )
         driver.live_isolation(guest, self.receipts)
         command = guest.commands["live-isolation"]
+        self.assertIn("! rpm -q --quiet sirius-installer", command)
         for path in driver.LIVE_ONLY:
             self.assertIn(f"! test -e {path}", command)
         self.assertIn("! id liveuser", command)
         self.assertIn("AutomaticLoginEnable", command)
-        with self.assertRaises(driver.CheckFailed):
-            driver.live_isolation(
-                FakeGuest({"live-isolation": done("", 1)}),
-                driver.Receipts(Path(tempfile.mkdtemp()), candidate()),
-            )
+        for result in (
+            done("", 1),
+            done("isolated\n", 1),
+            done("package sirius-installer is not installed\n"),
+            done("isolated\nextra\n"),
+        ):
+            with self.subTest(result=result), self.assertRaises(driver.CheckFailed):
+                driver.live_isolation(
+                    FakeGuest({"live-isolation": result}),
+                    driver.Receipts(Path(tempfile.mkdtemp()), candidate()),
+                )
 
     def test_expected_key_compares_guest_trust_files_with_the_repository(self):
         lines = "".join(
