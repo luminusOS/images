@@ -258,7 +258,7 @@ def publish(channel, version, dist, bucket, endpoint, require_evidence=False):
                     f"s3://{bucket}/{channel}/{old}/",
                     "--recursive",
                     *aws_args,
-                    "--no-progress",
+                    "--only-show-errors",
                 ],
                 check=True,
             )
