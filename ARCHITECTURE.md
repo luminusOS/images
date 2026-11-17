@@ -562,7 +562,7 @@ The workflow helpers separate three responsibilities:
 
 New editions based on core or workstation should declare their actual parent through explicit job dependencies and verified archive handoffs. Keep edition-specific Containerfiles and build arguments explicit; do not route unrelated edition operations through core reuse or installer helpers. No additional edition definitions or generic dependency engine are needed for the current two editions.
 
-`publish.yml` owns publication, signing and promotion, not the read-only build workflow. Stable promotion preserves the approved installed payload rather than rebuilding it. The quality, automatic testing and protected installation-validation workflows retain their existing triggers, permissions and evidence gates.
+`publish.yml` owns publication, signing and promotion, not the read-only build workflow. Stable promotion preserves the approved installed payload rather than rebuilding it. The quality, automatic testing and installation-validation workflows retain their existing triggers, permissions and evidence gates. `testing-release-chain.yml` connects them for testing: after a successful Auto Testing candidate it dispatches validation, waits for it and dispatches publication, without holding any signing secret.
 
 ## Local QEMU Testing
 
