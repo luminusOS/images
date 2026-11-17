@@ -286,6 +286,19 @@ class DriverTests(unittest.TestCase):
             "cryptographic signature verification failed: invalid signature"
         )
         self.assertTrue(driver.rejected(done("", 1, unsigned), "unsigned"))
+        # Observed from bootc 1.17 in run 44033490829, through the skopeo proxy.
+        proxied = (
+            "error: Switching: Switching (ostree): Preparing import: Fetching manifest: "
+            "failed to invoke method OpenImage: A signature was required, but no "
+            "signature exists"
+        )
+        self.assertTrue(driver.rejected(done("", 1, proxied), "unsigned"))
+        self.assertFalse(driver.rejected(done("", 1, proxied), "foreign"))
+        proxied_foreign = (
+            "error: Switching: failed to invoke method OpenImage: cryptographic "
+            "signature verification failed: invalid signature"
+        )
+        self.assertTrue(driver.rejected(done("", 1, proxied_foreign), "foreign"))
         self.assertTrue(driver.rejected(done("", 1, foreign), "foreign"))
         self.assertFalse(driver.rejected(done("", 1, foreign), "unsigned"))
         self.assertFalse(driver.rejected(done("", 1, unsigned), "foreign"))
@@ -295,6 +308,8 @@ class DriverTests(unittest.TestCase):
             "manifest rejected: signature blob too large",
             "Source image rejected: Running image docker://x is rejected by policy.",
             "Source image rejected: fetching signature: MANIFEST_UNKNOWN",
+            "failed to invoke method OpenImage: manifest unknown",
+            "failed to invoke method OpenImage: reading signatures: connection refused",
         ):
             for kind in ("unsigned", "foreign"):
                 self.assertFalse(driver.rejected(done("", 1, noise), kind))
