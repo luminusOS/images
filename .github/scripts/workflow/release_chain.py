@@ -11,8 +11,10 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import subprocess
 import sys
+import tempfile
 import time
 from pathlib import Path
 
@@ -21,6 +23,7 @@ POLL_SECONDS = 60
 # The job may run 360 minutes; leave room to report a timeout.
 BUDGET_SECONDS = 345 * 60
 MAX_PAGES = 10
+VERSION = re.compile(r"[0-9]+\.[0-9]{8}\.[0-9]+")
 
 
 class GitHub:
@@ -57,6 +60,43 @@ class GitHub:
             if not runs or min(item["id"] for item in runs) <= run_id:
                 return newer
         raise ValueError("cannot rule out newer candidates")
+
+    def candidate_version(self, run_id: int) -> str:
+        # The scan of the candidate core image records its version label; the
+        # 20 MB scan artifact avoids downloading the multi-GB candidate.
+        with tempfile.TemporaryDirectory() as directory:
+            subprocess.run(
+                [
+                    "gh",
+                    "run",
+                    "download",
+                    str(run_id),
+                    "--repo",
+                    self.repository,
+                    "--name",
+                    "candidate-scans",
+                    "--dir",
+                    directory,
+                ],
+                check=True,
+            )
+            try:
+                scan = json.loads(
+                    (Path(directory) / "core/vulnerabilities.json").read_text()
+                )
+            except (OSError, ValueError) as error:
+                raise ValueError(
+                    f"candidate-scans of run {run_id} has no readable core scan: {error}"
+                ) from None
+        labels = scan.get("source", {}).get("target", {}).get("labels") or {}
+        version = labels.get("org.opencontainers.image.version")
+        if not isinstance(version, str) or not VERSION.fullmatch(version):
+            raise ValueError(f"candidate {run_id} has no valid version label")
+        return version
+
+    def tag_exists(self, tag: str) -> bool:
+        refs = self.api(f"git/matching-refs/tags/{tag}")
+        return any(item.get("ref") == f"refs/tags/{tag}" for item in refs)
 
     def run(self, run_id: int) -> dict:
         return self.api(f"actions/runs/{run_id}")
@@ -107,6 +147,20 @@ def resume_hint(candidate: int, validation: int) -> str:
     )
 
 
+def version_taken(version: str, github) -> bool:
+    # A build numbers its version from the testing tags that exist when it
+    # starts, so a same-day candidate published meanwhile may hold the same
+    # number. Promotion refuses to move that tag to different bytes.
+    tag = f"testing-{version}"
+    if github.tag_exists(tag):
+        print(
+            f"{tag} was already released from another build; skipping this"
+            " candidate, the next build takes the following number"
+        )
+        return True
+    return False
+
+
 def advance(
     run: dict, repository: str, github, *, wait_for=wait, clock=time.monotonic
 ) -> int | None:
@@ -117,6 +171,9 @@ def advance(
     candidate = run["id"]
     if "release-candidate" not in github.artifact_names(candidate):
         print(f"run {candidate} produced no release candidate; nothing to do")
+        return None
+    version = github.candidate_version(candidate)
+    if version_taken(version, github):
         return None
     validation = github.dispatch(
         "installation-validation.yml", {"candidate_run_id": str(candidate)}
@@ -131,6 +188,8 @@ def advance(
     newer = github.candidate_runs_after(candidate)
     if newer:
         print(f"candidate {candidate} is superseded by {sorted(newer)}; not publishing")
+        return None
+    if version_taken(version, github):
         return None
     publication = github.dispatch(
         "publish.yml",
