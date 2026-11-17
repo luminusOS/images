@@ -37,20 +37,11 @@ The local implementation environment has not demonstrated installation, update/r
 
 ### Installation validation runner
 
-`installation-validation.yml` runs only through manual dispatch on `main`. Provision a dedicated, trusted self-hosted Linux x86_64 runner with the `luminusos-validation` label. It needs Python 3.11+, GitHub CLI authentication through the job token, enough disk space for both downloaded artifacts and disposable VM disks, and the QEMU/firmware/KVM tooling required by the installation test driver. Do not attach this runner to fork or untrusted pull-request jobs.
+`installation-validation.yml` runs only through manual dispatch on `main`, on a GitHub-hosted `ubuntu-latest` runner with KVM and vhost-vsock, in the `candidate-staging` environment. The job token gets `packages: read` so it can pull the private candidate; it is used only in the staging step, through a temporary authfile that is removed before the VM starts, and the driver and signing steps never see it.
 
-Create the GitHub environment `release-validation`, restrict it to `main`, require human approval, and configure `COSIGN_PRIVATE_KEY` and `COSIGN_PASSWORD`. Use the key matching the repository's public key. GitHub environment protection and runner provisioning are operator tasks; committing the workflow does not configure them.
+The driver is `.github/scripts/workflow/validation_driver.py`, reviewed like any other repository code and run from the checkout of the dispatching `main` commit, which is recorded as `runner_sha`. It boots the verified candidate ISO with Secure Boot enforced (OVMF with the Microsoft keys enrolled), installs it with `sirius run-playbook`, boots the installed disk without the ISO and runs every check over SSH on AF_VSOCK, with a per-run key passed as the `ssh.authorized_keys.root` SMBIOS credential. Neither image changes for this.
 
-Install the real test driver at the fixed path `/usr/local/libexec/luminusos/validate-candidate`. The file and its ancestor directories must be root-owned and not writable by group or others. Its interface is:
-
-```text
-/usr/local/libexec/luminusos/validate-candidate \
-  --candidate <verified-candidate.json> \
-  --artifacts <verified-artifact-directory> \
-  --receipts <private-output-directory>
-```
-
-The driver must perform the actual Sirius installation and subsequent tests against these exact artifacts. It must not replace installation with qcow2 boot, disable signature checking to get a successful result, or reuse unrelated VM state. The repository validates and signs the driver's receipts; it does not provide or certify an externally provisioned driver's VM automation. An absent driver is a provisioning blocker, not a successful gate.
+Trust and update checks use a disposable fixture: images derived from the candidate workstation image with one marker layer, served by a local registry and signed with an ephemeral key that exists only for the run. Only the disposable VM learns that key, under its own repository scope, after `expected_key` has confirmed that the official policy, registry configuration and public key match the repository. The fixture proves that signature policy is enforced and that bootc can update and roll back; it does not prove official signing, which promotion verifies. The driver must not replace installation with a qcow2 boot, disable signature checking or reuse VM state between runs. A missing prerequisite fails the run.
 
 The required receipt names are `sirius_install`, `first_boot`, `live_isolation`, `expected_key`, `unsigned_rejected`, `foreign_key_rejected`, `update`, `rollback`, `selinux_enforcing`, `firewall`, and `secure_boot`. Each JSON receipt records `name`, the observed `command` argument list, `exit_code`, timezone-aware `started_at`/`finished_at`, a relative nonempty `log`, its `sha256`, and `binding` matching `release_pipeline.binding(candidate)`. Do not execute command strings read from receipts. A successful rejection test records the test harness's success after observing rejection, not the unsigned update command's exit status as if the update should succeed.
 
@@ -59,7 +50,7 @@ Dispatch the installation workflow with the successful preparation run's `candid
 ### Preparing and resuming a release
 
 1. Dispatch `publish.yml` on `main` with `channel=testing` and leave `candidate_run_id` and `validation_run_id` empty. A successful preparation produces the signed `release-candidate` artifact; it does not move channel tags or publish downloads. Scheduled testing follows the same preparation path.
-2. Run `installation-validation.yml` with that preparation's `candidate_run_id`, using the protected runner described above. Retain the successful validation run ID.
+2. Run `installation-validation.yml` with that preparation's `candidate_run_id`. Retain the successful validation run ID.
 3. Resume `publish.yml` with the same channel and both `candidate_run_id` and `validation_run_id`. The workflow downloads and verifies the original candidate and matching validation instead of rebuilding them. It stages signed download evidence, preflights all three image references, promotes tags, and publishes downloads.
 4. Stable preparation and resumption are temporarily disabled at the input gate. The legacy workflow promoted testing payloads from `main` and exposed a stable installer writer before protected approval. Do not use it for stable releases. Replacement requires the approved `release/<Fedora>` source, restricted candidate staging and a protected, candidate-bound Environment before public writes; these are not implemented by this safety stop.
 

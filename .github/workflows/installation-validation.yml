@@ -19,18 +19,29 @@ concurrency:
 jobs:
   installation:
     if: github.ref == 'refs/heads/main' && github.event_name == 'workflow_dispatch'
-    runs-on: [self-hosted, linux, x64, luminusos-validation]
+    runs-on: ubuntu-latest
     environment: candidate-staging
-    timeout-minutes: 360
+    timeout-minutes: 350
     permissions:
       contents: read
       actions: read
+      packages: read
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
       - name: Check Python version
         run: python3 -c 'import sys; sys.exit(sys.version_info < (3, 11))'
+      - name: Free disk space
+        uses: jlumbroso/free-disk-space@ceedf095f4ec1a097402bc6bd80831f2e1a6fde6 # v2.0.0
+        with:
+          tool-cache: true
+          android: true
+          dotnet: true
+          haskell: true
+          large-packages: true
+          docker-images: true
+          swap-storage: true
       - uses: sigstore/cosign-installer@d58896d6a1865668819e1d91763c7751a165e159 # v3.9.2
         with:
           cosign-release: v2.6.5
@@ -39,11 +50,42 @@ jobs:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           CANDIDATE_RUN_ID: ${{ inputs.candidate_run_id }}
         run: python3 .github/scripts/workflow/release_pipeline.py fetch-candidate --repository "$GITHUB_REPOSITORY" --run-id "$CANDIDATE_RUN_ID" --output candidate --public-key shared/release/candidate.pub
+      - name: Enable KVM and vhost-vsock for the runner user
+        run: |
+          printf '%s\n' \
+            'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' \
+            'KERNEL=="vhost-vsock", GROUP="kvm", MODE="0666"' \
+            | sudo tee /etc/udev/rules.d/99-luminus-vm.rules
+          sudo modprobe vhost_vsock
+          sudo udevadm control --reload-rules
+          sudo udevadm trigger --name-match=kvm
+          sudo udevadm trigger --name-match=vhost-vsock
+      - name: Install VM and fixture tooling
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends qemu-system-x86 qemu-utils ovmf socat openssh-client skopeo docker-registry
+          sudo systemctl disable --now docker-registry.service
+          echo '127.0.0.1 registry.validation.test' | sudo tee -a /etc/hosts
+      - name: Stage the private workstation image as the update fixture base
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          image="$(python3 -c 'import json; print(json.load(open("candidate/candidate.json"))["images"]["workstation"])')"
+          auth="$RUNNER_TEMP/ghcr-auth.json"
+          trap 'rm -f "$auth"' EXIT
+          printf '%s' "$GH_TOKEN" | skopeo login --authfile "$auth" --username "$GITHUB_ACTOR" --password-stdin ghcr.io
+          skopeo copy --authfile "$auth" "docker://$image" "oci:$RUNNER_TEMP/fixture-base:base"
+          chmod -R go-w "$RUNNER_TEMP/fixture-base"
       - name: Run installation and trust validation
         id: validate
         env:
           CANDIDATE_RUN_ID: ${{ inputs.candidate_run_id }}
+          FIXTURE_BASE: ${{ runner.temp }}/fixture-base
         run: python3 .github/scripts/workflow/validation_runner.py
+      - name: Remove the staged candidate image
+        if: ${{ always() }}
+        run: rm -rf "$RUNNER_TEMP/fixture-base"
       - name: Record and sign observed validation
         env:
           RECEIPTS: ${{ steps.validate.outputs.receipts }}
@@ -56,3 +98,10 @@ jobs:
           path: ${{ steps.validate.outputs.receipts }}/
           include-hidden-files: true
           if-no-files-found: error
+      - name: Upload failure diagnostics
+        if: ${{ failure() || cancelled() }}
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: installation-validation-diagnostics
+          path: ${{ runner.temp }}/luminusos-validation-*/
+          if-no-files-found: warn
