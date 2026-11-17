@@ -1611,6 +1611,96 @@ class ScopedExceptionTests(unittest.TestCase):
                         self.entry.clear()
                         self.entry.update(old)
 
+    def test_kernel_exception_can_cover_every_kernel_version(self):
+        self.entry.update(
+            component_type="linux_kernel_any",
+            package="linux-kernel",
+            package_version="any",
+        )
+        for version in (
+            "7.3.3-300.fc45.x86_64",
+            "7.3.4-300.fc45.x86_64",
+            "7.4.1-200.fc45.aarch64",
+            "7.4.0-0.rc1.fc45.x86_64",
+            "7.4.0-0.rc2.20261120git1a2b3c4d.fc45.x86_64",
+        ):
+            artifact = {
+                "name": "linux-kernel",
+                "version": version,
+                "type": "linux-kernel",
+            }
+            with self.subTest(version=version):
+                self.assertEqual(
+                    self.inspect(artifact=artifact)["scan"]["decision"], "accepted_risk"
+                )
+        for artifact in (
+            {
+                "name": "linux-kernel",
+                "version": "7.3.4-300.fc44.x86_64",
+                "type": "linux-kernel",
+            },
+            {"name": "linux-kernel", "version": "any", "type": "linux-kernel"},
+            {
+                "name": "linux-kernel",
+                "version": "7.4.0-0.rc1.fc45.x86_64/../x",
+                "type": "linux-kernel",
+            },
+            {
+                "name": "linux-kernel",
+                "version": "7.4.0-0.fc45.x86_64.fc44.x86_64",
+                "type": "linux-kernel",
+            },
+            {
+                "name": "linux-kernel",
+                "version": "7.4.0-0.fc44.x86_64.fc45.x86_64",
+                "type": "linux-kernel",
+            },
+            {"name": "linux-kernel", "version": "7.3.4-300.fc45.x86_64", "type": "rpm"},
+            {
+                "name": "kernel-core",
+                "version": "7.3.4-300.fc45.x86_64",
+                "type": "linux-kernel",
+            },
+        ):
+            with (
+                self.subTest(artifact=artifact),
+                self.assertRaises(supply_chain.SupplyChainError),
+            ):
+                self.inspect(artifact=artifact)
+        kernel = {
+            "name": "linux-kernel",
+            "version": "7.3.4-300.fc45.x86_64",
+            "type": "linux-kernel",
+        }
+        with self.assertRaises(supply_chain.SupplyChainError):
+            self.inspect(artifact=kernel, advisory="CVE-2026-9999")
+        for change in (
+            {"package": "kernel-core"},
+            {"package_version": "7.3.4-300.fc45.x86_64"},
+            {
+                "binary": {
+                    "path": "/usr/lib/modules/x/vmlinuz",
+                    "sha256": "a" * 64,
+                    "rpm_nevra": "kernel-core-x",
+                }
+            },
+        ):
+            old = copy.deepcopy(self.entry)
+            self.entry.update(change)
+            with (
+                self.subTest(change=change),
+                self.assertRaises(supply_chain.SupplyChainError),
+            ):
+                self.load()
+            self.entry.clear()
+            self.entry.update(old)
+        self.policy["exceptions"] = [
+            self.entry,
+            copy.deepcopy(self.entry) | {"reason": "Another reviewed reason."},
+        ]
+        with self.assertRaisesRegex(supply_chain.SupplyChainError, "duplicate"):
+            self.load()
+
     def test_scanner_failures_cannot_be_excepted(self):
         for tool in ("syft", "grype"):
             with (

@@ -135,3 +135,16 @@ Fedora status from Bodhi on 2026-11-16.
 | GO-2026-6860 | High | golang.org/x/net | v0.57.0 | /usr/bin/podman | podman-5:6.1.3-1.fc45.x86_64 | 0.62.0 |
 | GO-2026-6865 | High | github.com/klauspost/compress | v1.19.1 | /usr/bin/skopeo | skopeo-1:1.24.1-1.fc45.x86_64 | 1.20.2 |
 | GO-2026-6865 | High | github.com/klauspost/compress | v1.19.1 | /usr/bin/podman | podman-5:6.1.3-1.fc45.x86_64 | 1.20.2 |
+
+## Scope change 2026-11-17: every Fedora 45 kernel
+
+The Fedora kernel moved from 7.3.3-300 to 7.3.4-300 and the 18 kernel
+entries above, bound to the exact 7.3.3 vmlinuz, stopped matching
+(Auto Testing run 44090899344 found the same 18 advisories on
+7.3.4-300.fc45.x86_64). The owner, leandromqrs, decided to accept these
+18 kernel advisories for any Fedora 45 kernel the testing channel ships,
+so kernel updates do not stop testing releases. The entries now use
+component type `linux_kernel_any` with package version `any` and no
+binary identity. The original triage above still applies: applicability
+was not verified for any kernel version, and stable still requires
+per-CVE verification.
