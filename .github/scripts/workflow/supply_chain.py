@@ -395,8 +395,18 @@ def _exceptions(path, *, context=None, now=None, expected_sha256=None):
             "unknown or missing exception fields",
         )
         _require(
-            entry["component_type"] in ("rpm", "embedded_go", "linux_kernel"),
+            entry["component_type"]
+            in ("rpm", "embedded_go", "linux_kernel", "linux_kernel_any"),
             "unknown component type",
+        )
+        # The owner accepted these kernel advisories for every kernel the
+        # channel ships, so a kernel update does not stop testing releases.
+        # Scope, expiry and evidence still bind the entry.
+        _require(
+            entry["component_type"] != "linux_kernel_any"
+            or entry["package"] == "linux-kernel"
+            and entry["package_version"] == "any",
+            "any-version kernel exception must name linux-kernel and any",
         )
         _require(_matches(ADVISORY, entry["advisory"]), "invalid exact advisory")
         for field in ("package", "package_version"):
@@ -789,15 +799,33 @@ def _inspect_image(
         ):
             raise SupplyChainError("malformed Grype fix versions")
         if severity in {"High", "Critical", "Unknown"}:
-            candidates = approved.get(
-                (
-                    vulnerability_id,
-                    package,
+            scope = tuple(context[name] for name in SCOPE_FIELDS)
+            candidates = [
+                candidate
+                for candidate in approved.get(
+                    (vulnerability_id, package, version, *scope), []
+                )
+                if candidate["component_type"] != "linux_kernel_any"
+            ]
+            if (
+                artifact.get("type") == "linux-kernel"
+                and package == "linux-kernel"
+                and _matches(
+                    # Release segments cover rc and git snapshot kernels; only the
+                    # final dist tag may name a Fedora release.
+                    r"[0-9]+(?:\.[0-9]+)*-[0-9][0-9A-Za-z_+~]*"
+                    r"(?:\.(?!fc[0-9])[0-9A-Za-z_+~]+)*"
+                    rf"\.fc{context['fedora']}\.(?:x86_64|aarch64)",
                     version,
-                    *(context[name] for name in SCOPE_FIELDS),
-                ),
-                [],
-            )
+                )
+            ):
+                candidates = candidates + [
+                    candidate
+                    for candidate in approved.get(
+                        (vulnerability_id, package, "any", *scope), []
+                    )
+                    if candidate["component_type"] == "linux_kernel_any"
+                ]
             entry = next(
                 (
                     candidate
@@ -810,6 +838,8 @@ def _inspect_image(
                     or candidate["component_type"] == "linux_kernel"
                     and artifact.get("type") == "linux-kernel"
                     and _binary_matches(candidate["binary"], artifact, sbom)
+                    or candidate["component_type"] == "linux_kernel_any"
+                    and artifact.get("type") == "linux-kernel"
                 ),
                 None,
             )
