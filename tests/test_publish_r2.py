@@ -56,6 +56,9 @@ class PublishTests(unittest.TestCase):
         removals = [call for call in calls if call[:3] == ["aws", "s3", "rm"]]
         self.assertEqual(len(removals), 1)
         self.assertEqual(removals[0][3], "s3://bucket/testing/testing-45.20261030/")
+        # aws s3 rm has no --no-progress; release run 44041629422 failed on it.
+        self.assertNotIn("--no-progress", removals[0])
+        self.assertIn("--only-show-errors", removals[0])
         self.assertEqual(manifests[0]["version"], self.version)
         self.assertTrue(
             manifests[0]["assets"]["iso"].startswith(
