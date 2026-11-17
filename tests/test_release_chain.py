@@ -1,4 +1,5 @@
 import importlib.util
+import json
 import re
 import sys
 import unittest
@@ -34,10 +35,17 @@ def run(**overrides):
 
 
 class FakeGitHub:
-    def __init__(self, artifacts=("release-candidate",), newer=()):
+    def __init__(self, artifacts=("release-candidate",), newer=(), tags=()):
         self.artifacts = list(artifacts)
         self.newer = list(newer)
+        self.tags = set(tags)
         self.dispatched = []
+
+    def candidate_version(self, run_id):
+        return "45.20261117.1"
+
+    def tag_exists(self, tag):
+        return tag in self.tags
 
     def artifact_names(self, run_id):
         return self.artifacts if run_id == 100 else []
@@ -244,6 +252,84 @@ class ChainTests(unittest.TestCase):
             self.assertRaisesRegex(ValueError, "no run"),
         ):
             github.dispatch("publish.yml", {})
+
+
+class VersionCollisionTests(unittest.TestCase):
+    def test_candidate_whose_version_tag_exists_is_skipped_before_validation(self):
+        github = FakeGitHub(tags={"testing-45.20261117.1"})
+        self.assertIsNone(
+            chain.advance(run(), REPO, github, wait_for=finished("success"))
+        )
+        self.assertEqual(github.dispatched, [])
+
+    def test_other_versions_do_not_skip_the_candidate(self):
+        github = FakeGitHub(tags={"testing-45.20261117.2", "testing-46.20261117.1"})
+        self.assertEqual(
+            chain.advance(run(), REPO, github, wait_for=finished("success")), 201
+        )
+
+    def test_version_taken_during_validation_skips_publication(self):
+        github = FakeGitHub()
+        github.tag_exists = lambda tag: bool(github.dispatched)
+        self.assertIsNone(
+            chain.advance(run(), REPO, github, wait_for=finished("success"))
+        )
+        self.assertEqual(
+            [w for w, _ in github.dispatched], ["installation-validation.yml"]
+        )
+
+    def test_candidate_version_comes_from_the_scanned_image_label(self):
+        github = chain.GitHub(REPO)
+
+        def download(argv, **_kwargs):
+            directory = Path(argv[argv.index("--dir") + 1])
+            (directory / "core").mkdir()
+            (directory / "core/vulnerabilities.json").write_text(json.dumps(scan))
+
+        for version, expected in (
+            ("45.20261117.2", "45.20261117.2"),
+            ("45.20261117", None),
+            ("45.20261117.2/../x", None),
+            (None, None),
+        ):
+            labels = (
+                {} if version is None else {"org.opencontainers.image.version": version}
+            )
+            scan = {"source": {"target": {"labels": labels}}}
+            with (
+                self.subTest(version=version),
+                mock.patch.object(chain.subprocess, "run", side_effect=download),
+            ):
+                if expected:
+                    self.assertEqual(github.candidate_version(100), expected)
+                else:
+                    with self.assertRaises(ValueError):
+                        github.candidate_version(100)
+
+    def test_missing_or_broken_scan_is_a_chain_error(self):
+        github = chain.GitHub(REPO)
+        for content in (None, "not json"):
+
+            def download(argv, content=content, **_kwargs):
+                if content is not None:
+                    directory = Path(argv[argv.index("--dir") + 1])
+                    (directory / "core").mkdir()
+                    (directory / "core/vulnerabilities.json").write_text(content)
+
+            with (
+                self.subTest(content=content),
+                mock.patch.object(chain.subprocess, "run", side_effect=download),
+                self.assertRaisesRegex(ValueError, "candidate-scans"),
+            ):
+                github.candidate_version(100)
+
+    def test_tag_check_requires_the_exact_ref(self):
+        github = chain.GitHub(REPO)
+        refs = [{"ref": "refs/tags/testing-45.20261117.10"}]
+        github.api = lambda path, *_a: refs
+        self.assertFalse(github.tag_exists("testing-45.20261117.1"))
+        refs.append({"ref": "refs/tags/testing-45.20261117.1"})
+        self.assertTrue(github.tag_exists("testing-45.20261117.1"))
 
 
 class SupersessionTests(unittest.TestCase):
