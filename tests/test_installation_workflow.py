@@ -55,20 +55,11 @@ def write_receipts(directory, document):
 
 
 class RunnerTests(unittest.TestCase):
-    def test_driver_is_fixed_and_untrusted_paths_rejected(self):
+    def test_driver_is_the_reviewed_repository_script(self):
         self.assertEqual(
-            str(runner.DRIVER), "/usr/local/libexec/luminusos/validate-candidate"
+            runner.DRIVER, ROOT / ".github/scripts/workflow/validation_driver.py"
         )
-        with tempfile.TemporaryDirectory() as tmp:
-            path = Path(tmp) / "driver"
-            path.write_text("driver")
-            path.chmod(0o777)
-            with self.assertRaises(ValueError):
-                runner.trusted_driver(path)
-            link = Path(tmp) / "link"
-            link.symlink_to(path)
-            with self.assertRaises(ValueError):
-                runner.trusted_driver(link)
+        self.assertTrue(runner.DRIVER.is_file())
 
     def test_unsafe_directory_and_run_id_are_refused(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -77,7 +68,7 @@ class RunnerTests(unittest.TestCase):
             with self.assertRaises(ValueError):
                 runner.owned_directory(root)
             with self.assertRaises(ValueError):
-                runner.run_validation(root, root, "12;id", "org/repo")
+                runner.run_validation(root, root, "12;id", "org/repo", root)
 
     def test_real_receipt_schema_checked_and_no_secrets_given_to_driver(self):
         document = candidate()
@@ -86,21 +77,22 @@ class RunnerTests(unittest.TestCase):
             candidate_dir = root / "candidate"
             candidate_dir.mkdir()
             (candidate_dir / "candidate.json").touch()
+            fixture = root / "fixture-base"
+            fixture.mkdir()
 
             def invoke(command, *, check, env):
                 self.assertTrue(check)
+                self.assertEqual(command[:2], [sys.executable, str(runner.DRIVER)])
                 self.assertEqual(
-                    command[1:3], ["--candidate", str(candidate_dir / "candidate.json")]
+                    command[2:4], ["--candidate", str(candidate_dir / "candidate.json")]
                 )
+                self.assertEqual(command[-2:], ["--fixture-base", str(fixture)])
                 self.assertNotIn("COSIGN_PRIVATE_KEY", env)
                 self.assertNotIn("GH_TOKEN", env)
-                write_receipts(Path(command[-1]), document)
+                write_receipts(Path(command[command.index("--receipts") + 1]), document)
                 return subprocess.CompletedProcess(command, 0)
 
             with (
-                patch.object(
-                    runner, "trusted_driver", return_value=Path("/trusted/driver")
-                ),
                 patch.object(
                     runner.release_pipeline, "candidate", return_value=document
                 ),
@@ -109,7 +101,9 @@ class RunnerTests(unittest.TestCase):
                     os.environ, {"GH_TOKEN": "secret", "COSIGN_PRIVATE_KEY": "secret"}
                 ),
             ):
-                receipts = runner.run_validation(candidate_dir, root, "12", "org/repo")
+                receipts = runner.run_validation(
+                    candidate_dir, root, "12", "org/repo", fixture
+                )
             self.assertEqual(
                 len(list(receipts.glob("*.json"))), len(runner.release_pipeline.CHECKS)
             )
@@ -122,10 +116,9 @@ class RunnerTests(unittest.TestCase):
             candidate_dir = root / "candidate"
             candidate_dir.mkdir()
             (candidate_dir / "candidate.json").touch()
+            fixture = root / "fixture-base"
+            fixture.mkdir()
             with (
-                patch.object(
-                    runner, "trusted_driver", return_value=Path("/trusted/driver")
-                ),
                 patch.object(
                     runner.release_pipeline, "candidate", return_value=document
                 ),
@@ -136,18 +129,15 @@ class RunnerTests(unittest.TestCase):
                 ),
                 self.assertRaises(subprocess.CalledProcessError),
             ):
-                runner.run_validation(candidate_dir, root, "12", "org/repo")
+                runner.run_validation(candidate_dir, root, "12", "org/repo", fixture)
             with (
-                patch.object(
-                    runner, "trusted_driver", return_value=Path("/trusted/driver")
-                ),
                 patch.object(
                     runner.release_pipeline, "candidate", return_value=document
                 ),
                 patch.object(runner.subprocess, "run") as execute,
                 self.assertRaises(ValueError),
             ):
-                runner.run_validation(candidate_dir, root, "13", "org/repo")
+                runner.run_validation(candidate_dir, root, "13", "org/repo", fixture)
             execute.assert_not_called()
 
     def test_invalid_receipt_or_log_rejects_before_signing(self):
@@ -158,9 +148,11 @@ class RunnerTests(unittest.TestCase):
                 candidate_dir = root / "candidate"
                 candidate_dir.mkdir()
                 (candidate_dir / "candidate.json").touch()
+                fixture = root / "fixture-base"
+                fixture.mkdir()
 
                 def invoke(command, *, check, env, failure=failure):
-                    receipts = Path(command[-1])
+                    receipts = Path(command[command.index("--receipts") + 1])
                     write_receipts(receipts, document)
                     path = next(receipts.glob("*.json"))
                     receipt = json.loads(path.read_text())
@@ -175,15 +167,14 @@ class RunnerTests(unittest.TestCase):
 
                 with (
                     patch.object(
-                        runner, "trusted_driver", return_value=Path("/trusted/driver")
-                    ),
-                    patch.object(
                         runner.release_pipeline, "candidate", return_value=document
                     ),
                     patch.object(runner.subprocess, "run", side_effect=invoke),
                     self.assertRaises(ValueError),
                 ):
-                    runner.run_validation(candidate_dir, root, "12", "org/repo")
+                    runner.run_validation(
+                        candidate_dir, root, "12", "org/repo", fixture
+                    )
 
     def test_symlinked_outputs_refused(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -204,26 +195,49 @@ class WorkflowTests(unittest.TestCase):
         )
         job = workflow["jobs"]["installation"]
         self.assertIn("refs/heads/main", job["if"])
-        self.assertEqual(
-            job["runs-on"], ["self-hosted", "linux", "x64", "luminusos-validation"]
-        )
+        self.assertEqual(job["runs-on"], "ubuntu-latest")
         self.assertEqual(job["environment"], "candidate-staging")
-        self.assertEqual(job["permissions"], {"contents": "read", "actions": "read"})
-        steps = job["steps"]
-        self.assertEqual(steps[0]["with"]["persist-credentials"], "false")
-        self.assertIn("fetch-candidate", steps[3]["run"])
-        self.assertIn("validation_runner.py", steps[4]["run"])
-        self.assertIn("record-validation", steps[5]["run"])
-        self.assertIn("shared/release/candidate.pub", steps[3]["run"])
-        self.assertIn("shared/release/candidate.pub", steps[5]["run"])
         self.assertEqual(
-            steps[5]["env"]["CANDIDATE_COSIGN_PRIVATE_KEY"],
+            job["permissions"],
+            {"contents": "read", "actions": "read", "packages": "read"},
+        )
+        steps = {step.get("name", step.get("uses")): step for step in job["steps"]}
+        ordered = [step.get("name", step.get("uses")) for step in job["steps"]]
+        self.assertEqual(job["steps"][0]["with"]["persist-credentials"], "false")
+        fetch = steps["Fetch and verify candidate"]
+        stage = steps["Stage the private workstation image as the update fixture base"]
+        validate = steps["Run installation and trust validation"]
+        record = steps["Record and sign observed validation"]
+        self.assertLess(ordered.index(fetch["name"]), ordered.index(stage["name"]))
+        self.assertLess(ordered.index(stage["name"]), ordered.index(validate["name"]))
+        self.assertLess(ordered.index(validate["name"]), ordered.index(record["name"]))
+        self.assertIn("fetch-candidate", fetch["run"])
+        self.assertIn("shared/release/candidate.pub", fetch["run"])
+        self.assertIn("rm -f", stage["run"])
+        self.assertIn("--password-stdin", stage["run"])
+        self.assertIn("validation_runner.py", validate["run"])
+        for step in (validate, record):
+            self.assertNotIn("GH_TOKEN", step.get("env", {}))
+            self.assertNotIn("GITHUB_TOKEN", str(step))
+        self.assertNotIn("COSIGN", str(validate))
+        self.assertIn("record-validation", record["run"])
+        self.assertIn("shared/release/candidate.pub", record["run"])
+        self.assertEqual(
+            record["env"]["CANDIDATE_COSIGN_PRIVATE_KEY"],
             "${{ secrets.CANDIDATE_COSIGN_PRIVATE_KEY }}",
         )
         self.assertNotIn("secrets.COSIGN_PRIVATE_KEY", str(job))
         self.assertEqual(runner.PUBLIC_KEY, Path("shared/release/candidate.pub"))
-        self.assertEqual(steps[6]["with"]["name"], "installation-validation")
-        self.assertNotIn("COSIGN_PRIVATE_KEY", str(steps[4]))
+        uploads = [s for s in job["steps"] if "upload-artifact" in s.get("uses", "")]
+        self.assertEqual(
+            [u["with"]["name"] for u in uploads],
+            ["installation-validation", "installation-validation-diagnostics"],
+        )
+        self.assertEqual(uploads[1]["if"], "${{ failure() || cancelled() }}")
+        cleanup = steps["Remove the staged candidate image"]
+        self.assertEqual(cleanup["if"], "${{ always() }}")
+        self.assertIn('rm -rf "$RUNNER_TEMP/fixture-base"', cleanup["run"])
+        self.assertLess(ordered.index(validate["name"]), ordered.index(cleanup["name"]))
 
 
 if __name__ == "__main__":

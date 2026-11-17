@@ -9,7 +9,9 @@ from pathlib import Path
 
 import release_pipeline
 
-DRIVER = Path("/usr/local/libexec/luminusos/validate-candidate")
+# The driver is reviewed repository code, run from the checkout of the
+# dispatching main commit; that commit is recorded as runner_sha.
+DRIVER = Path(__file__).resolve().parent / "validation_driver.py"
 PUBLIC_KEY = Path("shared/release/candidate.pub")
 
 
@@ -18,20 +20,6 @@ def reject_symlink_components(path):
     for part in (path, *path.parents):
         if part.is_symlink():
             raise ValueError(f"symlink in path: {part}")
-    return path
-
-
-def trusted_driver(path=DRIVER):
-    path = reject_symlink_components(path)
-    for component in (path, *path.parents):
-        info = component.lstat()
-        if info.st_uid != 0 or info.st_mode & 0o022:
-            raise ValueError(f"untrusted driver path ownership or mode: {component}")
-        if component == path:
-            if not stat.S_ISREG(info.st_mode) or not info.st_mode & 0o111:
-                raise ValueError("validation driver must be an executable regular file")
-        elif not stat.S_ISDIR(info.st_mode):
-            raise ValueError(f"driver ancestor is not a directory: {component}")
     return path
 
 
@@ -60,12 +48,12 @@ def validate_output_tree(directory):
                 raise ValueError(f"unsafe validation output: {path}")
 
 
-def run_validation(candidate_dir, runner_temp, run_id, repository):
+def run_validation(candidate_dir, runner_temp, run_id, repository, fixture_base):
     if not re.fullmatch(r"[1-9][0-9]*", run_id):
         raise ValueError("candidate run ID must be a positive decimal integer")
     candidate_dir = owned_directory(candidate_dir)
     runner_temp = owned_directory(runner_temp)
-    driver = trusted_driver()
+    fixture_base = owned_directory(fixture_base)
     candidate_path = candidate_dir / "candidate.json"
     candidate = release_pipeline.candidate(candidate_path, PUBLIC_KEY)
     if candidate["run_id"] != int(run_id) or candidate["repository"] != repository:
@@ -82,13 +70,16 @@ def run_validation(candidate_dir, runner_temp, run_id, repository):
     }
     subprocess.run(
         [
-            str(driver),
+            sys.executable,
+            str(DRIVER),
             "--candidate",
             str(candidate_path),
             "--artifacts",
             str(candidate_dir),
             "--receipts",
             str(receipts),
+            "--fixture-base",
+            str(fixture_base),
         ],
         check=True,
         env=environment,
@@ -120,6 +111,7 @@ def main():
         Path(env["RUNNER_TEMP"]),
         env["CANDIDATE_RUN_ID"],
         env["GITHUB_REPOSITORY"],
+        Path(env["FIXTURE_BASE"]),
     )
     value = str(receipts)
     if "\n" in value or "\r" in value:
