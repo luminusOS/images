@@ -237,18 +237,21 @@ def booted(status: dict) -> dict:
     return image
 
 
-# containers/image reports policy failures as "Source image rejected: <reason>";
-# the reason distinguishes a missing signature from one made by another key.
-POLICY_REJECTION = "source image rejected:"
+# containers/image prefixes policy failures with "Source image rejected:", but
+# bootc reaches it through the skopeo proxy, which reports the policy error as
+# the OpenImage failure. That prefix is generic, so the reason text is what
+# tells a missing signature from one made by another key.
+POLICY_REJECTION = ("source image rejected:", "failed to invoke method openimage:")
 NO_SIGNATURE = "a signature was required, but no signature exists"
 VERIFICATION_FAILED = ("verification failed", "invalid signature", "not accepted")
 
 
 def rejected(result: subprocess.CompletedProcess, kind: str) -> bool:
     output = (result.stdout + result.stderr).lower()
-    if result.returncode == 0 or POLICY_REJECTION not in output:
+    prefix = next((p for p in POLICY_REJECTION if p in output), None)
+    if result.returncode == 0 or prefix is None:
         return False
-    reason = output.split(POLICY_REJECTION, 1)[1]
+    reason = output.split(prefix, 1)[1]
     if kind == "unsigned":
         return NO_SIGNATURE in reason
     return NO_SIGNATURE not in reason and any(
