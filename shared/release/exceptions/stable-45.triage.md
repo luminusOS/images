@@ -21,6 +21,23 @@ cf55e4539fdfd39da91772c4656f1a0103ed3ed3630056d49c69b3f2807230ef  kernel-modules
 4b2e2cd66d0efb8cc39f31ea8843f63acd05320a2aa78cdc396b2ede76ff6e2b  kernel-modules-extra-7.3.4-300.fc45.x86_64.rpm
 ```
 
+## podman 6.2.0 and GHSA-4hq8-gpf5-8p68
+
+Scan of the second stable candidate (publish.yml run 44296172348 on release/45, base sha256:69b66da0839f186f799addae6620aae19a6998b3fd4d2def00168c8dab50c486) reports GHSA-4hq8-gpf5-8p68 (CVE-2026-57231, image environment entries without a value leak host variables) on /usr/bin/podman, /usr/libexec/podman/quadlet and /usr/libexec/podman/rootlessport. The advisory covers `go.podman.io/podman/v6 < 6.0.0`. Go records the main module of these binaries as the pseudo-version `v6.0.0-20261110000000-d3ee8c5e6fec+dirty`, which orders before 6.0.0.
+
+- The candidate SBOMs list podman 5:6.2.0-1.fc45 and skopeo 1:1.25.1-2.fc45. Their Fedora-signed RPMs were downloaded from kojipkgs (data/signed/f577861e) on 2026-11-18. `rpmkeys -K`, run against a database holding only the Fedora 45 primary key, reports `digests signatures OK`. The RPM file digests equal the sha256 of the scanned ostree objects: c7c17121… /usr/bin/podman, 0639f268… /usr/libexec/podman/quadlet, 376de782… /usr/libexec/podman/rootlessport and 0e6ca9bf… /usr/bin/skopeo. Those digests set the binary identities in the policies.
+- The Fedora f45 podman.spec has `Version: 6.2.0` and `Source0: https://github.com/containers/%{name}/archive/v%{version_no_tilde}.tar.gz`, and its `sources` file names v6.2.0.tar.gz.
+- The advisory names the fix commit 6c431b73dbf8e4b20b778644d7a80caebdb75050, "fix image host env leak". The GitHub compare API between that commit and v6.2.0 returns `ahead`, behind 0, so the fix is an ancestor of the tag the binaries are built from.
+- The Fedora-signed source package podman-6.2.0-1.fc45.src.rpm (sha256 a3271ece6301e5d6c6d7d3f8ce7eeb9f79dc633a9d7eaf30d6a3cd10ebf6484c, from kojipkgs data/signed/f577861e/src) passes `rpmkeys -K` with only the Fedora 45 key. It contains only podman.spec and v6.2.0.tar.gz (sha256 cb182273c5c5e3ea079f8f88a9a30a574d247f80e0b9dd9c02df1d2e6f6f3705). The tarball's sha512 (10b1559e9e34…) equals both the dist-git `sources` entry and a fresh download of https://github.com/containers/podman/archive/v6.2.0.tar.gz.
+- The spec declares no `Patch` lines. `%prep` runs `%autosetup -Sgit` and changes only the Makefile (the `@@PODMAN@@` bindir substitution; the cgroups-v1 edit applies only on RHEL 9). That edited working tree explains the `+dirty` suffix. `%build` sets only compiler and linker flags and build tags, and stamps GIT_COMMIT 055de046937d29450f310fce0fe3071485d8bed9, the commit that tag v6.2.0 points to.
+- In the unpacked v6.2.0 source, pkg/specgen/generate/container.go:130 defines `ParseImageEnvs`, which rejects an image env entry without `=` or with an empty key. It is called on the image config in container.go:192 and pkg/specgen/generate/kube/kube.go:493: the change commit 6c431b73dbf8 makes.
+- Owner decision of 2026-11-18: classify this finding as `proven_false_positive` for these three podman-6.2.0-1.fc45 binaries, for 30 days.
+
+```
+2e401364d53b98fedc4d04a957c3937ad4e987e3029dd3b960fceb6fe1265188  podman-6.2.0-1.fc45.x86_64.rpm
+d3ed4f5d207fd107a870d74ebe79eec8a2288a30fb4d1e266da678ece885c3fb  skopeo-1.25.1-2.fc45.x86_64.rpm
+```
+
 ## Decision table
 
 
