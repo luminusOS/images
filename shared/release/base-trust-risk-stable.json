@@ -1,0 +1,14 @@
+{
+  "schema_version": 1,
+  "kind": "fedora-bootc-upstream-signature-risk",
+  "repository": "quay.io/fedora/fedora-bootc",
+  "fedora_version": "45",
+  "owner": "leandromqrs",
+  "accepted_at": "2026-11-18T00:00:00Z",
+  "expires_at": "2026-12-18T00:00:00Z",
+  "reason": "Fedora does not publish a verifiable signature for fedora-bootc images. The owner accepted building stable 45 on it on 2026-11-17.",
+  "mitigations": [
+    "immutable sha256 digest pin resolved by the build detector",
+    "TLS transport to quay.io"
+  ]
+}

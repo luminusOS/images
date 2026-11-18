@@ -94,3 +94,45 @@ class BaseTrustRiskTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class StableRecordsTests(unittest.TestCase):
+    def test_stable_base_risk_is_in_force_for_fedora_45_only(self):
+        record = json.loads(
+            (ROOT / "shared/release/base-trust-risk-stable.json").read_text()
+        )
+        self.assertEqual(errors(record), [])
+        self.assertTrue(errors(record, version="46"))
+        self.assertTrue(
+            errors(record, base="quay.io/other/fedora-bootc@sha256:" + "a" * 64)
+        )
+
+    def test_stable_flatpak_exclusion_is_valid_for_workstation_only(self):
+        spec = importlib.util.spec_from_file_location(
+            "supply_chain_stable_records",
+            ROOT / ".github/scripts/workflow/supply_chain.py",
+        )
+        chain = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(chain)
+        path = ROOT / "shared/release/flatpak-scan-risk-stable.json"
+        for scope in ("workstation_payload", "installer_live"):
+            context = {
+                "edition": "workstation",
+                "component_scope": scope,
+                "channel": "stable",
+                "fedora": "45",
+            }
+            self.assertEqual(
+                chain._scan_exclusion(path, context, NOW)["path"], "/var/lib/flatpak"
+            )
+        with self.assertRaises(chain.SupplyChainError):
+            chain._scan_exclusion(
+                path,
+                {
+                    "edition": "core",
+                    "component_scope": "core_payload",
+                    "channel": "stable",
+                    "fedora": "45",
+                },
+                NOW,
+            )
