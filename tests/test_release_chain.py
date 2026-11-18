@@ -333,7 +333,7 @@ class VersionCollisionTests(unittest.TestCase):
 
 
 class SupersessionTests(unittest.TestCase):
-    def github(self, pages, candidates):
+    def github(self, pages, candidates, failed=()):
         github = chain.GitHub(REPO)
         calls = []
 
@@ -348,7 +348,8 @@ class SupersessionTests(unittest.TestCase):
             runs = pages.get(workflow, [])
             return {
                 "workflow_runs": [
-                    {"id": i} for i in (runs[page - 1] if page <= len(runs) else [])
+                    {"id": i, "conclusion": "failure" if i in failed else "success"}
+                    for i in (runs[page - 1] if page <= len(runs) else [])
                 ]
             }
 
@@ -365,6 +366,13 @@ class SupersessionTests(unittest.TestCase):
         self.assertFalse(any("publish.yml" in c for c in calls))
         self.assertTrue(any("page=2" in c for c in calls))
         self.assertFalse(any("page=3" in c for c in calls))
+
+    def test_newer_runs_are_filtered_locally_by_their_conclusion(self):
+        github, calls = self.github(
+            {"auto-testing.yml": [[180, 150, 99]]}, {150, 180}, failed={180}
+        )
+        self.assertEqual(github.candidate_runs_after(100), [150])
+        self.assertFalse(any("status=" in c for c in calls if "/artifacts" not in c))
 
     def test_older_runs_alone_mean_no_newer_candidate(self):
         github, _ = self.github({"auto-testing.yml": [[99, 50]]}, {99})

@@ -1,0 +1,111 @@
+name: Auto Stable
+
+# Daily on main: run the detector on every active stable line, then carry
+# each candidate through validation to the stable approval gate. On
+# release/<N>: detect a Fedora base change and prepare a stable candidate.
+# Scheduled runs only use main, so main dispatches the line's own copy.
+on:
+  schedule:
+    - cron: "47 11 * * *"
+  workflow_dispatch:
+    inputs:
+      orchestrator_run_id:
+        description: "Set by the main run that dispatched this line; leave blank"
+        default: ""
+
+permissions:
+  contents: read
+
+jobs:
+  lines:
+    name: List stable lines
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    outputs:
+      lines: ${{ steps.lines.outputs.lines }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Read STABLE_LINES
+        id: lines
+        run: echo "lines=$(python3 .github/scripts/workflow/stable_chain.py lines)" >> "$GITHUB_OUTPUT"
+
+  line:
+    name: Carry release/${{ matrix.line }} to the approval gate
+    needs: [lines]
+    if: needs.lines.outputs.lines != '[]'
+    runs-on: ubuntu-latest
+    # One job per line: each gets its own budget, and a failing line does not
+    # stop the others.
+    timeout-minutes: 360
+    strategy:
+      fail-fast: false
+      matrix:
+        line: ${{ fromJSON(needs.lines.outputs.lines) }}
+    permissions:
+      actions: write
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Prepare, validate, then stop at the stable approval gate
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          LINE: ${{ matrix.line }}
+        run: python3 .github/scripts/workflow/stable_chain.py line "$LINE"
+
+  quality:
+    if: startsWith(github.ref, 'refs/heads/release/') && github.event_name == 'workflow_dispatch'
+    permissions:
+      contents: read
+    uses: ./.github/workflows/ci.yml
+
+  check:
+    name: Check Fedora base
+    needs: [quality]
+    runs-on: ubuntu-latest
+    permissions:
+      actions: read
+      contents: read
+    outputs:
+      build: ${{ steps.check.outputs.build }}
+      fedora_version: ${{ steps.check.outputs.fedora_version }}
+      fedora_bootc_digest: ${{ steps.check.outputs.fedora_bootc_digest }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Compare Fedora bootc digest with the line's stable image
+        id: check
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          ORCHESTRATOR_RUN_ID: ${{ inputs.orchestrator_run_id }}
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y skopeo
+          python3 .github/scripts/workflow/stable_detect.py
+
+  prepare:
+    name: Prepare stable candidate
+    needs: [check]
+    if: needs.check.outputs.build == 'true'
+    permissions:
+      contents: write
+      packages: write
+      actions: read
+    uses: ./.github/workflows/publish.yml
+    with:
+      channel: stable
+      build_sequence: true
+      force_core: true
+      detected_fedora_version: ${{ needs.check.outputs.fedora_version }}
+      detected_base_digest: ${{ needs.check.outputs.fedora_bootc_digest }}
+    # Preparation signs only with the isolated candidate key; the official
+    # publishing credentials stay out of this run.
+    secrets:
+      CANDIDATE_COSIGN_PRIVATE_KEY: ${{ secrets.CANDIDATE_COSIGN_PRIVATE_KEY }}
+      CANDIDATE_COSIGN_PASSWORD: ${{ secrets.CANDIDATE_COSIGN_PASSWORD }}
