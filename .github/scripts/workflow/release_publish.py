@@ -1009,8 +1009,13 @@ def check_release(files: dict[str, Path], version: str, channel: str) -> list[st
 
 def check_downloads(sums: Path, channel: str, version: str) -> None:
     url = f"https://download.luminusos.org/{channel}/{version}/SHA256SUMS"
+    # Cloudflare in front of the download site answers 403 to the default
+    # Python-urllib agent, even for files that exist.
+    request = urllib.request.Request(
+        url, headers={"User-Agent": "luminusos-release-publish"}
+    )
     try:
-        with urllib.request.urlopen(url, timeout=60) as response:
+        with urllib.request.urlopen(request, timeout=60) as response:
             published = response.read()
     except urllib.error.HTTPError as error:
         if error.code == 404:
