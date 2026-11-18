@@ -2174,3 +2174,298 @@ class ReleasePipelineTests(unittest.TestCase):
         ):
             pipeline.create_candidate(metadata, tmp_path, path, key)
         sign.assert_not_called()
+
+
+class ReleaseLineTests(unittest.TestCase):
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmp.cleanup)
+        self.tmp_path = Path(self.tmp.name)
+
+    def stable_sample(self):
+        path, key, document = sample(self.tmp_path)
+        patcher = mock.patch.object(pipeline, "CANDIDATE_PUBLIC_KEY", key)
+        patcher.start()
+        self.addCleanup(patcher.stop)
+        document = document | {
+            "channel": "stable",
+            "version_tag": "42.20261118.1",
+            "build_version": "42.20261118.1",
+        }
+        path.write_text(json.dumps(document))
+        return path, key, document
+
+    def test_each_channel_has_exactly_one_source_ref(self):
+        self.assertEqual(pipeline.release_ref("testing", "45"), "refs/heads/main")
+        self.assertEqual(pipeline.release_ref("stable", "45"), "refs/heads/release/45")
+        for channel, fedora in (("beta", "45"), ("stable", "45x"), ("stable", "")):
+            with (
+                self.subTest(channel=channel, fedora=fedora),
+                self.assertRaises(ValueError),
+            ):
+                pipeline.release_ref(channel, fedora)
+
+    def test_candidates_are_produced_only_on_their_channel_ref(self):
+        stable_path, key, stable = self.stable_sample()
+        testing = stable | {
+            "channel": "testing",
+            "version_tag": "testing-42.20261118.1",
+        }
+        metadata = self.tmp_path / "metadata.input"
+        for document, ref, allowed in (
+            (stable, "refs/heads/release/42", True),
+            (stable, "refs/heads/main", False),
+            (stable, "refs/heads/release/43", False),
+            (testing, "refs/heads/main", True),
+            (testing, "refs/heads/release/42", False),
+        ):
+            metadata.write_text(
+                json.dumps({k: v for k, v in document.items() if k != "artifacts"})
+            )
+            env = {
+                "GITHUB_REPOSITORY": "owner/repo",
+                "GITHUB_REF": ref,
+                "GITHUB_SHA": "a" * 40,
+                "GITHUB_RUN_ID": "123",
+            }
+            with (
+                self.subTest(channel=document["channel"], ref=ref),
+                mock.patch.dict(pipeline.os.environ, env),
+                mock.patch.object(pipeline, "sign"),
+            ):
+                if allowed:
+                    pipeline.create_candidate(metadata, self.tmp_path, stable_path, key)
+                else:
+                    with self.assertRaisesRegex(ValueError, "ref"):
+                        pipeline.create_candidate(
+                            metadata, self.tmp_path, stable_path, key
+                        )
+
+    def test_runs_from_release_lines_are_authorized_only_for_their_channel(self):
+        workflows = {".github/workflows/publish.yml"}
+        for branch in ("main", "release/45"):
+            run = run_document() | {"head_branch": branch}
+            self.assertEqual(
+                pipeline.authorize_run(run, "owner/repo", 123, workflows), run
+            )
+        for branch in ("release/x", "release/45/evil", "feature", "release/"):
+            with self.subTest(branch=branch), self.assertRaises(ValueError):
+                pipeline.authorize_run(
+                    run_document() | {"head_branch": branch},
+                    "owner/repo",
+                    123,
+                    workflows,
+                )
+        _, _, stable = self.stable_sample()
+        pipeline.require_line(stable, run_document() | {"head_branch": "release/42"})
+        for document, branch in (
+            (stable, "main"),
+            (stable, "release/43"),
+            (stable | {"channel": "testing"}, "release/42"),
+        ):
+            with (
+                self.subTest(branch=branch),
+                self.assertRaisesRegex(ValueError, "release line"),
+            ):
+                pipeline.require_line(
+                    document, run_document() | {"head_branch": branch}
+                )
+
+    def test_stable_validation_and_evidence_name_the_release_line(self):
+        path, key, candidate = self.stable_sample()
+        (self.tmp_path / "candidate.json.sig").write_text("signature")
+        receipts = self.tmp_path / "receipts"
+        receipts.mkdir()
+        log = receipts / "install.log"
+        log.write_text("trusted executor observation")
+        for name in pipeline.CHECKS:
+            (receipts / f"{name}.json").write_text(
+                json.dumps(
+                    {
+                        "name": name,
+                        "command": ["checked"],
+                        "exit_code": 0,
+                        "started_at": "2026-01-01T00:00:00Z",
+                        "finished_at": "2026-01-01T00:01:00Z",
+                        "log": "install.log",
+                        "sha256": pipeline.digest(log),
+                        "binding": pipeline.binding(candidate),
+                    }
+                )
+            )
+        validation = receipts / "validation.json"
+        results = self.tmp_path / "results.json"
+        gate_log = self.tmp_path / "quality.log"
+        gate_log.write_text("trusted job result")
+        results.write_text(
+            json.dumps(
+                {
+                    gate: {
+                        "conclusion": "success",
+                        "binding": pipeline.binding(candidate),
+                        "artifact": gate_log.name,
+                        "sha256": pipeline.digest(gate_log),
+                    }
+                    for gate in pipeline.GATES
+                }
+            )
+        )
+        evidence = self.tmp_path / "release" / "evidence.json"
+
+        def command(argv, **kwargs):
+            if argv[:2] == ["cosign", "sign-blob"]:
+                Path(argv[argv.index("--output-signature") + 1]).write_text("sig")
+            return mock.Mock(stdout="")
+
+        def run(action, ref, *extra):
+            env = {
+                "GITHUB_REPOSITORY": "owner/repo",
+                "GITHUB_REF": ref,
+                "GITHUB_SHA": "b" * 40,
+                "GITHUB_RUN_ID": "456",
+                "CANDIDATE_COSIGN_PRIVATE_KEY": "fixture",
+            }
+            argv = ["release_pipeline", action, "--candidate", str(path)]
+            argv += [*extra, "--public-key", str(key)]
+            with (
+                mock.patch.dict(pipeline.os.environ, env),
+                mock.patch.object(pipeline.subprocess, "run", side_effect=command),
+                mock.patch.object(pipeline.sys, "argv", argv),
+                mock.patch.object(pipeline.sys, "stdout", new_callable=io.StringIO),
+                mock.patch.object(
+                    pipeline.sys, "stderr", new_callable=io.StringIO
+                ) as stderr,
+            ):
+                code = pipeline.main()
+                self.errors.append(stderr.getvalue())
+                return code
+
+        self.errors = []
+        record = ("--receipts", str(receipts), "--output", str(validation))
+        self.assertEqual(run("record-validation", "refs/heads/main", *record), 1)
+        self.assertFalse(validation.exists())
+        self.assertEqual(
+            run("record-validation", "refs/heads/release/42", *record), 0, self.errors
+        )
+        self.assertEqual(
+            json.loads(validation.read_text())["runner_ref"], "refs/heads/release/42"
+        )
+        assemble = (
+            "--validation",
+            str(validation),
+            "--results",
+            str(results),
+            "--output",
+            str(evidence),
+        )
+        self.assertEqual(
+            run("assemble-evidence", "refs/heads/release/42", *assemble), 0
+        )
+        self.assertEqual(
+            json.loads(evidence.read_text())["source"]["ref"], "refs/heads/release/42"
+        )
+        document = json.loads(validation.read_text())
+        document["runner_ref"] = "refs/heads/main"
+        validation.write_text(json.dumps(document))
+        with (
+            mock.patch.object(pipeline.subprocess, "run", side_effect=command),
+            self.assertRaisesRegex(ValueError, "runner"),
+        ):
+            pipeline.validate_validation(validation, key, candidate)
+
+    def test_publication_phase_matches_the_channel_line(self):
+        def check(ref, channel, candidate="", validation="", fedora=""):
+            env = {
+                "GITHUB_REF": ref,
+                "CHANNEL": channel,
+                "CANDIDATE": candidate,
+                "VALIDATION": validation,
+                "FEDORA": fedora,
+            }
+            argv = ["release_pipeline", "check-phase"]
+            with (
+                mock.patch.object(pipeline, "main_stable_lines", return_value={"45"}),
+                mock.patch.dict(pipeline.os.environ, env, clear=True),
+                mock.patch.object(pipeline.sys, "argv", argv),
+                mock.patch.object(pipeline.sys, "stderr", new_callable=io.StringIO),
+            ):
+                return pipeline.main()
+
+        for accepted in (
+            ("refs/heads/main", "testing"),
+            ("refs/heads/main", "testing", "12", "34"),
+            ("refs/heads/release/45", "stable"),
+            ("refs/heads/release/45", "stable", "", "", "45"),
+        ):
+            with self.subTest(accepted=accepted):
+                self.assertEqual(check(*accepted), 0)
+        for rejected in (
+            ("refs/heads/release/45", "testing"),
+            ("refs/heads/feature", "testing"),
+            ("refs/heads/main", "stable"),
+            ("refs/heads/release/x", "stable"),
+            ("refs/heads/release/45", "stable", "", "", "46"),
+            ("refs/heads/release/45", "stable", "12", "34"),
+            ("refs/heads/main", "testing", "12", ""),
+            ("refs/heads/main", "testing", "-1", "34"),
+            ("refs/heads/main", "beta"),
+            ("refs/heads/release/44", "stable"),
+            ("refs/heads/release/46", "stable", "", "", "46"),
+        ):
+            with self.subTest(rejected=rejected):
+                self.assertEqual(check(*rejected), 1)
+
+    def test_fetched_candidates_and_validations_come_from_their_line(self):
+        path, key, stable = self.stable_sample()
+        output = self.tmp_path / "fetched"
+
+        def run(action, branch, *extra):
+            argv = ["release_pipeline", action, "--repository", "owner/repo"]
+            argv += [
+                "--run-id",
+                "123",
+                "--output",
+                str(output),
+                "--public-key",
+                str(key),
+            ]
+            with (
+                mock.patch.object(pipeline.sys, "argv", argv + list(extra)),
+                mock.patch.object(
+                    pipeline,
+                    "run_info",
+                    return_value=run_document() | {"head_branch": branch},
+                ),
+                mock.patch.object(pipeline, "download"),
+                mock.patch.object(pipeline, "candidate", return_value=stable),
+                mock.patch.object(pipeline, "candidate_outputs"),
+                mock.patch.object(
+                    pipeline,
+                    "validate_validation",
+                    return_value={"validation_run_id": 123, "runner_sha": "a" * 40},
+                ),
+                mock.patch.object(pipeline.sys, "stdout", new_callable=io.StringIO),
+                mock.patch.object(pipeline.sys, "stderr", new_callable=io.StringIO),
+            ):
+                return pipeline.main()
+
+        validation = ("--candidate", str(path))
+        self.assertEqual(run("fetch-candidate", "release/42"), 0)
+        self.assertEqual(run("fetch-candidate", "main"), 1)
+        self.assertEqual(run("fetch-validation", "release/42", *validation), 0)
+        self.assertEqual(run("fetch-validation", "main", *validation), 1)
+
+    def test_active_stable_lines_are_read_from_main(self):
+        releases = 'SUPPORTED_RELEASES="44 45"\nLATEST_RELEASE=45\nSTABLE_LINES=45\n'
+
+        def command(argv, **kwargs):
+            if argv[:2] == ["git", "show"]:
+                self.assertEqual(argv[2], "FETCH_HEAD:config/releases.env")
+                return mock.Mock(stdout=releases)
+            self.assertEqual(argv[:3], ["git", "fetch", "--quiet"])
+            self.assertEqual(argv[-2:], ["origin", "main"])
+            return mock.Mock(stdout="")
+
+        with mock.patch.object(pipeline.subprocess, "run", side_effect=command) as run:
+            self.assertEqual(pipeline.main_stable_lines(), {"45"})
+        self.assertEqual(run.call_count, 2)

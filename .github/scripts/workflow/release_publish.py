@@ -114,27 +114,6 @@ def check_fedora_ga(fedora_version: str) -> None:
         raise ValueError("candidate Fedora release is not yet GA")
 
 
-def verify_source(candidate_path: Path, public_key: Path, version: str) -> None:
-    module = load_helper("release_pipeline")
-    candidate = module.candidate(candidate_path, public_key)
-    if (
-        candidate["channel"] != "testing"
-        or candidate["version_tag"] != f"testing-{version}"
-    ):
-        raise ValueError("stable source is not the requested testing candidate")
-    release_configuration(candidate["fedora_version"])
-    check_fedora_ga(candidate["fedora_version"])
-    for role in ("core", "workstation"):
-        subprocess.run(
-            ["cosign", "verify", "--key", str(public_key), candidate["images"][role]],
-            check=True,
-            stdout=subprocess.DEVNULL,
-        )
-    digest = candidate["images"]["workstation"].split("@", 1)[1]
-    with Path(os.environ["GITHUB_OUTPUT"]).open("a", encoding="utf-8") as output:
-        print(f"workstation_digest={digest}", file=output)
-
-
 def sha256(path: Path) -> str:
     with path.open("rb") as stream:
         return hashlib.file_digest(stream, "sha256").hexdigest()
@@ -620,7 +599,6 @@ def main() -> None:
         choices=(
             "prepare-gates",
             "prepare-results",
-            "verify-source",
             "stage",
             "promote",
             "publish",
@@ -633,16 +611,9 @@ def main() -> None:
     parser.add_argument("--public-key", type=Path)
     parser.add_argument("--evidence", type=Path)
     parser.add_argument("--directory", dest="output_directory", type=Path)
-    parser.add_argument("--promote-version")
     parser.add_argument("--channel", choices=("testing", "stable"))
     args = parser.parse_args()
-    if args.action == "verify-source":
-        if not args.candidate or not args.public_key or not args.promote_version:
-            parser.error(
-                "verify-source requires --candidate, --public-key and --promote-version"
-            )
-        verify_source(args.candidate, args.public_key, args.promote_version)
-    elif args.action in (
+    if args.action in (
         "stage",
         "promote",
         "publish",

@@ -116,7 +116,7 @@ class ReleasePublisherTests(unittest.TestCase):
 
     def test_candidate_signing_jobs_never_receive_official_key(self):
         workflow = yaml.safe_load((ROOT / ".github/workflows/publish.yml").read_text())
-        for name in ("stable-source", "prepare-candidate", "release-evidence"):
+        for name in ("publish-images", "prepare-candidate", "release-evidence"):
             with self.subTest(job=name):
                 job = workflow["jobs"][name]
                 self.assertEqual(job["environment"], "candidate-staging")
@@ -280,93 +280,20 @@ class ReleasePublisherTests(unittest.TestCase):
             self.assertFalse((root / "results.json").exists())
             self.assertNotIn("results.json", candidate["artifacts"])
 
-    def test_stable_source_allows_refreshed_upstream_digest(self):
-        candidate = {
-            "channel": "testing",
-            "version_tag": "testing-45.20261105",
-            "fedora_version": "45",
-            "fedora_bootc_digest": "sha256:" + "a" * 64,
-            "images": {
-                "core": "ghcr.io/org/core@sha256:" + "b" * 64,
-                "workstation": "ghcr.io/org/workstation@sha256:" + "c" * 64,
-            },
-        }
-        pipeline = types.SimpleNamespace(candidate=lambda *_: candidate)
-        metadata = types.SimpleNamespace(
-            releases=lambda _: {"SUPPORTED_RELEASES": "45 46"}
-        )
-        upstream = subprocess.CompletedProcess(
-            [],
-            0,
-            stdout=json.dumps(
-                {"Digest": "sha256:" + "d" * 64, "Labels": {"version": "45"}}
-            ),
-        )
-        with tempfile.TemporaryDirectory() as directory:
-            output = Path(directory) / "output"
-            with (
-                patch.dict(release_publish.os.environ, {"GITHUB_OUTPUT": str(output)}),
-                patch.object(
-                    release_publish,
-                    "load_helper",
-                    side_effect=lambda name: (
-                        pipeline if name == "release_pipeline" else metadata
-                    ),
-                ),
-                patch.object(
-                    release_publish.subprocess,
-                    "run",
-                    side_effect=[upstream, None, None],
-                ),
-            ):
-                release_publish.verify_source(
-                    Path("candidate.json"), Path("key"), "45.20261105"
-                )
-            self.assertIn(
-                candidate["images"]["workstation"].split("@", 1)[1], output.read_text()
-            )
-
-    def test_stable_source_rejects_future_supported_fedora(self):
-        candidate = {
-            "channel": "testing",
-            "version_tag": "testing-46.20261105",
-            "fedora_version": "46",
-        }
-        pipeline = types.SimpleNamespace(candidate=lambda *_: candidate)
-        metadata = types.SimpleNamespace(
-            releases=lambda _: {"SUPPORTED_RELEASES": "45 46"}
-        )
+    def test_stable_promotion_rejects_a_fedora_release_before_ga(self):
         upstream = subprocess.CompletedProcess(
             [], 0, stdout=json.dumps({"Labels": {"version": "45"}})
         )
         with (
             patch.object(
-                release_publish,
-                "load_helper",
-                side_effect=lambda name: (
-                    pipeline if name == "release_pipeline" else metadata
-                ),
-            ),
-            patch.object(
                 release_publish.subprocess, "run", return_value=upstream
             ) as run,
             self.assertRaisesRegex(ValueError, "not yet GA"),
         ):
-            release_publish.verify_source(
-                Path("candidate.json"), Path("key"), "46.20261105"
-            )
+            release_publish.check_fedora_ga("46")
         self.assertEqual(run.call_count, 1)
 
-    def test_stable_source_rejects_malformed_upstream_ga_label(self):
-        candidate = {
-            "channel": "testing",
-            "version_tag": "testing-45.20261105",
-            "fedora_version": "45",
-        }
-        pipeline = types.SimpleNamespace(candidate=lambda *_: candidate)
-        metadata = types.SimpleNamespace(
-            releases=lambda _: {"SUPPORTED_RELEASES": "45"}
-        )
+    def test_stable_promotion_rejects_malformed_upstream_ga_label(self):
         for labels in ({}, {"version": "rawhide"}, {"version": "45-beta"}):
             upstream = subprocess.CompletedProcess(
                 [], 0, stdout=json.dumps({"Labels": labels})
@@ -374,20 +301,11 @@ class ReleasePublisherTests(unittest.TestCase):
             with (
                 self.subTest(labels=labels),
                 patch.object(
-                    release_publish,
-                    "load_helper",
-                    side_effect=lambda name: (
-                        pipeline if name == "release_pipeline" else metadata
-                    ),
-                ),
-                patch.object(
                     release_publish.subprocess, "run", return_value=upstream
                 ) as run,
                 self.assertRaisesRegex(ValueError, "cannot determine Fedora GA"),
             ):
-                release_publish.verify_source(
-                    Path("candidate.json"), Path("key"), "45.20261105"
-                )
+                release_publish.check_fedora_ga("45")
             self.assertEqual(run.call_count, 1)
 
     def test_signed_checksums_detect_tampered_allowlisted_evidence(self):
@@ -916,7 +834,7 @@ class CandidateSigningTests(unittest.TestCase):
 
     def test_public_tag_writers_are_serialized_and_testing_enabled(self):
         workflow = yaml.safe_load((ROOT / ".github/workflows/publish.yml").read_text())
-        for job in ("release", "publish-stable-installer"):
+        for job in ("release",):
             with self.subTest(job=job):
                 self.assertEqual(
                     workflow["jobs"][job]["concurrency"],
@@ -928,7 +846,7 @@ class CandidateSigningTests(unittest.TestCase):
         self.assertNotIn("require slice 5b", str(workflow["jobs"]["prepare-candidate"]))
         self.assertNotIn("require slice 5b", str(workflow["jobs"]["release"]))
         self.assertIn(
-            "legacy stable publication is disabled", str(workflow["jobs"]["inputs"])
+            "release_pipeline.py check-phase", str(workflow["jobs"]["inputs"])
         )
         release = workflow["jobs"]["release"]
         self.assertEqual(release["permissions"]["packages"], "write")
@@ -2016,16 +1934,14 @@ class ContainerWorkflowTests(unittest.TestCase):
                 },
             )
         self.assertEqual(set(jobs), set(permissions))
-        legacy_conditions = {
-            "core": "inputs.channel != 'stable'",
-            "workstation": "inputs.channel != 'stable'",
-            "installer": "always() && inputs.build_installer && needs.metadata.result == 'success' && (inputs.channel == 'stable' || needs.workstation.result == 'success')",
-        }
         if not private:
-            self.assertNotIn("if", jobs["metadata"])
+            for name in ("metadata", "core", "workstation"):
+                self.assertNotIn("if", jobs[name], name)
             self.assertNotIn("private_core", str(workflow))
-            for name, condition in legacy_conditions.items():
-                self.assertEqual(jobs[name]["if"], condition, name)
+            self.assertEqual(
+                jobs["installer"]["if"],
+                "always() && inputs.build_installer && needs.metadata.result == 'success' && needs.workstation.result == 'success'",
+            )
         else:
             self.assert_private_job_contract(jobs)
 
@@ -2479,18 +2395,14 @@ class ContainerWorkflowTests(unittest.TestCase):
         load = next(
             step for step in steps if step.get("name") == "Load workstation image"
         )
-        export = next(
-            step for step in steps if step.get("name") == "Export installer payload"
-        )
-        self.assertEqual(load["if"], "inputs.channel == 'testing'")
+        self.assertNotIn("if", load)
         self.assertEqual(
             load["env"]["ARCHIVE_SHA256"], "${{ inputs.workstation_archive_sha256 }}"
         )
         self.assertEqual(load["env"]["IMAGE_ID"], "${{ inputs.workstation_image_id }}")
-        self.assertEqual(
-            export["env"]["WORKSTATION_DIGEST"], "${{ inputs.workstation_digest }}"
+        self.assertFalse(
+            any(step.get("name") == "Export installer payload" for step in steps)
         )
-        self.assertLess(steps.index(load), steps.index(export))
         build_step = next(
             step
             for step in steps
@@ -2572,9 +2484,7 @@ class ContainerWorkflowTests(unittest.TestCase):
                 )
                 self.assertEqual(workflow["jobs"]["prepare"]["needs"], ["check"])
 
-    def test_stable_metadata_uses_testing_candidate_and_does_not_depend_on_skipped_builds(
-        self,
-    ):
+    def test_every_channel_builds_core_and_workstation_from_source(self):
         workflow = self.load_workflow("containers.yml")
         script = next(
             step["run"]
@@ -2590,36 +2500,19 @@ class ContainerWorkflowTests(unittest.TestCase):
             outputs["workstation_image"]["value"],
             "${{ jobs.metadata.outputs.workstation_image }}",
         )
-        self.assertEqual(
-            workflow["jobs"]["core"]["if"],
-            "inputs.channel != 'stable'",
-        )
-        self.assertEqual(
-            workflow["jobs"]["workstation"]["if"],
-            "inputs.channel != 'stable'",
-        )
+        self.assertNotIn("if", workflow["jobs"]["core"])
+        self.assertNotIn("if", workflow["jobs"]["workstation"])
+        self.assertNotIn("promote_version", workflow["on"]["workflow_call"]["inputs"])
         self.assertEqual(workflow["jobs"]["workstation"]["needs"], ["metadata", "core"])
 
-    def test_stable_publishing_does_not_gate_packaging_on_skipped_candidate_publish(
-        self,
-    ):
+    def test_packaging_waits_for_staged_candidates_of_either_channel(self):
         workflow = self.load_workflow("publish.yml")
         for name in ("iso", "qcow2"):
-            condition = workflow["jobs"][name]["if"]
-            self.assertIn("always()", condition)
-            self.assertIn("inputs.channel == 'stable'", condition)
-        stable_installer = workflow["jobs"]["stable-installer"]
-        self.assertEqual(stable_installer["needs"], ["stable-source"])
-        self.assertEqual(
-            stable_installer["with"]["workstation_digest"],
-            "${{ needs.stable-source.outputs.workstation_digest }}",
-        )
-        self.assertEqual(stable_installer["permissions"]["packages"], "read")
-        stable_source = workflow["jobs"]["stable-source"]
-        commands = "\n".join(step.get("run", "") for step in stable_source["steps"])
-        self.assertIn("fetch-candidate", commands)
-        self.assertIn("fetch-validation", commands)
-        self.assertIn("verify-source", commands)
+            with self.subTest(job=name):
+                job = workflow["jobs"][name]
+                self.assertEqual(job["needs"], ["containers", "publish-images"])
+                self.assertIn("needs.publish-images.result == 'success'", job["if"])
+                self.assertNotIn("inputs.channel", job["if"])
 
     def test_auto_testing_signs_only_candidates_and_does_not_create_releases(self):
         workflow = self.load_workflow("auto-testing.yml")

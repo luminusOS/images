@@ -120,7 +120,11 @@ class RepositoryContracts(unittest.TestCase):
         self.assertNotIn("needs.version", publish)
         self.assertIn("SHA256:209BDmH3jsRyO9UeGPPgLWPSegKmYCBIya0nR/AWWCY", publisher)
         self.assertIn("release_publish.py publish --candidate", publish)
-        self.assertIn("if: github.ref == 'refs/heads/main'", publish)
+        self.assertIn(
+            "(inputs.channel == 'testing' && github.ref == 'refs/heads/main') || "
+            "(inputs.channel == 'stable' && startsWith(github.ref, 'refs/heads/release/'))",
+            publish,
+        )
         self.assertIn("uses: ./.github/workflows/containers.yml", publish)
         self.assertIn("uses: ./.github/workflows/containers.yml", build)
         for value in (
@@ -181,12 +185,9 @@ class RepositoryContracts(unittest.TestCase):
                 self.assertIn(argument, promotion)
             self.assertIn("promotion.promote(", orchestration)
             self.assertIn("release_publish.py promote", publish)
-        with self.subTest("testing source"):
-            self.assertIn(
-                'candidate["version_tag"] != f"testing-{version}"', orchestration
-            )
-            self.assertIn('candidate["channel"] != "testing"', orchestration)
-            self.assertIn("release_publish.py verify-source", publish)
+        with self.subTest("stable is its own candidate"):
+            self.assertNotIn("verify-source", orchestration)
+            self.assertNotIn("verify-source", publish)
         with self.subTest("Fedora stable release check"):
             self.assertIn("docker://quay.io/fedora/fedora-bootc:latest", orchestration)
             self.assertIn('"SUPPORTED_RELEASES"', orchestration)
