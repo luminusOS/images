@@ -648,7 +648,13 @@ class GitHubReleaseTests(unittest.TestCase):
         with mock.patch.object(publish.urllib.request, "urlopen") as urlopen:
             urlopen.return_value = opener(b"SHA256SUMS")
             publish.check_downloads(self.files["SHA256SUMS"], "stable", "45.20261120.1")
-            self.assertEqual(urlopen.call_args.args[0], url)
+            request = urlopen.call_args.args[0]
+            self.assertEqual(request.full_url, url)
+            self.assertFalse(
+                request.get_header("User-agent", "Python-urllib").startswith(
+                    "Python-urllib"
+                )
+            )
             urlopen.return_value = opener(b"other")
             with self.assertRaisesRegex(ValueError, "already"):
                 publish.check_downloads(
