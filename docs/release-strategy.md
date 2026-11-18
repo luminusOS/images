@@ -37,7 +37,7 @@ The local implementation environment has not demonstrated installation, update/r
 
 ### Installation validation runner
 
-`installation-validation.yml` runs only through manual dispatch on `main` or a `release/<Fedora>` branch, and only on the line that produced the candidate (`main` for testing, `release/<Fedora>` for stable), on a GitHub-hosted `ubuntu-latest` runner with KVM and vhost-vsock, in the `candidate-staging` environment. The job token gets `packages: read` so it can pull the private candidate; it is used only in the staging step, through a temporary authfile that is removed before the VM starts, and the driver and signing steps never see it.
+`installation-validation.yml` runs only through manual dispatch on `main` or a `release/<Fedora>` branch, and only on the line that produced the candidate (`main` for testing, `release/<Fedora>` for stable), on a GitHub-hosted `ubuntu-26.04` runner with KVM and vhost-vsock, in the `candidate-staging` environment. The job token gets `packages: read` so it can pull the private candidate; it is used only in the staging step, through a temporary authfile that is removed before the VM starts, and the driver and signing steps never see it.
 
 The driver is `.github/scripts/workflow/validation_driver.py`, reviewed like any other repository code and run from the checkout of the dispatching commit on that line, which is recorded as `runner_sha`. It boots the verified candidate ISO with Secure Boot enforced (OVMF with the Microsoft keys enrolled), installs it with `sirius run-playbook`, boots the installed disk without the ISO and runs every check over SSH on AF_VSOCK, with a per-run key passed as the `ssh.authorized_keys.root` SMBIOS credential. Neither image changes for this.
 

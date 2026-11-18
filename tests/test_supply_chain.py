@@ -1,6 +1,8 @@
+import contextlib
 import copy
 import hashlib
 import importlib.util
+import io
 import json
 import subprocess
 import tempfile
@@ -515,6 +517,7 @@ class SupplyChainTests(unittest.TestCase):
                         clear=True,
                     ),
                     patch.object(supply_chain.subprocess, "run", side_effect=run),
+                    contextlib.redirect_stdout(io.StringIO()) as stdout,
                 ):
                     manifest = supply_chain.inspect_image(
                         "repo@sha256:" + "a" * 64,
@@ -523,6 +526,9 @@ class SupplyChainTests(unittest.TestCase):
                         expected_syft_version="1.2.3",
                         expected_grype_version="1.2.3",
                     )
+                self.assertIn(
+                    "::warning::Security findings gate BYPASSED", stdout.getvalue()
+                )
                 audit = json.loads(manifest.read_text())["security"]
                 self.assertEqual(audit["gate"], "bypassed")
                 self.assertEqual(audit["actor"], "operator")
