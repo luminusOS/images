@@ -38,6 +38,38 @@ def public_repository(role: str, repository: str) -> str:
     return f"ghcr.io/{owner}/{PUBLIC_REPOSITORIES[role]}"
 
 
+CHANNEL_TAGS = {
+    # channel: (version, branch, floating tag)
+    "testing": (r"testing-[0-9]+\.[0-9]{8}(?:\.[0-9]+)?", r"testing-[0-9]+", "testing"),
+    "stable": (r"[0-9]+\.[0-9]{8}(?:\.[0-9]+)?", r"[0-9]+", "latest"),
+}
+
+
+def destination_tags(
+    destination_repository: str, destinations: list[str], role: str
+) -> list[str]:
+    """Return the tags, version first, when they all belong to one channel."""
+    suffix = "-iso" if role == "installer" else ""
+    tags = []
+    for destination in destinations:
+        prefix = destination_repository + ":"
+        if not destination.startswith(prefix):
+            raise ValueError("destination repository does not match role")
+        tags.append(destination[len(prefix) :])
+    for version, branch, floating in CHANNEL_TAGS.values():
+        found = [tag for tag in tags if re.fullmatch(version + suffix, tag)]
+        if all(
+            re.fullmatch(version + suffix, tag)
+            or re.fullmatch(branch + suffix, tag)
+            or (role != "installer" and tag == floating)
+            for tag in tags
+        ):
+            if len(found) != 1 or len(tags) != len(set(tags)):
+                raise ValueError("exactly one version tag is required")
+            return found + [tag for tag in tags if tag != found[0]]
+    raise ValueError("invalid destination tag")
+
+
 def inspect_version(reference: str) -> str | None:
     try:
         result = subprocess.run(
@@ -125,25 +157,8 @@ def promote(
         )
     if public_key.resolve() != CANDIDATE_KEY.resolve():
         raise ValueError("candidate key required")
-    suffix = "-iso" if role == "installer" else ""
-    version_pattern = r"testing-[0-9]+\.[0-9]{8}(?:\.[0-9]+)?" + suffix
-    branch_pattern = r"testing-[0-9]+" + suffix
-    tags = []
-    for destination in destinations:
-        prefix = destination_repository + ":"
-        if not destination.startswith(prefix):
-            raise ValueError("destination repository does not match role")
-        tag = destination[len(prefix) :]
-        if not (
-            re.fullmatch(version_pattern, tag)
-            or re.fullmatch(branch_pattern, tag)
-            or (role != "installer" and tag == "testing")
-        ):
-            raise ValueError("invalid destination tag")
-        tags.append(tag)
-    versions = [tag for tag in tags if re.fullmatch(version_pattern, tag)]
-    if len(versions) != 1 or len(tags) != len(set(tags)):
-        raise ValueError("exactly one version tag is required")
+    tags = destination_tags(destination_repository, destinations, role)
+    versions = tags[:1]
     candidate_digest = expected_digest
     if role is not None:
         images = evidence.get("images")

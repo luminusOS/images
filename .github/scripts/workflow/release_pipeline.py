@@ -107,8 +107,6 @@ def check_phase(env) -> None:
         and all(not x or re.fullmatch(r"[1-9][0-9]*", x) for x in runs),
         "invalid release phase inputs",
     )
-    # Promotion behind the protected stable environment is not wired yet.
-    require(channel == "testing" or not runs[0], "stable promotion is not available")
     if channel == "stable":
         require(
             line.group(1) in main_stable_lines(),

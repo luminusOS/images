@@ -58,7 +58,6 @@ class WorkflowPhasesTest(unittest.TestCase):
         )
         command = [sys.executable, *shlex.split(step["run"])[1:]]
         for ref, channel, candidate, validation, expected in (
-            ("refs/heads/release/45", "stable", "123", "456", 1),
             ("refs/heads/main", "stable", "", "", 1),
             ("refs/heads/main", "testing", "", "", 0),
             ("refs/heads/main", "testing", "123", "456", 0),
@@ -112,7 +111,7 @@ class WorkflowPhasesTest(unittest.TestCase):
             for name, job in jobs.items()
             if "write" in job.get("permissions", {}).values()
         }
-        self.assertEqual(writers, {"publish-images", "release"})
+        self.assertEqual(writers, {"publish-images", "release", "release-stable"})
         for name in writers:
             with self.subTest(job=name):
                 self.assertTrue(guarded(name))
@@ -294,6 +293,7 @@ class WorkflowPhasesTest(unittest.TestCase):
                     "containers",
                     "release-evidence",
                     "release",
+                    "release-stable",
                 },
             ),
         ):
@@ -925,9 +925,7 @@ class WorkflowPhasesTest(unittest.TestCase):
                 self.assertNotIn("github.ref == 'refs/heads/main' &&", jobs[name]["if"])
         self.assertIs(jobs["containers"]["with"]["build_installer"], True)
         self.assertEqual(jobs["containers"]["with"]["channel"], "${{ inputs.channel }}")
-        for name in ("release-evidence", "release"):
-            with self.subTest(job=name):
-                self.assertIn("github.ref == 'refs/heads/main'", jobs[name]["if"])
+        self.assertIn(line, jobs["release-evidence"]["if"])
         steps = {step.get("id"): step for step in jobs["scan-candidates"]["steps"]}
         self.assertEqual(steps["inspect-testing"]["if"], "inputs.channel == 'testing'")
         self.assertEqual(steps["inspect-stable"]["if"], "inputs.channel == 'stable'")
@@ -949,6 +947,51 @@ class WorkflowPhasesTest(unittest.TestCase):
                     f"--policy-sha256 {digest}",
                     stable,
                 )
+
+    def test_stable_promotion_waits_for_the_protected_environment(self):
+        jobs = workflow("publish.yml")["jobs"]
+        stable = jobs["release-stable"]
+        self.assertEqual(stable["environment"], "stable")
+        self.assertIn("inputs.channel == 'stable'", stable["if"])
+        self.assertIn("startsWith(github.ref, 'refs/heads/release/')", stable["if"])
+        self.assertIn("!inputs.security_findings_bypass", stable["if"])
+        self.assertIn("release-evidence", stable["needs"])
+        self.assertIn("inputs.channel == 'testing'", jobs["release"]["if"])
+        self.assertEqual(jobs["release"]["environment"], "testing-publish")
+        official = (
+            "secrets.COSIGN_PRIVATE_KEY",
+            "secrets.R2_ACCESS_KEY_ID",
+            "secrets.R2_SECRET_ACCESS_KEY",
+            "secrets.SF_",
+        )
+        for name, job in jobs.items():
+            if any(secret in str(job) for secret in official):
+                with self.subTest(job=name):
+                    self.assertIn(name, ("release", "release-stable"))
+        names = [step.get("name") for step in stable["steps"]]
+        recheck = names.index("Recheck the summary shown before approval")
+        self.assertLess(recheck, names.index("Verify and promote immutable images"))
+        step = stable["steps"][recheck]
+        self.assertEqual(
+            step["env"]["APPROVED_SUMMARY"],
+            "${{ needs.release-evidence.outputs.summary_sha256 }}",
+        )
+        self.assertIn('--expect-sha256 "$APPROVED_SUMMARY"', step["run"])
+        evidence = jobs["release-evidence"]
+        self.assertEqual(
+            evidence["outputs"]["summary_sha256"],
+            "${{ steps.approval.outputs.summary_sha256 }}",
+        )
+        shown = next(s for s in evidence["steps"] if s.get("id") == "approval")
+        self.assertEqual(shown["if"], "inputs.channel == 'stable'")
+        self.assertIn("approval-summary", shown["run"])
+        self.assertNotIn("--expect-sha256", shown["run"])
+        promote = next(
+            s
+            for s in stable["steps"]
+            if s.get("name") == "Verify and promote immutable images"
+        )
+        self.assertEqual(promote["env"]["CHANNEL"], "${{ inputs.channel }}")
 
     def test_scheduled_preparation_reuses_publish(self):
         auto = workflow("auto-testing.yml")

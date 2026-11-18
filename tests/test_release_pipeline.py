@@ -2421,6 +2421,7 @@ class ReleaseLineTests(unittest.TestCase):
             ("refs/heads/main", "testing", "12", "34"),
             ("refs/heads/release/45", "stable"),
             ("refs/heads/release/45", "stable", "", "", "45"),
+            ("refs/heads/release/45", "stable", "12", "34"),
         ):
             with self.subTest(accepted=accepted):
                 self.assertEqual(check(*accepted), 0)
@@ -2430,7 +2431,6 @@ class ReleaseLineTests(unittest.TestCase):
             ("refs/heads/main", "stable"),
             ("refs/heads/release/x", "stable"),
             ("refs/heads/release/45", "stable", "", "", "46"),
-            ("refs/heads/release/45", "stable", "12", "34"),
             ("refs/heads/main", "testing", "12", ""),
             ("refs/heads/main", "testing", "-1", "34"),
             ("refs/heads/main", "beta"),

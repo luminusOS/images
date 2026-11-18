@@ -220,6 +220,7 @@ class ReleasePublisherTests(unittest.TestCase):
             patch.object(release_publish, "verify_release", return_value=candidate),
             patch.object(release_publish, "release_artifacts"),
             patch.object(release_publish, "verify_staged_distribution"),
+            patch.object(release_publish, "release_preflight"),
             patch.object(release_publish, "stage"),
             patch.object(
                 release_publish,
@@ -430,10 +431,12 @@ class ReleasePublisherTests(unittest.TestCase):
         }
         evidence = {"images": images, "artifacts": {}}
         pipeline = types.SimpleNamespace(
-            candidate=lambda *_: candidate, verify=lambda *_: None
+            candidate=lambda *_: candidate,
+            verify=lambda *_: None,
+            release_ref=lambda *_: "refs/heads/main",
         )
         promotion = types.SimpleNamespace(
-            validate_candidate=lambda *_: [],
+            validate_candidate=lambda *_, **__: [],
             verify_evidence_artifacts=lambda *_: None,
             promote=unittest.mock.Mock(),
         )
@@ -463,6 +466,7 @@ class ReleasePublisherTests(unittest.TestCase):
                 ),
                 patch.object(release_publish, "release_artifacts"),
                 patch.object(release_publish, "verify_staged_distribution"),
+                patch.object(release_publish, "release_preflight"),
                 patch.object(release_publish, "stage"),
                 patch.object(
                     release_publish.subprocess,
@@ -774,6 +778,30 @@ class CandidateSigningTests(unittest.TestCase):
                     "--scan-exclusion shared/release/flatpak-scan-risk.json" in line,
                     excluded,
                 )
+        stable = next(
+            step["run"] for step in job["steps"] if step.get("id") == "inspect-stable"
+        )
+        for edition, scope, excluded in (
+            ("core", "core_payload", False),
+            ("workstation", "workstation_payload", True),
+            ("workstation", "installer_live", True),
+        ):
+            name = f"{edition}-{scope}-stable-45.json"
+            digest = hashlib.sha256((policies / name).read_bytes()).hexdigest()
+            line = next(
+                item
+                for item in stable.splitlines()
+                if f"--component-scope {scope}" in item
+            )
+            with self.subTest(channel="stable", scope=scope):
+                self.assertIn(f"--exceptions shared/release/exceptions/{name}", line)
+                self.assertIn(f"--policy-sha256 {digest}", line)
+                self.assertIn("--channel stable", line)
+                self.assertEqual(
+                    "--scan-exclusion shared/release/flatpak-scan-risk-stable.json"
+                    in line,
+                    excluded,
+                )
         upload = next(
             step
             for step in job["steps"]
@@ -823,6 +851,34 @@ class CandidateSigningTests(unittest.TestCase):
                         )
         self.assertGreater(callers, 0)
 
+    def test_official_credentials_are_read_only_behind_their_environment(self):
+        official = {
+            "COSIGN_PRIVATE_KEY",
+            "COSIGN_PASSWORD",
+            "R2_ACCESS_KEY_ID",
+            "R2_SECRET_ACCESS_KEY",
+            "SF_USER",
+            "SF_SSH_KEY",
+        }
+        workflows = ROOT / ".github/workflows"
+        publish = yaml.safe_load((workflows / "publish.yml").read_text())
+        expected = {"release": "testing-publish", "release-stable": "stable"}
+        readers = {}
+        for name, job in publish["jobs"].items():
+            read = set(re.findall(r"secrets\.([A-Z_]+)", str(job))) & official
+            if read:
+                readers[name] = job.get("environment")
+        self.assertEqual(readers, expected)
+        for path in workflows.glob("*.yml"):
+            if path.name == "publish.yml":
+                continue
+            with self.subTest(workflow=path.name):
+                self.assertFalse(
+                    set(re.findall(r"secrets\.([A-Z_]+)", path.read_text())) & official
+                )
+        secrets = publish.get("on", publish.get(True))["workflow_call"]["secrets"]
+        self.assertFalse(secrets["COSIGN_PRIVATE_KEY"]["required"])
+
     def test_boot_test_runs_when_packaging_succeeds_despite_skipped_stable_jobs(self):
         workflow = yaml.safe_load((ROOT / ".github/workflows/publish.yml").read_text())
         condition = workflow["jobs"]["boot-test"]["if"]
@@ -834,15 +890,26 @@ class CandidateSigningTests(unittest.TestCase):
 
     def test_public_tag_writers_are_serialized_and_testing_enabled(self):
         workflow = yaml.safe_load((ROOT / ".github/workflows/publish.yml").read_text())
-        for job in ("release",):
+        # Channels write disjoint tags, paths and releases, so each channel
+        # serializes only with itself: a stable run waiting days for approval
+        # must not hold back, or let GitHub cancel, testing publications.
+        for job, channel in (("release", "testing"), ("release-stable", "stable")):
             with self.subTest(job=job):
                 self.assertEqual(
                     workflow["jobs"][job]["concurrency"],
                     {
-                        "group": "image-publication-${{ github.repository }}",
+                        "group": f"image-publication-${{{{ github.repository }}}}-{channel}",
                         "cancel-in-progress": False,
                     },
                 )
+        group = workflow["concurrency"]["group"]
+        self.assertIn(
+            "format('luminus-release-{0}-{1}-{2}', github.repository,"
+            " inputs.channel, github.ref_name)",
+            group,
+        )
+        self.assertIn("luminus-inert-r2-", group)
+        self.assertFalse(workflow["concurrency"]["cancel-in-progress"])
         self.assertNotIn("require slice 5b", str(workflow["jobs"]["prepare-candidate"]))
         self.assertNotIn("require slice 5b", str(workflow["jobs"]["release"]))
         self.assertIn(
@@ -1090,14 +1157,37 @@ class ReleasePolicyTests(unittest.TestCase):
         self.assertIn("installation", result.stderr)
 
     def test_release_policy_rejects_foreign_key_or_untrusted_evidence_source(self):
+        for ref in ("refs/pull/4/merge", "refs/heads/release/x", "refs/heads/f45"):
+            evidence = self.evidence()
+            evidence["source"]["ref"] = ref
+            with self.subTest(ref=ref):
+                self.assertTrue(
+                    any(
+                        "release line" in error
+                        for error in release_policy.validate_candidate(evidence)
+                    )
+                )
+
+    def test_release_policy_binds_evidence_to_the_expected_line(self):
         evidence = self.evidence()
-        evidence["source"]["ref"] = "refs/pull/4/merge"
-        self.assertTrue(
-            any(
-                "refs/heads/main" in error
-                for error in release_policy.validate_candidate(evidence)
-            )
+        evidence["source"]["ref"] = "refs/heads/release/45"
+        self.assertEqual(release_policy.validate_candidate(evidence), [])
+        self.assertEqual(
+            release_policy.validate_candidate(
+                evidence, expected_ref="refs/heads/release/45"
+            ),
+            [],
         )
+        for expected in ("refs/heads/main", "refs/heads/release/46"):
+            with self.subTest(expected=expected):
+                self.assertTrue(
+                    any(
+                        "release line" in error
+                        for error in release_policy.validate_candidate(
+                            evidence, expected_ref=expected
+                        )
+                    )
+                )
 
 
 class PromotionTests(unittest.TestCase):
@@ -2462,9 +2552,9 @@ class ContainerWorkflowTests(unittest.TestCase):
                         name,
                         (
                             "publish-images",
-                            "publish-stable-installer",
                             "prepare",
                             "release",
+                            "release-stable",
                         ),
                         workflow_name,
                     )
