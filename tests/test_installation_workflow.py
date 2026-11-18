@@ -25,6 +25,8 @@ def candidate():
         "version": 1,
         "run_id": 12,
         "repository": "org/repo",
+        "channel": "testing",
+        "fedora_version": "45",
         "source_sha": "a" * 40,
         "images": {
             "workstation": "ghcr.io/org/luminusos-workstation@sha256:" + "b" * 64,
@@ -55,6 +57,11 @@ def write_receipts(directory, document):
 
 
 class RunnerTests(unittest.TestCase):
+    def setUp(self):
+        patcher = patch.dict(os.environ, {"GITHUB_REF": "refs/heads/main"})
+        patcher.start()
+        self.addCleanup(patcher.stop)
+
     def test_driver_is_the_reviewed_repository_script(self):
         self.assertEqual(
             runner.DRIVER, ROOT / ".github/scripts/workflow/validation_driver.py"
@@ -98,7 +105,12 @@ class RunnerTests(unittest.TestCase):
                 ),
                 patch.object(runner.subprocess, "run", side_effect=invoke),
                 patch.dict(
-                    os.environ, {"GH_TOKEN": "secret", "COSIGN_PRIVATE_KEY": "secret"}
+                    os.environ,
+                    {
+                        "GH_TOKEN": "secret",
+                        "COSIGN_PRIVATE_KEY": "secret",
+                        "GITHUB_REF": "refs/heads/main",
+                    },
                 ),
             ):
                 receipts = runner.run_validation(
@@ -108,6 +120,50 @@ class RunnerTests(unittest.TestCase):
                 len(list(receipts.glob("*.json"))), len(runner.release_pipeline.CHECKS)
             )
             self.assertFalse((receipts / "validation.json").exists())
+
+    def test_candidates_are_validated_only_from_their_release_line(self):
+        stable = candidate() | {"channel": "stable"}
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            (root / "candidate.json").touch()
+            for document, ref in (
+                (stable, "refs/heads/main"),
+                (stable, "refs/heads/release/46"),
+                (candidate(), "refs/heads/release/45"),
+            ):
+                with (
+                    self.subTest(channel=document["channel"], ref=ref),
+                    patch.object(
+                        runner.release_pipeline, "candidate", return_value=document
+                    ),
+                    patch.object(runner.subprocess, "run") as driver,
+                    patch.dict(os.environ, {"GITHUB_REF": ref}),
+                    self.assertRaisesRegex(ValueError, "release line"),
+                ):
+                    runner.run_validation(root, root, "12", "org/repo", root)
+                driver.assert_not_called()
+        for ref, accepted in (
+            ("refs/heads/main", True),
+            ("refs/heads/release/45", True),
+            ("refs/heads/feature", False),
+            ("refs/heads/release/x", False),
+        ):
+            env = {
+                "GITHUB_REF": ref,
+                "GITHUB_EVENT_NAME": "workflow_dispatch",
+                "RUNNER_TEMP": "/nonexistent",
+                "CANDIDATE_RUN_ID": "12",
+                "GITHUB_REPOSITORY": "org/repo",
+                "FIXTURE_BASE": "/nonexistent",
+            }
+            with (
+                self.subTest(ref=ref),
+                patch.dict(os.environ, env),
+                patch.object(runner, "run_validation", side_effect=RuntimeError) as run,
+            ):
+                with self.assertRaises(RuntimeError if accepted else ValueError):
+                    runner.main()
+                self.assertEqual(run.called, accepted)
 
     def test_driver_failure_and_wrong_binding_fail_without_success(self):
         document = candidate()
@@ -194,7 +250,10 @@ class WorkflowTests(unittest.TestCase):
             workflow["permissions"], {"contents": "read", "actions": "read"}
         )
         job = workflow["jobs"]["installation"]
-        self.assertIn("refs/heads/main", job["if"])
+        self.assertEqual(
+            job["if"],
+            "(github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/heads/release/')) && github.event_name == 'workflow_dispatch'",
+        )
         self.assertEqual(job["runs-on"], "ubuntu-latest")
         self.assertEqual(job["environment"], "candidate-staging")
         self.assertEqual(

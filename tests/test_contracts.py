@@ -1,4 +1,5 @@
 import json
+import os
 import re
 import shlex
 import subprocess
@@ -81,7 +82,22 @@ class RepositoryContracts(unittest.TestCase):
                 key, value = line.split("=", 1)
                 values[key] = shlex.split(value)[0]
         self.assertIn(values["LATEST_RELEASE"], values["SUPPORTED_RELEASES"].split())
-        self.assertIn("UPDATE_CHANNEL=testing", read("config/versions.env"))
+        channel = re.search(
+            r"^UPDATE_CHANNEL=(testing|stable)$",
+            read("config/versions.env"),
+            re.MULTILINE,
+        )
+        self.assertIsNotNone(channel)
+        # Installed systems follow the channel of the branch they were built
+        # from: release lines ship stable, every other branch ships testing.
+        branch = os.environ.get("GITHUB_BASE_REF") or os.environ.get(
+            "GITHUB_REF_NAME", ""
+        )
+        if branch:
+            self.assertEqual(
+                channel.group(1),
+                "stable" if branch.startswith("release/") else "testing",
+            )
 
     def test_trust_and_system_security(self):
         core = read("editions/core/Containerfile")
@@ -120,7 +136,11 @@ class RepositoryContracts(unittest.TestCase):
         self.assertNotIn("needs.version", publish)
         self.assertIn("SHA256:209BDmH3jsRyO9UeGPPgLWPSegKmYCBIya0nR/AWWCY", publisher)
         self.assertIn("release_publish.py publish --candidate", publish)
-        self.assertIn("if: github.ref == 'refs/heads/main'", publish)
+        self.assertIn(
+            "(inputs.channel == 'testing' && github.ref == 'refs/heads/main') || "
+            "(inputs.channel == 'stable' && startsWith(github.ref, 'refs/heads/release/'))",
+            publish,
+        )
         self.assertIn("uses: ./.github/workflows/containers.yml", publish)
         self.assertIn("uses: ./.github/workflows/containers.yml", build)
         for value in (
@@ -181,12 +201,9 @@ class RepositoryContracts(unittest.TestCase):
                 self.assertIn(argument, promotion)
             self.assertIn("promotion.promote(", orchestration)
             self.assertIn("release_publish.py promote", publish)
-        with self.subTest("testing source"):
-            self.assertIn(
-                'candidate["version_tag"] != f"testing-{version}"', orchestration
-            )
-            self.assertIn('candidate["channel"] != "testing"', orchestration)
-            self.assertIn("release_publish.py verify-source", publish)
+        with self.subTest("stable is its own candidate"):
+            self.assertNotIn("verify-source", orchestration)
+            self.assertNotIn("verify-source", publish)
         with self.subTest("Fedora stable release check"):
             self.assertIn("docker://quay.io/fedora/fedora-bootc:latest", orchestration)
             self.assertIn('"SUPPORTED_RELEASES"', orchestration)

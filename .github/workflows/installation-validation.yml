@@ -4,7 +4,7 @@ on:
   workflow_dispatch:
     inputs:
       candidate_run_id:
-        description: Successful main-branch release candidate run ID
+        description: Successful release candidate run ID from this branch's release line
         type: string
         required: true
 
@@ -18,7 +18,7 @@ concurrency:
 
 jobs:
   installation:
-    if: github.ref == 'refs/heads/main' && github.event_name == 'workflow_dispatch'
+    if: (github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/heads/release/')) && github.event_name == 'workflow_dispatch'
     runs-on: ubuntu-latest
     environment: candidate-staging
     timeout-minutes: 350

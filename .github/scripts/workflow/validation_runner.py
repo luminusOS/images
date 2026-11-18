@@ -10,7 +10,8 @@ from pathlib import Path
 import release_pipeline
 
 # The driver is reviewed repository code, run from the checkout of the
-# dispatching main commit; that commit is recorded as runner_sha.
+# dispatching commit on the candidate's release line; that commit is
+# recorded as runner_sha.
 DRIVER = Path(__file__).resolve().parent / "validation_driver.py"
 PUBLIC_KEY = Path("shared/release/candidate.pub")
 
@@ -58,6 +59,10 @@ def run_validation(candidate_dir, runner_temp, run_id, repository, fixture_base)
     candidate = release_pipeline.candidate(candidate_path, PUBLIC_KEY)
     if candidate["run_id"] != int(run_id) or candidate["repository"] != repository:
         raise ValueError("candidate repository or run ID mismatch")
+    if os.environ.get("GITHUB_REF") != release_pipeline.release_ref(
+        candidate["channel"], candidate["fedora_version"]
+    ):
+        raise ValueError("validation must run on the candidate's release line")
     receipts = Path(tempfile.mkdtemp(prefix="luminusos-validation-", dir=runner_temp))
     os.chmod(receipts, 0o700)
     environment = {
@@ -102,10 +107,12 @@ def run_validation(candidate_dir, runner_temp, run_id, repository, fixture_base)
 def main():
     env = os.environ
     if (
-        env.get("GITHUB_REF") != "refs/heads/main"
+        not re.fullmatch(
+            r"refs/heads/(?:main|release/[1-9][0-9]*)", env.get("GITHUB_REF", "")
+        )
         or env.get("GITHUB_EVENT_NAME") != "workflow_dispatch"
     ):
-        raise ValueError("validation is restricted to main workflow_dispatch")
+        raise ValueError("validation is restricted to release line workflow_dispatch")
     receipts = run_validation(
         Path("candidate"),
         Path(env["RUNNER_TEMP"]),

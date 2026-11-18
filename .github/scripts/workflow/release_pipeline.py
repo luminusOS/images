@@ -48,6 +48,74 @@ MAX_CORE_BUILD_BYTES = 64 * 1024
 CHUNK_SIZE = 1024 * 1024
 
 
+def release_ref(channel: str, fedora: str) -> str:
+    # Testing is built from main and stable from its own protected release
+    # line, so a candidate's channel fixes the only ref allowed to produce it.
+    require(
+        re.fullmatch(r"[1-9][0-9]*", str(fedora)) is not None, "invalid Fedora line"
+    )
+    if channel == "testing":
+        return "refs/heads/main"
+    require(channel == "stable", "invalid channel")
+    return f"refs/heads/release/{fedora}"
+
+
+def require_line(c: dict, run: dict) -> None:
+    require(
+        "refs/heads/" + str(run.get("head_branch"))
+        == release_ref(c.get("channel"), c.get("fedora_version")),
+        "run does not come from the candidate's release line",
+    )
+
+
+def main_stable_lines() -> set[str]:
+    # The active lines come from main, never from the branch being built, so a
+    # release branch cannot authorize itself.
+    subprocess.run(
+        ["git", "fetch", "--quiet", "--depth=1", "origin", "main"],
+        check=True,
+        capture_output=True,
+    )
+    text = subprocess.run(
+        ["git", "show", "FETCH_HEAD:config/releases.env"],
+        check=True,
+        capture_output=True,
+        text=True,
+    ).stdout
+    spec = importlib.util.spec_from_file_location(
+        "release_build_metadata", Path(__file__).with_name("build_metadata.py")
+    )
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return set(module.releases(text)["STABLE_LINES"].split())
+
+
+def check_phase(env) -> None:
+    channel = env.get("CHANNEL")
+    line = re.fullmatch(r"refs/heads/release/([1-9][0-9]*)", env.get("GITHUB_REF", ""))
+    require(
+        channel == "testing"
+        and env.get("GITHUB_REF") == "refs/heads/main"
+        or channel == "stable"
+        and line is not None
+        and env.get("FEDORA", "") in ("", line.group(1)),
+        "channel does not match its release line",
+    )
+    runs = (env.get("CANDIDATE", ""), env.get("VALIDATION", ""))
+    require(
+        bool(runs[0]) == bool(runs[1])
+        and all(not x or re.fullmatch(r"[1-9][0-9]*", x) for x in runs),
+        "invalid release phase inputs",
+    )
+    # Promotion behind the protected stable environment is not wired yet.
+    require(channel == "testing" or not runs[0], "stable promotion is not available")
+    if channel == "stable":
+        require(
+            line.group(1) in main_stable_lines(),
+            "release line is not an active stable line on main",
+        )
+
+
 def require(condition: object, message: str) -> None:
     if not condition:
         raise ValueError(message)
@@ -250,8 +318,7 @@ def validate_candidate(
     )
     owner = repo.split("/")[0].lower()
     for name, image in images.items():
-        # Every candidate is staged privately and promoted from there; stable reuses
-        # the testing candidate's core and workstation and pushes its own installer.
+        # Every candidate is staged privately and promoted from there.
         image_name = "luminusos-candidates"
         require(
             isinstance(image, str)
@@ -758,9 +825,13 @@ def create_candidate(metadata: Path, directory: Path, output: Path, key: Path) -
     }
     require(set(c) == fields, "invalid metadata fields")
     require(
-        c.get("repository") == os.environ.get("GITHUB_REPOSITORY")
-        and os.environ.get("GITHUB_REF") == "refs/heads/main",
-        "untrusted producer repository/ref",
+        c.get("repository") == os.environ.get("GITHUB_REPOSITORY"),
+        "untrusted producer repository",
+    )
+    require(
+        os.environ.get("GITHUB_REF")
+        == release_ref(c.get("channel"), c.get("fedora_version")),
+        "producer ref is not the candidate's release line",
     )
     run_id = os.environ.get("GITHUB_RUN_ID", "")
     require(
@@ -866,7 +937,8 @@ def authorize_run(run: dict, repository: str, run_id: int, workflows: set[str]) 
     )
     require(run.get("path") in workflows, "untrusted workflow")
     require(
-        run.get("head_branch") == "main"
+        isinstance(run.get("head_branch"), str)
+        and re.fullmatch(r"main|release/[1-9][0-9]*", run["head_branch"]) is not None
         and isinstance(run.get("head_sha"), str)
         and COMMIT.fullmatch(run["head_sha"]),
         "untrusted run ref",
@@ -1100,7 +1172,7 @@ def validate_validation(path: Path, key: Path, c: dict) -> dict:
     )
     require(
         v.get("runner_repository") == c["repository"]
-        and v.get("runner_ref") == "refs/heads/main",
+        and v.get("runner_ref") == release_ref(c["channel"], c["fedora_version"]),
         "invalid validation runner",
     )
     validate_receipts(v.get("receipts"), path.parent, c)
@@ -1156,11 +1228,15 @@ def main() -> int:
     v.add_argument(
         "--workflow", default=".github/workflows/installation-validation.yml"
     )
+    sub.add_parser("check-phase")
     e = sub.add_parser("assemble-evidence")
     for x in ("candidate", "validation", "results", "output", "public-key"):
         e.add_argument("--" + x, required=True, type=Path)
     a = parser.parse_args()
     try:
+        if a.action == "check-phase":
+            check_phase(os.environ)
+            return 0
         require(
             a.public_key.resolve() == CANDIDATE_PUBLIC_KEY.resolve(),
             "untrusted candidate key",
@@ -1259,13 +1335,15 @@ def main() -> int:
                 and c["source_sha"] == run["head_sha"],
                 "candidate run mismatch",
             )
+            require_line(c, run)
             candidate_outputs(c, path)
         elif a.action == "record-validation":
             c = candidate(a.candidate, a.public_key, legacy_only=True)
             legacy_candidate(c)
             require(
                 os.environ.get("GITHUB_REPOSITORY") == c["repository"]
-                and os.environ.get("GITHUB_REF") == "refs/heads/main",
+                and os.environ.get("GITHUB_REF")
+                == release_ref(c["channel"], c["fedora_version"]),
                 "untrusted executor repository/ref",
             )
             runner_sha = os.environ.get("GITHUB_SHA", "")
@@ -1286,7 +1364,7 @@ def main() -> int:
                 "version": 1,
                 "binding": binding(c),
                 "runner_repository": c["repository"],
-                "runner_ref": "refs/heads/main",
+                "runner_ref": release_ref(c["channel"], c["fedora_version"]),
                 "runner_sha": runner_sha,
                 "validation_run_id": int(run_id),
                 "receipts": receipts,
@@ -1303,6 +1381,7 @@ def main() -> int:
             legacy_candidate(c)
             require(c["repository"] == a.repository, "candidate repository mismatch")
             run = run_info(a.repository, a.run_id, {a.workflow})
+            require_line(c, run)
             download(a.repository, a.run_id, "installation-validation", a.output)
             path = a.output / "validation.json"
             value = validate_validation(path, a.public_key, c)
@@ -1365,7 +1444,7 @@ def main() -> int:
                 "tested_digest": binding(c)["candidate_digest"],
                 "source": {
                     "repository": c["repository"],
-                    "ref": "refs/heads/main",
+                    "ref": release_ref(c["channel"], c["fedora_version"]),
                     "commit": c["source_sha"],
                     "run_id": c["run_id"],
                 },

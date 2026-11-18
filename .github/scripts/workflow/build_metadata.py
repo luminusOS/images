@@ -20,7 +20,7 @@ def releases(text):
         key, separator, value = line.partition("=")
         if (
             not separator
-            or key not in ("SUPPORTED_RELEASES", "LATEST_RELEASE")
+            or key not in ("SUPPORTED_RELEASES", "LATEST_RELEASE", "STABLE_LINES")
             or key in values
         ):
             raise ValueError("invalid releases configuration")
@@ -28,17 +28,27 @@ def releases(text):
         if len(tokens) != 1 or not re.fullmatch(r"[0-9 ]+", tokens[0]):
             raise ValueError("invalid releases value")
         values[key] = tokens[0]
-    if set(values) != {"SUPPORTED_RELEASES", "LATEST_RELEASE"}:
+    if not {"SUPPORTED_RELEASES", "LATEST_RELEASE"} <= set(values):
         raise ValueError("incomplete releases configuration")
+    values.setdefault("STABLE_LINES", "")
+    if not set(values["STABLE_LINES"].split()) <= set(
+        values["SUPPORTED_RELEASES"].split()
+    ):
+        raise ValueError("stable lines must be supported releases")
     return values
+
+
+def release_line_ref(env):
+    # Pull requests into a release line validate against that line; every
+    # other event names its own branch.
+    return env.get("GITHUB_BASE_REF") or env.get("GITHUB_REF_NAME", "")
 
 
 def metadata(env, config, supported, base_digest, today, sequence=0):
     channel = env.get("CHANNEL", "testing")
-    if channel not in ("testing", "stable") or config["UPDATE_CHANNEL"] not in (
-        "testing",
-        "stable",
-    ):
+    # Installed systems follow the channel their image was built for, so a
+    # release line's checkout must name the channel it builds.
+    if channel not in ("testing", "stable") or config["UPDATE_CHANNEL"] != channel:
         raise ValueError("invalid channel")
     if env.get("PUBLISH") == "true" or env.get("BUILDER_MODE", "local") not in (
         "local",
@@ -46,10 +56,11 @@ def metadata(env, config, supported, base_digest, today, sequence=0):
     ):
         raise ValueError("reusable build is read-only")
     if channel == "stable":
-        version = env.get("PROMOTE_VERSION", "")
-        if not re.fullmatch(r"[0-9]+\.[0-9]{8}(?:\.[0-9]+)?", version):
-            raise ValueError("invalid promote_version")
-        fedora = version.split(".")[0]
+        line = re.fullmatch(r"release/([0-9]+)", release_line_ref(env))
+        if not line or type(sequence) is not int or sequence < 1:
+            raise ValueError("stable builds only on a numbered release line")
+        fedora = line.group(1)
+        version = f"{fedora}.{today}.{sequence}"
     else:
         branch = re.fullmatch(r"f([0-9]+)", env.get("GITHUB_REF_NAME", ""))
         fedora = env.get("FEDORA_VERSION") or (
@@ -61,6 +72,8 @@ def metadata(env, config, supported, base_digest, today, sequence=0):
         or fedora not in supported["SUPPORTED_RELEASES"].split()
     ):
         raise ValueError("unsupported Fedora version")
+    if channel == "stable" and fedora not in supported["STABLE_LINES"].split():
+        raise ValueError("Fedora release is not an active stable line")
     if not re.fullmatch(r"sha256:[0-9a-f]{64}", base_digest):
         raise ValueError("invalid Fedora bootc digest")
     owner = env["GITHUB_REPOSITORY_OWNER"].lower()
@@ -76,11 +89,11 @@ def metadata(env, config, supported, base_digest, today, sequence=0):
         r"[0-9]+\.[0-9]+\.[0-9]+(?:-rc\.[0-9]+)?", override
     ):
         raise ValueError("invalid sirius_version")
-    tag = f"testing-{version}"
+    tag = version if channel == "stable" else f"testing-{version}"
     target = fedora if config["UPDATE_CHANNEL"] == "stable" else f"testing-{fedora}"
     registry = f"ghcr.io/{owner}"
     candidate_tag = f"candidate-{candidate}"
-    workstation = f"{registry}/luminusos-workstation:{candidate_tag if channel == 'testing' else tag}"
+    workstation = f"{registry}/luminusos-workstation:{candidate_tag}"
     result = {
         "fedora_version": fedora,
         "fedora_bootc_digest": base_digest,
@@ -88,10 +101,10 @@ def metadata(env, config, supported, base_digest, today, sequence=0):
         "build_version": version,
         "branch_tag": fedora if channel == "stable" else f"testing-{fedora}",
         "channel_tag": "latest" if channel == "stable" else "testing",
-        "release_tag": f"v{version}" if channel == "stable" else tag,
+        "release_tag": tag,
         "target_tag": target,
         "image_namespace": owner,
-        "core_image": f"{registry}/luminusos:{candidate_tag if channel == 'testing' else tag}",
+        "core_image": f"{registry}/luminusos:{candidate_tag}",
         "workstation_image": workstation,
         "workstation_iso_image": f"{registry}/luminusos-workstation:{candidate_tag}-iso",
         "sirius_version": override or config["SIRIUS_VERSION"],
@@ -113,7 +126,10 @@ def main():
     config = read_config()
     channel = env.get("CHANNEL", "testing")
     if channel == "stable":
-        fedora = env.get("PROMOTE_VERSION", "").split(".")[0]
+        line = re.fullmatch(r"release/([0-9]+)", release_line_ref(env))
+        if not line:
+            raise ValueError("stable builds only on a numbered release line")
+        fedora = line.group(1)
     else:
         match = re.fullmatch(r"f([0-9]+)", env.get("GITHUB_REF_NAME", ""))
         fedora = env.get("FEDORA_VERSION") or (
@@ -133,8 +149,12 @@ def main():
         base = detected_base
     today = datetime.datetime.now(datetime.UTC).strftime("%Y%m%d")
     sequence = 0
-    if channel == "testing" and env.get("BUILD_SEQUENCE") == "true":
-        prefix = f"testing-{fedora}.{today}."
+    if channel == "stable" or env.get("BUILD_SEQUENCE") == "true":
+        prefix = (
+            f"{fedora}.{today}."
+            if channel == "stable"
+            else f"testing-{fedora}.{today}."
+        )
         refs = subprocess.check_output(
             ["git", "ls-remote", "--tags", "origin", f"refs/tags/{prefix}*"], text=True
         )

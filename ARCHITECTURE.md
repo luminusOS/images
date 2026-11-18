@@ -558,11 +558,11 @@ The workflow helpers separate three responsibilities:
 
 - `core_reuse.py hash|select` fingerprints core inputs and selects a signed, compatible core image when reuse is requested.
 - `image_archive.py save|load` transports any built image between jobs, verifying the archive SHA-256 before loading and the local image ID afterward. A local image ID is not a registry manifest digest.
-- `oci_layout.py fetch-payload` acquires the same-run workstation OCI artifact for testing, requires its expected manifest digest, and remaps only the index reference to `latest`. Stable continues to use `installer_payload.py export` with the approved workstation manifest digest.
+- `oci_layout.py fetch-payload` acquires the same-run workstation OCI artifact for testing, requires its expected manifest digest, and remaps only the index reference to `latest`.
 
 New editions based on core or workstation should declare their actual parent through explicit job dependencies and verified archive handoffs. Keep edition-specific Containerfiles and build arguments explicit; do not route unrelated edition operations through core reuse or installer helpers. No additional edition definitions or generic dependency engine are needed for the current two editions.
 
-`publish.yml` owns publication, signing and promotion, not the read-only build workflow. Stable promotion preserves the approved installed payload rather than rebuilding it. The quality, automatic testing and installation-validation workflows retain their existing triggers, permissions and evidence gates. `testing-release-chain.yml` connects them for testing: after a successful Auto Testing candidate it dispatches validation, waits for it and dispatches publication, without holding any signing secret.
+`publish.yml` owns publication, signing and promotion, not the read-only build workflow. Each channel builds its own candidate from its source line, `main` for testing and `release/<fedora>` for stable, and promotion preserves that candidate's validated digests. The quality, automatic testing and installation-validation workflows retain their existing triggers, permissions and evidence gates. `testing-release-chain.yml` connects them for testing: after a successful Auto Testing candidate it dispatches validation, waits for it and dispatches publication, without holding any signing secret.
 
 ## Local QEMU Testing
 
@@ -649,10 +649,11 @@ Release metadata lives in `config/releases.env` on `main` and is read by every b
 
 - `SUPPORTED_RELEASES`: releases that may be built.
 - `LATEST_RELEASE`: the only release allowed to move the floating `testing` and `latest` tags.
+- `STABLE_LINES`: releases with an active `release/<fedora>` line. A stable build runs only on that branch, and only when its release is listed here on `main`; the branch's own `config/versions.env` sets `UPDATE_CHANNEL=stable`.
 
 `auto-testing` checks the Fedora base on `main`. Automatic builds are candidates, not evidence that a release has passed installation or update tests. `python3 tools/release-notes.py` compares `rpm -qa` of the previous and new image for release notes.
 
-Stable images are promoted from an existing testing build with `skopeo copy --all --preserve-digests`, never rebuilt, so a stable tag always has the same digest as the testing build that was validated.
+Stable images are built on the protected `release/<fedora>` branch as their own candidates, staged privately and scanned against the `*-stable-<fedora>.json` policies. Promotion copies the validated candidate with `skopeo copy --all --preserve-digests`, never rebuilding it, so a stable tag always has the digest that passed installation validation.
 
 ### Image signatures
 

@@ -7,8 +7,6 @@ on:
       detected_base_digest: {type: string, default: "__not_supplied__"}
       fedora_version: {type: string, default: ""}
       channel: {type: string, default: testing}
-      promote_version: {type: string, default: ""}
-      workstation_digest: {type: string, default: ""}
       sirius_version: {type: string, default: ""}
       skip_flatpaks: {type: string, default: "0"}
       build_installer: {type: boolean, default: false}
@@ -79,7 +77,6 @@ jobs:
           DETECTED_FEDORA_VERSION: '${{ inputs.detected_fedora_version }}'
           DETECTED_BASE_DIGEST: '${{ inputs.detected_base_digest }}'
           CHANNEL: '${{ inputs.channel }}'
-          PROMOTE_VERSION: '${{ inputs.promote_version }}'
           SIRIUS_VERSION: '${{ inputs.sirius_version }}'
           BUILDER_MODE: '${{ inputs.builder_mode }}'
           PUBLISH: '${{ inputs.publish }}'
@@ -89,7 +86,6 @@ jobs:
 
   core:
     name: Build core image
-    if: inputs.channel != 'stable'
     needs: [metadata]
     runs-on: ubuntu-latest
     timeout-minutes: 150
@@ -157,7 +153,7 @@ jobs:
           tags: '${{ needs.metadata.outputs.core_image }}'
       - name: Export built core OCI layout
         id: export-core-oci
-        if: inputs.channel == 'testing' && steps.select.outputs.reused != 'true' && steps.build.outcome == 'success'
+        if: steps.select.outputs.reused != 'true' && steps.build.outcome == 'success'
         env:
           IMAGE: '${{ needs.metadata.outputs.core_image }}'
         run: python3 .github/scripts/workflow/oci_layout.py export --image "$IMAGE" --layout core-oci --ref core --docker-host "${DOCKER_HOST:?Docker setup did not expose its socket}"
@@ -177,7 +173,6 @@ jobs:
 
   workstation:
     name: Build workstation image
-    if: inputs.channel != 'stable'
     needs: [metadata, core]
     runs-on: ubuntu-latest
     timeout-minutes: 180
@@ -198,16 +193,16 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - name: Fetch verified canonical core OCI layout
         id: fetch-core-oci
-        if: inputs.channel == 'testing' && needs.core.outputs.reused != 'true'
+        if: needs.core.outputs.reused != 'true'
         env:
           GH_TOKEN: '${{ github.token }}'
           EXPECTED_DIGEST: '${{ needs.core.outputs.built_oci_manifest_digest }}'
         run: python3 .github/scripts/workflow/oci_layout.py fetch-core --repository "$GITHUB_REPOSITORY" --run-id "$GITHUB_RUN_ID" --layout "$RUNNER_TEMP/core-oci" --expected-digest "$EXPECTED_DIGEST"
       - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
-        if: inputs.channel != 'testing' || needs.core.outputs.reused == 'true'
+        if: needs.core.outputs.reused == 'true'
         with: {name: core-image}
       - name: Load core image
-        if: inputs.channel != 'testing' || needs.core.outputs.reused == 'true'
+        if: needs.core.outputs.reused == 'true'
         env:
           IMAGE: '${{ needs.metadata.outputs.core_image }}'
           ARCHIVE: core-image.tar
@@ -228,9 +223,9 @@ jobs:
           no-cache: '${{ inputs.force_core || github.event_name == ''schedule'' }}'
           cache-from: type=gha,scope=workstation-${{ needs.metadata.outputs.fedora_version }}-${{ runner.arch }}
           cache-to: type=gha,scope=workstation-${{ needs.metadata.outputs.fedora_version }}-${{ runner.arch }},mode=max
-          build-contexts: '${{ inputs.channel == ''testing'' && needs.core.outputs.reused != ''true'' && format(''luminusos-core-context.invalid/core=oci-layout://{0}/core-oci@{1}'', runner.temp, needs.core.outputs.built_oci_manifest_digest) || '''' }}'
+          build-contexts: '${{ needs.core.outputs.reused != ''true'' && format(''luminusos-core-context.invalid/core=oci-layout://{0}/core-oci@{1}'', runner.temp, needs.core.outputs.built_oci_manifest_digest) || '''' }}'
           build-args: |
-            core_image=${{ inputs.channel == 'testing' && needs.core.outputs.reused != 'true' && 'luminusos-core-context.invalid/core' || needs.metadata.outputs.core_image }}
+            core_image=${{ needs.core.outputs.reused != 'true' && 'luminusos-core-context.invalid/core' || needs.metadata.outputs.core_image }}
             fedora_bootc_base=quay.io/fedora/fedora-bootc:${{ needs.metadata.outputs.fedora_version }}@${{ needs.metadata.outputs.fedora_bootc_digest }}
             fedora_version=${{ needs.metadata.outputs.fedora_version }}
             fedora_bootc_digest=${{ needs.metadata.outputs.fedora_bootc_digest }}
@@ -243,13 +238,13 @@ jobs:
         run: sudo apt-get update && sudo apt-get install -y skopeo
       - name: Export built workstation OCI layout
         id: export-workstation-oci
-        if: inputs.channel == 'testing' && steps.build.outcome == 'success'
+        if: steps.build.outcome == 'success'
         env:
           IMAGE: '${{ needs.metadata.outputs.workstation_image }}'
         run: python3 .github/scripts/workflow/oci_layout.py export --image "$IMAGE" --layout workstation-oci --ref workstation --docker-host "${DOCKER_HOST:?Docker setup did not expose its socket}"
       - name: Verify declared core ancestry
         id: check-core-ancestry
-        if: inputs.channel == 'testing' && needs.core.outputs.reused != 'true' && steps.export-workstation-oci.outcome == 'success'
+        if: needs.core.outputs.reused != 'true' && steps.export-workstation-oci.outcome == 'success'
         env:
           CORE_DIGEST: '${{ needs.core.outputs.built_oci_manifest_digest }}'
           WORKSTATION_DIGEST: '${{ steps.export-workstation-oci.outputs.manifest_digest }}'
@@ -270,12 +265,11 @@ jobs:
 
   installer:
     name: Build installer image
-    if: always() && inputs.build_installer && needs.metadata.result == 'success' && (inputs.channel == 'stable' || needs.workstation.result == 'success')
+    if: always() && inputs.build_installer && needs.metadata.result == 'success' && needs.workstation.result == 'success'
     needs: [metadata, workstation]
     permissions: {contents: read, packages: read, actions: read}
     uses: ./.github/workflows/installer.yml
     with:
-      channel: ${{ inputs.channel }}
       fedora_version: ${{ needs.metadata.outputs.fedora_version }}
       sirius_version: ${{ needs.metadata.outputs.sirius_version }}
       sirius_rpm_version: ${{ needs.metadata.outputs.sirius_rpm_version }}
@@ -284,7 +278,6 @@ jobs:
       image_namespace: ${{ needs.metadata.outputs.image_namespace }}
       target_tag: ${{ needs.metadata.outputs.target_tag }}
       workstation_iso_image: ${{ needs.metadata.outputs.workstation_iso_image }}
-      workstation_digest: ${{ inputs.workstation_digest }}
       workstation_built_oci_manifest_digest: ${{ needs.workstation.outputs.built_oci_manifest_digest }}
       workstation_archive_sha256: ${{ needs.workstation.outputs.archive_sha256 }}
       workstation_image_id: ${{ needs.workstation.outputs.image_id }}
