@@ -1,4 +1,5 @@
 import json
+import os
 import re
 import shlex
 import subprocess
@@ -81,7 +82,22 @@ class RepositoryContracts(unittest.TestCase):
                 key, value = line.split("=", 1)
                 values[key] = shlex.split(value)[0]
         self.assertIn(values["LATEST_RELEASE"], values["SUPPORTED_RELEASES"].split())
-        self.assertIn("UPDATE_CHANNEL=testing", read("config/versions.env"))
+        channel = re.search(
+            r"^UPDATE_CHANNEL=(testing|stable)$",
+            read("config/versions.env"),
+            re.MULTILINE,
+        )
+        self.assertIsNotNone(channel)
+        # Installed systems follow the channel of the branch they were built
+        # from: release lines ship stable, every other branch ships testing.
+        branch = os.environ.get("GITHUB_BASE_REF") or os.environ.get(
+            "GITHUB_REF_NAME", ""
+        )
+        if branch:
+            self.assertEqual(
+                channel.group(1),
+                "stable" if branch.startswith("release/") else "testing",
+            )
 
     def test_trust_and_system_security(self):
         core = read("editions/core/Containerfile")
