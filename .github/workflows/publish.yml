@@ -69,10 +69,11 @@ env:
   BYPASS_CANDIDATE: ${{ inputs.candidate_run_id }}
   BYPASS_VALIDATION: ${{ inputs.validation_run_id }}
 
-# Channels write disjoint tags, paths and releases, so each serializes only
-# with itself: a stable run waiting for approval must not queue testing.
+# Each channel and line serializes only with itself: a stable run waiting
+# days for approval must not queue another line or testing, or let GitHub
+# cancel a run already pending.
 concurrency:
-  group: ${{ github.event_name == 'workflow_dispatch' && inputs.inert_r2_probe == true && format('luminus-inert-r2-{0}', github.repository) || format('luminus-release-{0}-{1}', github.repository, inputs.channel) }}
+  group: ${{ github.event_name == 'workflow_dispatch' && inputs.inert_r2_probe == true && format('luminus-inert-r2-{0}', github.repository) || format('luminus-release-{0}-{1}-{2}', github.repository, inputs.channel, github.ref_name) }}
   cancel-in-progress: false
 
 jobs:

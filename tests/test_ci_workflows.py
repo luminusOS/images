@@ -851,7 +851,11 @@ class CandidateSigningTests(unittest.TestCase):
                     },
                 )
         group = workflow["concurrency"]["group"]
-        self.assertIn("inputs.channel", group)
+        self.assertIn(
+            "format('luminus-release-{0}-{1}-{2}', github.repository,"
+            " inputs.channel, github.ref_name)",
+            group,
+        )
         self.assertIn("luminus-inert-r2-", group)
         self.assertFalse(workflow["concurrency"]["cancel-in-progress"])
         self.assertNotIn("require slice 5b", str(workflow["jobs"]["prepare-candidate"]))
