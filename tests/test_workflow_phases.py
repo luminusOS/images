@@ -1,4 +1,5 @@
 import copy
+import hashlib
 import os
 import shlex
 import subprocess
@@ -45,48 +46,49 @@ def reusable_permission_errors(workflows, entrypoint):
 
 
 class WorkflowPhasesTest(unittest.TestCase):
-    def test_legacy_stable_is_disabled_before_preparation_or_resume(self):
+    def test_phase_inputs_bind_each_channel_to_its_line_before_any_job(self):
         step = next(
             step
             for step in workflow("publish.yml")["jobs"]["inputs"]["steps"]
             if step.get("name") == "Validate phase inputs"
         )
+        self.assertEqual(
+            step["run"],
+            "python3 .github/scripts/workflow/release_pipeline.py check-phase",
+        )
         command = [sys.executable, *shlex.split(step["run"])[1:]]
-        for channel, candidate, validation, testing, expected in (
-            ("stable", "", "", "789", 1),
-            ("stable", "123", "456", "789", 1),
-            ("testing", "", "", "789", 0),
-            ("testing", "123", "456", "789", 0),
-            ("testing", "123", "", "789", 1),
-            ("testing", "", "456", "789", 1),
-            ("testing", "abc", "def", "789", 1),
-            ("testing", "0", "456", "789", 1),
-            ("testing", "١", "456", "789", 1),
-            ("testing", "", "", "bad", 1),
+        for ref, channel, candidate, validation, expected in (
+            ("refs/heads/release/45", "stable", "123", "456", 1),
+            ("refs/heads/main", "stable", "", "", 1),
+            ("refs/heads/main", "testing", "", "", 0),
+            ("refs/heads/main", "testing", "123", "456", 0),
+            ("refs/heads/release/45", "testing", "", "", 1),
+            ("refs/heads/main", "testing", "123", "", 1),
+            ("refs/heads/main", "testing", "", "456", 1),
+            ("refs/heads/main", "testing", "abc", "def", 1),
+            ("refs/heads/main", "testing", "0", "456", 1),
+            ("refs/heads/main", "testing", "١", "456", 1),
         ):
             with self.subTest(
-                channel=channel,
-                candidate=candidate,
-                validation=validation,
-                testing=testing,
+                ref=ref, channel=channel, candidate=candidate, validation=validation
             ):
                 result = subprocess.run(
                     command,
+                    cwd=ROOT,
                     env={
                         **os.environ,
+                        "GITHUB_REF": ref,
                         "CHANNEL": channel,
                         "CANDIDATE": candidate,
                         "VALIDATION": validation,
-                        "TESTING": testing,
-                        "TESTING_VALIDATION": "987",
-                        "VERSION": "45.20261115",
+                        "FEDORA": "",
                     },
                     capture_output=True,
                     text=True,
                     timeout=10,
                     check=False,
                 )
-                self.assertEqual(result.returncode, expected)
+                self.assertEqual(result.returncode, expected, result.stderr)
 
     def test_public_writers_require_successful_inputs_and_inert_probe_is_separate(self):
         jobs = workflow("publish.yml")["jobs"]
@@ -110,9 +112,7 @@ class WorkflowPhasesTest(unittest.TestCase):
             for name, job in jobs.items()
             if "write" in job.get("permissions", {}).values()
         }
-        self.assertEqual(
-            writers, {"publish-images", "publish-stable-installer", "release"}
-        )
+        self.assertEqual(writers, {"publish-images", "release"})
         for name in writers:
             with self.subTest(job=name):
                 self.assertTrue(guarded(name))
@@ -158,8 +158,7 @@ class WorkflowPhasesTest(unittest.TestCase):
                             "attestations",
                             "write",
                         ),
-                    ]
-                    * (2 if caller != "build-containers.yml" else 1),
+                    ],
                 )
 
     def assert_container_token_scope(self, containers, private=False):
@@ -226,18 +225,13 @@ class WorkflowPhasesTest(unittest.TestCase):
         data = workflow("containers.yml")
         triggers = data.get("on", data.get(True))
         self.assertNotIn("private_core_handoff", triggers["workflow_call"]["inputs"])
-        previous = {
-            "metadata": "true",
-            "core": "inputs.channel != 'stable'",
-            "workstation": "inputs.channel != 'stable'",
-            "installer": "always() && inputs.build_installer && needs.metadata.result == 'success' && (inputs.channel == 'stable' || needs.workstation.result == 'success')",
-        }
-        for name, legacy in previous.items():
+        for name in ("metadata", "core", "workstation"):
             with self.subTest(job=name):
-                if name == "metadata":
-                    self.assertNotIn("if", data["jobs"][name])
-                else:
-                    self.assertEqual(data["jobs"][name]["if"], legacy)
+                self.assertNotIn("if", data["jobs"][name])
+        self.assertEqual(
+            data["jobs"]["installer"]["if"],
+            "always() && inputs.build_installer && needs.metadata.result == 'success' && needs.workstation.result == 'success'",
+        )
 
     def test_installer_validation_requires_explicit_boolean_manual_opt_in(self):
         validation = workflow("build-containers.yml")
@@ -274,7 +268,6 @@ class WorkflowPhasesTest(unittest.TestCase):
             ("installer-build", installer["jobs"]["build"]),
             ("build-containers", validation["jobs"]["build-containers"]),
             ("containers", publication["jobs"]["containers"]),
-            ("stable-installer", publication["jobs"]["stable-installer"]),
         ):
             with self.subTest(job=name):
                 self.assertEqual(job["permissions"], read_only)
@@ -288,7 +281,7 @@ class WorkflowPhasesTest(unittest.TestCase):
                         self.assertEqual(step["env"]["GH_TOKEN"], "${{ github.token }}")
                     else:
                         self.assertNotIn("GH_TOKEN", step.get("env", {}))
-                if name in ("build-containers", "containers", "stable-installer"):
+                if name in ("build-containers", "containers"):
                     self.assertEqual(job["uses"], "./.github/workflows/containers.yml")
 
         for data, expected in (
@@ -299,8 +292,6 @@ class WorkflowPhasesTest(unittest.TestCase):
                 publication,
                 {
                     "containers",
-                    "stable-installer",
-                    "stable-source",
                     "release-evidence",
                     "release",
                 },
@@ -353,15 +344,12 @@ class WorkflowPhasesTest(unittest.TestCase):
 
     def test_workstation_consumes_canonical_core_only_for_testing_built_core(self):
         jobs = workflow("containers.yml")["jobs"]
-        canonical = "inputs.channel == 'testing' && needs.core.outputs.reused != 'true'"
-        legacy = "inputs.channel != 'testing' || needs.core.outputs.reused == 'true'"
+        canonical = "needs.core.outputs.reused != 'true'"
+        legacy = "needs.core.outputs.reused == 'true'"
         self.assertEqual(
             jobs["core"]["outputs"]["reused"], "${{ steps.select.outputs.reused }}"
         )
-        self.assertEqual(
-            jobs["workstation"]["if"],
-            "inputs.channel != 'stable'",
-        )
+        self.assertNotIn("if", jobs["workstation"])
         steps = jobs["workstation"]["steps"]
         fetch = next(step for step in steps if step.get("id") == "fetch-core-oci")
         self.assertEqual(fetch["if"], canonical)
@@ -422,7 +410,7 @@ class WorkflowPhasesTest(unittest.TestCase):
         )
         self.assertEqual(
             ancestry["if"],
-            "inputs.channel == 'testing' && needs.core.outputs.reused != 'true' && steps.export-workstation-oci.outcome == 'success'",
+            "needs.core.outputs.reused != 'true' && steps.export-workstation-oci.outcome == 'success'",
         )
         self.assertEqual(
             ancestry["env"],
@@ -477,7 +465,7 @@ class WorkflowPhasesTest(unittest.TestCase):
                 self.assertEqual(export["env"]["IMAGE"], build["with"]["tags"])
                 self.assertEqual(
                     export["if"],
-                    "inputs.channel == 'testing' && steps.build.outcome == 'success'",
+                    "steps.build.outcome == 'success'",
                 )
                 self.assertEqual(
                     export["run"],
@@ -554,18 +542,15 @@ class WorkflowPhasesTest(unittest.TestCase):
         self.assertEqual(caller["needs"], ["metadata", "workstation"])
         self.assertEqual(
             caller["if"],
-            "always() && inputs.build_installer && needs.metadata.result == 'success' && (inputs.channel == 'stable' || needs.workstation.result == 'success')",
+            "always() && inputs.build_installer && needs.metadata.result == 'success' && needs.workstation.result == 'success'",
         )
-        self.assertEqual(caller["with"]["channel"], "${{ inputs.channel }}")
+        self.assertNotIn("channel", caller["with"])
         installer = workflow("installer.yml")
-        channel = installer.get("on", installer.get(True))["workflow_call"]["inputs"][
-            "channel"
-        ]
-        self.assertEqual(channel, {"type": "string", "required": True})
-        self.assertEqual(
-            containers["jobs"]["workstation"]["if"],
-            "inputs.channel != 'stable'",
+        self.assertNotIn(
+            "channel",
+            installer.get("on", installer.get(True))["workflow_call"]["inputs"],
         )
+        self.assertNotIn("if", containers["jobs"]["workstation"])
         for role, job in (
             ("workstation", containers["jobs"]["workstation"]),
             ("installer", installer["jobs"]["build"]),
@@ -597,13 +582,10 @@ class WorkflowPhasesTest(unittest.TestCase):
         build = next(step for step in steps if step.get("id") == "build")
         export = next(step for step in steps if step.get("id") == "export-core-oci")
         upload = next(step for step in steps if step.get("id") == "upload-core-oci")
-        self.assertEqual(
-            core["if"],
-            "inputs.channel != 'stable'",
-        )
+        self.assertNotIn("if", core)
         self.assertEqual(
             export["if"],
-            "inputs.channel == 'testing' && steps.select.outputs.reused != 'true' && steps.build.outcome == 'success'",
+            "steps.select.outputs.reused != 'true' && steps.build.outcome == 'success'",
         )
         self.assertEqual(upload["if"], "steps.export-core-oci.outcome == 'success'")
         self.assertLess(steps.index(build), steps.index(export))
@@ -711,12 +693,12 @@ class WorkflowPhasesTest(unittest.TestCase):
         )
         authorization = publish["jobs"]["inputs"]["steps"]
         self.assertIn("validate-bypass", authorization[1]["run"])
-        for job in ("containers", "stable-source", "release"):
+        for job in ("containers", "release"):
             self.assertIn("inputs", publish["jobs"][job]["needs"])
 
     def test_bypass_blocks_candidate_and_promotion_even_when_scans_succeed(self):
         jobs = workflow("publish.yml")["jobs"]
-        for name in ("publish-images", "prepare-candidate", "stable-source", "release"):
+        for name in ("publish-images", "prepare-candidate", "release"):
             with self.subTest(job=name):
                 self.assertIn("!inputs.security_findings_bypass", jobs[name]["if"])
         for name in ("iso", "qcow2"):
@@ -758,7 +740,6 @@ class WorkflowPhasesTest(unittest.TestCase):
         inputs = call["inputs"]
         self.assertTrue(
             {
-                "channel",
                 "fedora_version",
                 "sirius_version",
                 "sirius_rpm_version",
@@ -773,7 +754,6 @@ class WorkflowPhasesTest(unittest.TestCase):
             all(
                 inputs[name]["required"] is True
                 for name in (
-                    "channel",
                     "fedora_version",
                     "sirius_version",
                     "sirius_rpm_version",
@@ -785,8 +765,9 @@ class WorkflowPhasesTest(unittest.TestCase):
                 )
             )
         )
+        self.assertNotIn("channel", inputs)
+        self.assertNotIn("workstation_digest", inputs)
         for name in (
-            "workstation_digest",
             "workstation_archive_sha256",
             "workstation_image_id",
         ):
@@ -809,7 +790,6 @@ class WorkflowPhasesTest(unittest.TestCase):
         self.assertIn("needs.metadata.result == 'success'", installer["if"])
         self.assertIn("needs.workstation.result == 'success'", installer["if"])
         for name in (
-            "channel",
             "fedora_version",
             "sirius_version",
             "sirius_rpm_version",
@@ -847,14 +827,12 @@ class WorkflowPhasesTest(unittest.TestCase):
             caller["with"]["workstation_built_oci_manifest_digest"],
             "${{ needs.workstation.outputs.built_oci_manifest_digest }}",
         )
-        self.assertEqual(
-            caller["with"]["workstation_digest"], "${{ inputs.workstation_digest }}"
-        )
+        self.assertNotIn("workstation_digest", caller["with"])
         steps = installer["jobs"]["build"]["steps"]
         fetch = next(
             step for step in steps if step.get("id") == "fetch-workstation-payload"
         )
-        self.assertEqual(fetch["if"], "inputs.channel == 'testing'")
+        self.assertNotIn("if", fetch)
         self.assertEqual(
             fetch["env"],
             {
@@ -866,16 +844,8 @@ class WorkflowPhasesTest(unittest.TestCase):
             fetch["run"],
             'mkdir -p .test\npython3 .github/scripts/workflow/oci_layout.py fetch-payload --repository "$GITHUB_REPOSITORY" --run-id "$GITHUB_RUN_ID" --layout .test/payload.oci --expected-digest "$EXPECTED_DIGEST"\n',
         )
-        export = next(
-            step for step in steps if step.get("name") == "Export installer payload"
-        )
-        self.assertEqual(export["if"], "inputs.channel == 'stable'")
-        self.assertEqual(
-            export["run"],
-            "python3 .github/scripts/workflow/installer_payload.py export",
-        )
-        self.assertEqual(
-            export["env"]["WORKSTATION_DIGEST"], "${{ inputs.workstation_digest }}"
+        self.assertFalse(
+            any(step.get("name") == "Export installer payload" for step in steps)
         )
         load = next(
             step for step in steps if step.get("name") == "Load workstation image"
@@ -893,7 +863,7 @@ class WorkflowPhasesTest(unittest.TestCase):
         assert "sirius_version" in inputs
         assert "candidate_workflow" not in inputs
         assert "testing_workflow" not in inputs
-        for job in ("stable-source", "release"):
+        for job in ("release-evidence", "release"):
             fetch = next(
                 step["run"]
                 for step in publish["jobs"][job]["steps"]
@@ -937,37 +907,48 @@ class WorkflowPhasesTest(unittest.TestCase):
         assert '--channel "$CHANNEL"' in commands
         assert "--directory dist" in commands
 
-    def test_stable_preparation_uses_approved_payload(self):
-        jobs = workflow("publish.yml")["jobs"]
-        assert jobs["stable-installer"]["needs"] == ["stable-source"]
-        assert (
-            "needs.stable-source.outputs.workstation_digest"
-            in jobs["stable-installer"]["with"]["workstation_digest"]
+    def test_stable_candidates_are_built_on_their_release_line(self):
+        publish = workflow("publish.yml")
+        jobs = publish["jobs"]
+        for legacy in ("stable-source", "stable-installer", "publish-stable-installer"):
+            self.assertNotIn(legacy, jobs)
+        for name in ("promote_version", "testing_run_id", "testing_validation_run_id"):
+            self.assertNotIn(name, publish["on"]["workflow_dispatch"]["inputs"])
+            self.assertNotIn(name, publish["on"]["workflow_call"]["inputs"])
+        line = (
+            "((inputs.channel == 'testing' && github.ref == 'refs/heads/main') || "
+            "(inputs.channel == 'stable' && startsWith(github.ref, 'refs/heads/release/')))"
         )
-        assert (
-            "needs.stable-source.outputs.workstation"
-            in jobs["qcow2"]["steps"][-2]["env"]["WORKSTATION_IMAGE"]
-        )
-        metadata = next(
-            step
-            for step in jobs["prepare-candidate"]["steps"]
-            if step.get("name") == "Create candidate metadata"
-        )
-        assert (
-            "needs.stable-source.outputs.build_version"
-            in metadata["env"]["VERSION_TAG"]
-        )
-        commands = "\n".join(
-            step.get("run", "") for step in jobs["stable-source"]["steps"]
-        )
-        assert (
-            commands.index("fetch-candidate")
-            < commands.index("fetch-validation")
-            < commands.index("prepare-results")
-            < commands.index("assemble-evidence")
-            < commands.index("verify-release")
-            < commands.index("verify-source")
-        )
+        for name in ("containers", "publish-images", "prepare-candidate"):
+            with self.subTest(job=name):
+                self.assertIn(line, jobs[name]["if"])
+                self.assertNotIn("github.ref == 'refs/heads/main' &&", jobs[name]["if"])
+        self.assertIs(jobs["containers"]["with"]["build_installer"], True)
+        self.assertEqual(jobs["containers"]["with"]["channel"], "${{ inputs.channel }}")
+        for name in ("release-evidence", "release"):
+            with self.subTest(job=name):
+                self.assertIn("github.ref == 'refs/heads/main'", jobs[name]["if"])
+        steps = {step.get("id"): step for step in jobs["scan-candidates"]["steps"]}
+        self.assertEqual(steps["inspect-testing"]["if"], "inputs.channel == 'testing'")
+        self.assertEqual(steps["inspect-stable"]["if"], "inputs.channel == 'stable'")
+        stable = steps["inspect-stable"]["run"]
+        self.assertEqual(stable.count("--channel stable"), 3)
+        self.assertNotIn("testing", stable)
+        self.assertEqual(stable.count(" || status=1"), 3)
+        self.assertTrue(stable.rstrip().endswith('exit "$status"'))
+        policies = ROOT / "shared/release/exceptions"
+        for name in (
+            "core-core_payload-stable-45.json",
+            "workstation-workstation_payload-stable-45.json",
+            "workstation-installer_live-stable-45.json",
+        ):
+            with self.subTest(policy=name):
+                digest = hashlib.sha256((policies / name).read_bytes()).hexdigest()
+                self.assertIn(
+                    f"--exceptions shared/release/exceptions/{name} "
+                    f"--policy-sha256 {digest}",
+                    stable,
+                )
 
     def test_scheduled_preparation_reuses_publish(self):
         auto = workflow("auto-testing.yml")
