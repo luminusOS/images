@@ -168,6 +168,23 @@ RUN --mount=type=cache,target=/var/cache/dnf \
       gstreamer1-plugin-libav && \
     dnf clean all
 
+# Keep the testing RPM repository out of the installed system.
+ARG image_channel=local
+RUN --mount=type=cache,target=/var/cache/dnf \
+    --mount=type=bind,source=shared/rpm-keys/luminus-testing.asc,target=/run/luminus-testing.asc,ro \
+    --mount=type=bind,source=editions/workstation/luminus-testing.repo,target=/etc/yum.repos.d/luminus-testing.repo,ro \
+    --mount=type=bind,from=ctx-scripts,source=/scripts,target=/scripts \
+    --mount=type=bind,from=python-tools,source=/usr,target=/opt/python,ro \
+    if [ "${image_channel}" = testing ] && [ "${fedora_version}" = 45 ]; then \
+      env PYTHONHOME=/opt/python LD_LIBRARY_PATH=/opt/python/lib64 /opt/python/bin/python3 /scripts/rpmdb-repair.py && \
+      dnf -y --releasever="${fedora_version}" --enable-repo=luminus-testing \
+        install --from-repo=luminus-testing gnome-foreground-booster && \
+      rpm -q gnome-foreground-booster && \
+      systemctl --global enable gnome-foreground-booster.service && \
+      systemctl --global is-enabled gnome-foreground-booster.service && \
+      dnf clean all; \
+    fi
+
 # Nautilus thumbnails for AppImages, from the Luminus repository.
 RUN --mount=type=cache,target=/var/cache/dnf \
     --mount=type=bind,from=ctx-scripts,source=/scripts,target=/scripts \

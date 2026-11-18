@@ -1,0 +1,8 @@
+[luminus-testing]
+name=Luminus OS (testing)
+baseurl=https://rpm.luminusos.org/testing/$releasever/$basearch/
+enabled=0
+gpgcheck=1
+repo_gpgcheck=1
+gpgkey=file:///run/luminus-testing.asc
+includepkgs=gnome-foreground-booster
