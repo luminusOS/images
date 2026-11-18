@@ -220,6 +220,7 @@ class ReleasePublisherTests(unittest.TestCase):
             patch.object(release_publish, "verify_release", return_value=candidate),
             patch.object(release_publish, "release_artifacts"),
             patch.object(release_publish, "verify_staged_distribution"),
+            patch.object(release_publish, "release_preflight"),
             patch.object(release_publish, "stage"),
             patch.object(
                 release_publish,
@@ -430,10 +431,12 @@ class ReleasePublisherTests(unittest.TestCase):
         }
         evidence = {"images": images, "artifacts": {}}
         pipeline = types.SimpleNamespace(
-            candidate=lambda *_: candidate, verify=lambda *_: None
+            candidate=lambda *_: candidate,
+            verify=lambda *_: None,
+            release_ref=lambda *_: "refs/heads/main",
         )
         promotion = types.SimpleNamespace(
-            validate_candidate=lambda *_: [],
+            validate_candidate=lambda *_, **__: [],
             verify_evidence_artifacts=lambda *_: None,
             promote=unittest.mock.Mock(),
         )
@@ -463,6 +466,7 @@ class ReleasePublisherTests(unittest.TestCase):
                 ),
                 patch.object(release_publish, "release_artifacts"),
                 patch.object(release_publish, "verify_staged_distribution"),
+                patch.object(release_publish, "release_preflight"),
                 patch.object(release_publish, "stage"),
                 patch.object(
                     release_publish.subprocess,
@@ -1090,14 +1094,37 @@ class ReleasePolicyTests(unittest.TestCase):
         self.assertIn("installation", result.stderr)
 
     def test_release_policy_rejects_foreign_key_or_untrusted_evidence_source(self):
+        for ref in ("refs/pull/4/merge", "refs/heads/release/x", "refs/heads/f45"):
+            evidence = self.evidence()
+            evidence["source"]["ref"] = ref
+            with self.subTest(ref=ref):
+                self.assertTrue(
+                    any(
+                        "release line" in error
+                        for error in release_policy.validate_candidate(evidence)
+                    )
+                )
+
+    def test_release_policy_binds_evidence_to_the_expected_line(self):
         evidence = self.evidence()
-        evidence["source"]["ref"] = "refs/pull/4/merge"
-        self.assertTrue(
-            any(
-                "refs/heads/main" in error
-                for error in release_policy.validate_candidate(evidence)
-            )
+        evidence["source"]["ref"] = "refs/heads/release/45"
+        self.assertEqual(release_policy.validate_candidate(evidence), [])
+        self.assertEqual(
+            release_policy.validate_candidate(
+                evidence, expected_ref="refs/heads/release/45"
+            ),
+            [],
         )
+        for expected in ("refs/heads/main", "refs/heads/release/46"):
+            with self.subTest(expected=expected):
+                self.assertTrue(
+                    any(
+                        "release line" in error
+                        for error in release_policy.validate_candidate(
+                            evidence, expected_ref=expected
+                        )
+                    )
+                )
 
 
 class PromotionTests(unittest.TestCase):
@@ -2462,9 +2489,9 @@ class ContainerWorkflowTests(unittest.TestCase):
                         name,
                         (
                             "publish-images",
-                            "publish-stable-installer",
                             "prepare",
                             "release",
+                            "release-stable",
                         ),
                         workflow_name,
                     )
