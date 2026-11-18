@@ -43,18 +43,24 @@ class GitHub:
         page = self.api(f"actions/runs/{run_id}/artifacts?per_page=100")
         return [a["name"] for a in page["artifacts"] if a.get("expired") is False]
 
-    def candidate_runs_after(self, run_id: int) -> list[int]:
-        # Only Auto Testing candidates count: each has its own chain, so stepping
-        # aside for one never leaves the channel without a release in progress.
+    def candidate_runs_after(
+        self, run_id: int, workflow: str = "auto-testing.yml", branch: str = "main"
+    ) -> list[int]:
+        # Only candidates of the same detector and line count: each has its own
+        # chain, so stepping aside for one never leaves the channel without a
+        # release in progress.
         newer = []
         for page in range(1, MAX_PAGES + 1):
+            # Filtering by status server-side can omit the newest runs.
             runs = self.api(
-                "actions/workflows/auto-testing.yml/runs"
-                f"?branch=main&status=success&per_page=100&page={page}"
+                f"actions/workflows/{workflow}/runs"
+                f"?branch={branch}&per_page=100&page={page}"
             )["workflow_runs"]
             for item in runs:
-                if item["id"] > run_id and "release-candidate" in self.artifact_names(
-                    item["id"]
+                if (
+                    item["id"] > run_id
+                    and item.get("conclusion") == "success"
+                    and "release-candidate" in self.artifact_names(item["id"])
                 ):
                     newer.append(item["id"])
             if not runs or min(item["id"] for item in runs) <= run_id:
@@ -101,8 +107,8 @@ class GitHub:
     def run(self, run_id: int) -> dict:
         return self.api(f"actions/runs/{run_id}")
 
-    def dispatch(self, workflow: str, inputs: dict[str, str]) -> int:
-        fields = ["-X", "POST", "-f", "ref=main", "-F", "return_run_details=true"]
+    def dispatch(self, workflow: str, inputs: dict[str, str], ref: str = "main") -> int:
+        fields = ["-X", "POST", "-f", f"ref={ref}", "-F", "return_run_details=true"]
         for key, value in inputs.items():
             fields += ["-f", f"inputs[{key}]={value}"]
         response = self.api(f"actions/workflows/{workflow}/dispatches", *fields)

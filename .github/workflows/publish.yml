@@ -53,7 +53,7 @@ name: Image Publication
       CANDIDATE_COSIGN_PASSWORD:
         description: "Isolated candidate signing key; read from the candidate-staging environment"
         required: false
-      COSIGN_PRIVATE_KEY: {required: true}
+      COSIGN_PRIVATE_KEY: {required: false}
       COSIGN_PASSWORD: {required: false}
       R2_ACCESS_KEY_ID: {required: false}
       R2_SECRET_ACCESS_KEY: {required: false}
@@ -69,8 +69,11 @@ env:
   BYPASS_CANDIDATE: ${{ inputs.candidate_run_id }}
   BYPASS_VALIDATION: ${{ inputs.validation_run_id }}
 
+# Each channel and line serializes only with itself: a stable run waiting
+# days for approval must not queue another line or testing, or let GitHub
+# cancel a run already pending.
 concurrency:
-  group: ${{ github.event_name == 'workflow_dispatch' && inputs.inert_r2_probe == true && format('luminus-inert-r2-{0}', github.repository) || format('luminus-release-{0}', github.repository) }}
+  group: ${{ github.event_name == 'workflow_dispatch' && inputs.inert_r2_probe == true && format('luminus-inert-r2-{0}', github.repository) || format('luminus-release-{0}-{1}-{2}', github.repository, inputs.channel, github.ref_name) }}
   cancel-in-progress: false
 
 jobs:

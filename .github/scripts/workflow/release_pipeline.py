@@ -377,7 +377,7 @@ def core_context(run: dict, source_root: Path, expected: dict) -> dict:
         run,
         repository,
         run_id,
-        {".github/workflows/publish.yml", ".github/workflows/auto-testing.yml"},
+        PRODUCER_WORKFLOWS,
     )
     require(
         type(run.get("run_attempt")) is int and run["run_attempt"] > 0,
@@ -629,8 +629,7 @@ def validate_core_candidate(
         )
     matches(context["inputs_sha256"], SHA, "trusted inputs hash")
     require(
-        context["workflow"]
-        in {".github/workflows/publish.yml", ".github/workflows/auto-testing.yml"},
+        context["workflow"] in PRODUCER_WORKFLOWS,
         "untrusted core workflow",
     )
     proof_path = safe_file(directory, "core/core-build.json")
@@ -909,6 +908,19 @@ def candidate_outputs(c: dict, path: Path) -> None:
     print(json.dumps(outputs))
 
 
+PRODUCER_WORKFLOWS = frozenset(
+    {
+        ".github/workflows/publish.yml",
+        ".github/workflows/auto-testing.yml",
+        ".github/workflows/auto-stable.yml",
+    }
+)
+DETECTOR_BRANCH = {
+    ".github/workflows/auto-testing.yml": re.compile("main"),
+    ".github/workflows/auto-stable.yml": re.compile(r"release/[1-9][0-9]*"),
+}
+
+
 def run_info(repository: str, run_id: int, workflows: set[str]) -> dict:
     require(
         bool(REPO.fullmatch(repository)) and run_id > 0, "invalid repository or run id"
@@ -936,6 +948,14 @@ def authorize_run(run: dict, repository: str, run_id: int, workflows: set[str]) 
         "run head repository mismatch",
     )
     require(run.get("path") in workflows, "untrusted workflow")
+    # Each detector prepares only its own channel's line.
+    require(
+        DETECTOR_BRANCH.get(run["path"], re.compile(".*")).fullmatch(
+            str(run.get("head_branch"))
+        )
+        is not None,
+        "detector run on another line",
+    )
     require(
         isinstance(run.get("head_branch"), str)
         and re.fullmatch(r"main|release/[1-9][0-9]*", run["head_branch"]) is not None
@@ -1205,7 +1225,7 @@ def main() -> int:
         )
     f.add_argument(
         "--workflow",
-        choices=[".github/workflows/publish.yml", ".github/workflows/auto-testing.yml"],
+        choices=sorted(PRODUCER_WORKFLOWS),
         default=None,
     )
     f.add_argument("--source-root", type=Path)
@@ -1245,14 +1265,7 @@ def main() -> int:
             c = create_candidate(a.metadata, a.directory, a.output, a.public_key)
             candidate_outputs(c, a.output)
         elif a.action == "fetch-candidate":
-            workflows = (
-                {a.workflow}
-                if a.workflow
-                else {
-                    ".github/workflows/publish.yml",
-                    ".github/workflows/auto-testing.yml",
-                }
-            )
+            workflows = {a.workflow} if a.workflow else PRODUCER_WORKFLOWS
             run = run_info(a.repository, a.run_id, workflows)
             download(a.repository, a.run_id, "release-candidate", a.output)
             path = a.output / "candidate.json"

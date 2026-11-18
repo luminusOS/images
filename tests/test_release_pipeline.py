@@ -2271,6 +2271,31 @@ class ReleaseLineTests(unittest.TestCase):
                     document, run_document() | {"head_branch": branch}
                 )
 
+    def test_each_detector_produces_candidates_only_on_its_line(self):
+        stable = ".github/workflows/auto-stable.yml"
+        testing = ".github/workflows/auto-testing.yml"
+        self.assertIn(stable, pipeline.PRODUCER_WORKFLOWS)
+        for path, branch, allowed in (
+            (stable, "release/45", True),
+            (stable, "main", False),
+            (testing, "main", True),
+            (testing, "release/45", False),
+        ):
+            run = run_document() | {"head_branch": branch, "path": path}
+            with self.subTest(path=path, branch=branch):
+                if allowed:
+                    self.assertEqual(
+                        pipeline.authorize_run(
+                            run, "owner/repo", 123, pipeline.PRODUCER_WORKFLOWS
+                        ),
+                        run,
+                    )
+                else:
+                    with self.assertRaisesRegex(ValueError, "another line"):
+                        pipeline.authorize_run(
+                            run, "owner/repo", 123, pipeline.PRODUCER_WORKFLOWS
+                        )
+
     def test_stable_validation_and_evidence_name_the_release_line(self):
         path, key, candidate = self.stable_sample()
         (self.tmp_path / "candidate.json.sig").write_text("signature")
@@ -2454,6 +2479,43 @@ class ReleaseLineTests(unittest.TestCase):
         self.assertEqual(run("fetch-candidate", "main"), 1)
         self.assertEqual(run("fetch-validation", "release/42", *validation), 0)
         self.assertEqual(run("fetch-validation", "main", *validation), 1)
+
+    def test_auto_stable_candidates_pass_the_real_fetch_authorization(self):
+        _, key, stable = self.stable_sample()
+
+        def fetch(workflow, branch):
+            document = run_document() | {"path": workflow, "head_branch": branch}
+            argv = [
+                "release_pipeline",
+                "fetch-candidate",
+                "--repository",
+                "owner/repo",
+                "--run-id",
+                "123",
+                "--output",
+                str(self.tmp_path / "fetched"),
+                "--public-key",
+                str(key),
+            ]
+            with (
+                mock.patch.object(pipeline.sys, "argv", argv),
+                mock.patch.object(
+                    pipeline.subprocess,
+                    "run",
+                    return_value=mock.Mock(stdout=json.dumps(document)),
+                ),
+                mock.patch.object(pipeline, "download"),
+                mock.patch.object(pipeline, "candidate", return_value=stable),
+                mock.patch.object(pipeline, "candidate_outputs"),
+                mock.patch.object(pipeline.sys, "stdout", new_callable=io.StringIO),
+                mock.patch.object(pipeline.sys, "stderr", new_callable=io.StringIO),
+            ):
+                return pipeline.main()
+
+        self.assertEqual(fetch(".github/workflows/auto-stable.yml", "release/42"), 0)
+        self.assertEqual(fetch(".github/workflows/auto-stable.yml", "main"), 1)
+        self.assertEqual(fetch(".github/workflows/auto-testing.yml", "release/42"), 1)
+        self.assertEqual(fetch(".github/workflows/ci.yml", "release/42"), 1)
 
     def test_active_stable_lines_are_read_from_main(self):
         releases = 'SUPPORTED_RELEASES="44 45"\nLATEST_RELEASE=45\nSTABLE_LINES=45\n'
