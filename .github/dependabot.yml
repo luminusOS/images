@@ -4,6 +4,10 @@ updates:
     directory: /
     schedule:
       interval: weekly
+    ignore:
+      # The private core handoff pins a reviewed producer commit; moving it
+      # needs its own review, not a weekly bump.
+      - dependency-name: "luminusOS/images/*"
     groups:
       actions:
         patterns: ["*"]
