@@ -400,118 +400,6 @@
     {
       "advisory": "CVE-2026-56866",
       "binary": {
-        "ostree_object": "/sysroot/ostree/repo/objects/2b/9e05183517660c9d28a9d875e6db695708f3a91fb75e7b7bd4b88fcb29c29f.file",
-        "path": "/usr/bin/skopeo",
-        "rpm_nevra": "skopeo-1:1.24.1-1.fc45.x86_64",
-        "sha256": "effe157831c2d72c21885b4cf97f021a3ff6957b6b6bc3715f57b95a926944b9"
-      },
-      "channel": "testing",
-      "classification": "accepted_risk",
-      "component_scope": "workstation_payload",
-      "component_type": "embedded_go",
-      "edition": "workstation",
-      "evidence": [
-        {
-          "path": "workstation-workstation_payload-testing-45.triage.md",
-          "sha256": "3681dc772cdd5bd0532f7e4756f10a8a26a4a8d0ab98eae2ed121120a7b65d71",
-          "size_bytes": 25672
-        }
-      ],
-      "expires_at": "2026-12-16T00:00:00Z",
-      "fedora": "45",
-      "issued_at": "2026-11-16T00:00:00Z",
-      "owner": "leandromqrs",
-      "package": "stdlib",
-      "package_version": "go1.27.1-X:nodwarf5",
-      "reason": "stdlib go1.27.1-X:nodwarf5 embedded in Fedora-built /usr/bin/skopeo from skopeo-1:1.24.1-1.fc45.x86_64; grype reports a fix in 1.26.9, 1.27.2. Bodhi FEDORA-2026-9b209999d0 (podman-6.2.0-1.fc45, skopeo-1.25.1-2.fc45) is pending; whether it fixes this advisory was not verified. Exposure: CLI run on user invocation; the RPM ships no systemd units. Binary has no setuid bit or file capabilities. Accepted for the testing channel only."
-    },
-    {
-      "advisory": "CVE-2026-56866",
-      "binary": {
-        "ostree_object": "/sysroot/ostree/repo/objects/58/4d130333ecbebb3eec0f11f9f82e8ee1feb98c06e1701331c8e877f9df9e74.file",
-        "path": "/usr/libexec/podman/rootlessport",
-        "rpm_nevra": "podman-5:6.1.3-1.fc45.x86_64",
-        "sha256": "abfac4e99d335066f6487c37c1cf041056f0450ea019fd2f6ec427a97abfee8a"
-      },
-      "channel": "testing",
-      "classification": "accepted_risk",
-      "component_scope": "workstation_payload",
-      "component_type": "embedded_go",
-      "edition": "workstation",
-      "evidence": [
-        {
-          "path": "workstation-workstation_payload-testing-45.triage.md",
-          "sha256": "3681dc772cdd5bd0532f7e4756f10a8a26a4a8d0ab98eae2ed121120a7b65d71",
-          "size_bytes": 25672
-        }
-      ],
-      "expires_at": "2026-12-16T00:00:00Z",
-      "fedora": "45",
-      "issued_at": "2026-11-16T00:00:00Z",
-      "owner": "leandromqrs",
-      "package": "stdlib",
-      "package_version": "go1.27.1-X:nodwarf5",
-      "reason": "stdlib go1.27.1-X:nodwarf5 embedded in Fedora-built /usr/libexec/podman/rootlessport from podman-5:6.1.3-1.fc45.x86_64; grype reports a fix in 1.26.9, 1.27.2. Bodhi FEDORA-2026-9b209999d0 (podman-6.2.0-1.fc45, skopeo-1.25.1-2.fc45) is pending; whether it fixes this advisory was not verified. Exposure: helper started only by a rootless podman container with published ports; podman units are disabled. Binary has no setuid bit or file capabilities. Accepted for the testing channel only."
-    },
-    {
-      "advisory": "CVE-2026-56866",
-      "binary": {
-        "ostree_object": "/sysroot/ostree/repo/objects/5c/7073b65b664558860916b29bfab6cc14e15a91b5aed75975e37a06b43ee2e1.file",
-        "path": "/usr/libexec/podman/quadlet",
-        "rpm_nevra": "podman-5:6.1.3-1.fc45.x86_64",
-        "sha256": "9875ff004074731a344beb0d158f2b891d36144cc29d96967440bb79f5f5ca8f"
-      },
-      "channel": "testing",
-      "classification": "accepted_risk",
-      "component_scope": "workstation_payload",
-      "component_type": "embedded_go",
-      "edition": "workstation",
-      "evidence": [
-        {
-          "path": "workstation-workstation_payload-testing-45.triage.md",
-          "sha256": "3681dc772cdd5bd0532f7e4756f10a8a26a4a8d0ab98eae2ed121120a7b65d71",
-          "size_bytes": 25672
-        }
-      ],
-      "expires_at": "2026-12-16T00:00:00Z",
-      "fedora": "45",
-      "issued_at": "2026-11-16T00:00:00Z",
-      "owner": "leandromqrs",
-      "package": "stdlib",
-      "package_version": "go1.27.1-X:nodwarf5",
-      "reason": "stdlib go1.27.1-X:nodwarf5 embedded in Fedora-built /usr/libexec/podman/quadlet from podman-5:6.1.3-1.fc45.x86_64; grype reports a fix in 1.26.9, 1.27.2. Bodhi FEDORA-2026-9b209999d0 (podman-6.2.0-1.fc45, skopeo-1.25.1-2.fc45) is pending; whether it fixes this advisory was not verified. Exposure: DEFAULT-EXPOSED: runs at every boot and user login as podman-system-generator/podman-user-generator, parsing local quadlet unit files (no network input). Binary has no setuid bit or file capabilities. Accepted for the testing channel only."
-    },
-    {
-      "advisory": "CVE-2026-56866",
-      "binary": {
-        "ostree_object": "/sysroot/ostree/repo/objects/90/51a1cb1dfada1c2a0dbae6257990b03537238eaaa112a9f9c398384de6e855.file",
-        "path": "/usr/bin/podman",
-        "rpm_nevra": "podman-5:6.1.3-1.fc45.x86_64",
-        "sha256": "246b121ff1063dc42de1b2d9c0db4be61dde67106b99abd0934aafb865a74bb1"
-      },
-      "channel": "testing",
-      "classification": "accepted_risk",
-      "component_scope": "workstation_payload",
-      "component_type": "embedded_go",
-      "edition": "workstation",
-      "evidence": [
-        {
-          "path": "workstation-workstation_payload-testing-45.triage.md",
-          "sha256": "3681dc772cdd5bd0532f7e4756f10a8a26a4a8d0ab98eae2ed121120a7b65d71",
-          "size_bytes": 25672
-        }
-      ],
-      "expires_at": "2026-12-16T00:00:00Z",
-      "fedora": "45",
-      "issued_at": "2026-11-16T00:00:00Z",
-      "owner": "leandromqrs",
-      "package": "stdlib",
-      "package_version": "go1.27.1-X:nodwarf5",
-      "reason": "stdlib go1.27.1-X:nodwarf5 embedded in Fedora-built /usr/bin/podman from podman-5:6.1.3-1.fc45.x86_64; grype reports a fix in 1.26.9, 1.27.2. Bodhi FEDORA-2026-9b209999d0 (podman-6.2.0-1.fc45, skopeo-1.25.1-2.fc45) is pending; whether it fixes this advisory was not verified. Exposure: CLI run on user invocation; podman.socket, podman.service and the other podman units are disabled system-wide and for users. Binary has no setuid bit or file capabilities. Accepted for the testing channel only."
-    },
-    {
-      "advisory": "CVE-2026-56866",
-      "binary": {
         "ostree_object": "/sysroot/ostree/repo/objects/2e/a8825505d254bd3966b6e98429884c7dab053debc646862a09ace80f9bc57c.file",
         "path": "/usr/bin/toolbox",
         "rpm_nevra": "toolbox-0.3-7.fc45.x86_64",
@@ -621,118 +509,6 @@
     {
       "advisory": "CVE-2026-78659",
       "binary": {
-        "ostree_object": "/sysroot/ostree/repo/objects/2b/9e05183517660c9d28a9d875e6db695708f3a91fb75e7b7bd4b88fcb29c29f.file",
-        "path": "/usr/bin/skopeo",
-        "rpm_nevra": "skopeo-1:1.24.1-1.fc45.x86_64",
-        "sha256": "effe157831c2d72c21885b4cf97f021a3ff6957b6b6bc3715f57b95a926944b9"
-      },
-      "channel": "testing",
-      "classification": "accepted_risk",
-      "component_scope": "workstation_payload",
-      "component_type": "embedded_go",
-      "edition": "workstation",
-      "evidence": [
-        {
-          "path": "workstation-workstation_payload-testing-45.triage.md",
-          "sha256": "3681dc772cdd5bd0532f7e4756f10a8a26a4a8d0ab98eae2ed121120a7b65d71",
-          "size_bytes": 25672
-        }
-      ],
-      "expires_at": "2026-12-16T00:00:00Z",
-      "fedora": "45",
-      "issued_at": "2026-11-16T00:00:00Z",
-      "owner": "leandromqrs",
-      "package": "stdlib",
-      "package_version": "go1.27.1-X:nodwarf5",
-      "reason": "stdlib go1.27.1-X:nodwarf5 embedded in Fedora-built /usr/bin/skopeo from skopeo-1:1.24.1-1.fc45.x86_64; grype reports a fix in 1.26.9, 1.27.2. Bodhi FEDORA-2026-9b209999d0 (podman-6.2.0-1.fc45, skopeo-1.25.1-2.fc45) is pending; whether it fixes this advisory was not verified. Exposure: CLI run on user invocation; the RPM ships no systemd units. Binary has no setuid bit or file capabilities. Accepted for the testing channel only."
-    },
-    {
-      "advisory": "CVE-2026-78659",
-      "binary": {
-        "ostree_object": "/sysroot/ostree/repo/objects/58/4d130333ecbebb3eec0f11f9f82e8ee1feb98c06e1701331c8e877f9df9e74.file",
-        "path": "/usr/libexec/podman/rootlessport",
-        "rpm_nevra": "podman-5:6.1.3-1.fc45.x86_64",
-        "sha256": "abfac4e99d335066f6487c37c1cf041056f0450ea019fd2f6ec427a97abfee8a"
-      },
-      "channel": "testing",
-      "classification": "accepted_risk",
-      "component_scope": "workstation_payload",
-      "component_type": "embedded_go",
-      "edition": "workstation",
-      "evidence": [
-        {
-          "path": "workstation-workstation_payload-testing-45.triage.md",
-          "sha256": "3681dc772cdd5bd0532f7e4756f10a8a26a4a8d0ab98eae2ed121120a7b65d71",
-          "size_bytes": 25672
-        }
-      ],
-      "expires_at": "2026-12-16T00:00:00Z",
-      "fedora": "45",
-      "issued_at": "2026-11-16T00:00:00Z",
-      "owner": "leandromqrs",
-      "package": "stdlib",
-      "package_version": "go1.27.1-X:nodwarf5",
-      "reason": "stdlib go1.27.1-X:nodwarf5 embedded in Fedora-built /usr/libexec/podman/rootlessport from podman-5:6.1.3-1.fc45.x86_64; grype reports a fix in 1.26.9, 1.27.2. Bodhi FEDORA-2026-9b209999d0 (podman-6.2.0-1.fc45, skopeo-1.25.1-2.fc45) is pending; whether it fixes this advisory was not verified. Exposure: helper started only by a rootless podman container with published ports; podman units are disabled. Binary has no setuid bit or file capabilities. Accepted for the testing channel only."
-    },
-    {
-      "advisory": "CVE-2026-78659",
-      "binary": {
-        "ostree_object": "/sysroot/ostree/repo/objects/5c/7073b65b664558860916b29bfab6cc14e15a91b5aed75975e37a06b43ee2e1.file",
-        "path": "/usr/libexec/podman/quadlet",
-        "rpm_nevra": "podman-5:6.1.3-1.fc45.x86_64",
-        "sha256": "9875ff004074731a344beb0d158f2b891d36144cc29d96967440bb79f5f5ca8f"
-      },
-      "channel": "testing",
-      "classification": "accepted_risk",
-      "component_scope": "workstation_payload",
-      "component_type": "embedded_go",
-      "edition": "workstation",
-      "evidence": [
-        {
-          "path": "workstation-workstation_payload-testing-45.triage.md",
-          "sha256": "3681dc772cdd5bd0532f7e4756f10a8a26a4a8d0ab98eae2ed121120a7b65d71",
-          "size_bytes": 25672
-        }
-      ],
-      "expires_at": "2026-12-16T00:00:00Z",
-      "fedora": "45",
-      "issued_at": "2026-11-16T00:00:00Z",
-      "owner": "leandromqrs",
-      "package": "stdlib",
-      "package_version": "go1.27.1-X:nodwarf5",
-      "reason": "stdlib go1.27.1-X:nodwarf5 embedded in Fedora-built /usr/libexec/podman/quadlet from podman-5:6.1.3-1.fc45.x86_64; grype reports a fix in 1.26.9, 1.27.2. Bodhi FEDORA-2026-9b209999d0 (podman-6.2.0-1.fc45, skopeo-1.25.1-2.fc45) is pending; whether it fixes this advisory was not verified. Exposure: DEFAULT-EXPOSED: runs at every boot and user login as podman-system-generator/podman-user-generator, parsing local quadlet unit files (no network input). Binary has no setuid bit or file capabilities. Accepted for the testing channel only."
-    },
-    {
-      "advisory": "CVE-2026-78659",
-      "binary": {
-        "ostree_object": "/sysroot/ostree/repo/objects/90/51a1cb1dfada1c2a0dbae6257990b03537238eaaa112a9f9c398384de6e855.file",
-        "path": "/usr/bin/podman",
-        "rpm_nevra": "podman-5:6.1.3-1.fc45.x86_64",
-        "sha256": "246b121ff1063dc42de1b2d9c0db4be61dde67106b99abd0934aafb865a74bb1"
-      },
-      "channel": "testing",
-      "classification": "accepted_risk",
-      "component_scope": "workstation_payload",
-      "component_type": "embedded_go",
-      "edition": "workstation",
-      "evidence": [
-        {
-          "path": "workstation-workstation_payload-testing-45.triage.md",
-          "sha256": "3681dc772cdd5bd0532f7e4756f10a8a26a4a8d0ab98eae2ed121120a7b65d71",
-          "size_bytes": 25672
-        }
-      ],
-      "expires_at": "2026-12-16T00:00:00Z",
-      "fedora": "45",
-      "issued_at": "2026-11-16T00:00:00Z",
-      "owner": "leandromqrs",
-      "package": "stdlib",
-      "package_version": "go1.27.1-X:nodwarf5",
-      "reason": "stdlib go1.27.1-X:nodwarf5 embedded in Fedora-built /usr/bin/podman from podman-5:6.1.3-1.fc45.x86_64; grype reports a fix in 1.26.9, 1.27.2. Bodhi FEDORA-2026-9b209999d0 (podman-6.2.0-1.fc45, skopeo-1.25.1-2.fc45) is pending; whether it fixes this advisory was not verified. Exposure: CLI run on user invocation; podman.socket, podman.service and the other podman units are disabled system-wide and for users. Binary has no setuid bit or file capabilities. Accepted for the testing channel only."
-    },
-    {
-      "advisory": "CVE-2026-78659",
-      "binary": {
         "ostree_object": "/sysroot/ostree/repo/objects/2e/a8825505d254bd3966b6e98429884c7dab053debc646862a09ace80f9bc57c.file",
         "path": "/usr/bin/toolbox",
         "rpm_nevra": "toolbox-0.3-7.fc45.x86_64",
@@ -842,118 +618,6 @@
     {
       "advisory": "CVE-2026-78660",
       "binary": {
-        "ostree_object": "/sysroot/ostree/repo/objects/2b/9e05183517660c9d28a9d875e6db695708f3a91fb75e7b7bd4b88fcb29c29f.file",
-        "path": "/usr/bin/skopeo",
-        "rpm_nevra": "skopeo-1:1.24.1-1.fc45.x86_64",
-        "sha256": "effe157831c2d72c21885b4cf97f021a3ff6957b6b6bc3715f57b95a926944b9"
-      },
-      "channel": "testing",
-      "classification": "accepted_risk",
-      "component_scope": "workstation_payload",
-      "component_type": "embedded_go",
-      "edition": "workstation",
-      "evidence": [
-        {
-          "path": "workstation-workstation_payload-testing-45.triage.md",
-          "sha256": "3681dc772cdd5bd0532f7e4756f10a8a26a4a8d0ab98eae2ed121120a7b65d71",
-          "size_bytes": 25672
-        }
-      ],
-      "expires_at": "2026-12-16T00:00:00Z",
-      "fedora": "45",
-      "issued_at": "2026-11-16T00:00:00Z",
-      "owner": "leandromqrs",
-      "package": "stdlib",
-      "package_version": "go1.27.1-X:nodwarf5",
-      "reason": "stdlib go1.27.1-X:nodwarf5 embedded in Fedora-built /usr/bin/skopeo from skopeo-1:1.24.1-1.fc45.x86_64; grype reports a fix in 1.26.9, 1.27.2. Bodhi FEDORA-2026-9b209999d0 (podman-6.2.0-1.fc45, skopeo-1.25.1-2.fc45) is pending; whether it fixes this advisory was not verified. Exposure: CLI run on user invocation; the RPM ships no systemd units. Binary has no setuid bit or file capabilities. Accepted for the testing channel only."
-    },
-    {
-      "advisory": "CVE-2026-78660",
-      "binary": {
-        "ostree_object": "/sysroot/ostree/repo/objects/58/4d130333ecbebb3eec0f11f9f82e8ee1feb98c06e1701331c8e877f9df9e74.file",
-        "path": "/usr/libexec/podman/rootlessport",
-        "rpm_nevra": "podman-5:6.1.3-1.fc45.x86_64",
-        "sha256": "abfac4e99d335066f6487c37c1cf041056f0450ea019fd2f6ec427a97abfee8a"
-      },
-      "channel": "testing",
-      "classification": "accepted_risk",
-      "component_scope": "workstation_payload",
-      "component_type": "embedded_go",
-      "edition": "workstation",
-      "evidence": [
-        {
-          "path": "workstation-workstation_payload-testing-45.triage.md",
-          "sha256": "3681dc772cdd5bd0532f7e4756f10a8a26a4a8d0ab98eae2ed121120a7b65d71",
-          "size_bytes": 25672
-        }
-      ],
-      "expires_at": "2026-12-16T00:00:00Z",
-      "fedora": "45",
-      "issued_at": "2026-11-16T00:00:00Z",
-      "owner": "leandromqrs",
-      "package": "stdlib",
-      "package_version": "go1.27.1-X:nodwarf5",
-      "reason": "stdlib go1.27.1-X:nodwarf5 embedded in Fedora-built /usr/libexec/podman/rootlessport from podman-5:6.1.3-1.fc45.x86_64; grype reports a fix in 1.26.9, 1.27.2. Bodhi FEDORA-2026-9b209999d0 (podman-6.2.0-1.fc45, skopeo-1.25.1-2.fc45) is pending; whether it fixes this advisory was not verified. Exposure: helper started only by a rootless podman container with published ports; podman units are disabled. Binary has no setuid bit or file capabilities. Accepted for the testing channel only."
-    },
-    {
-      "advisory": "CVE-2026-78660",
-      "binary": {
-        "ostree_object": "/sysroot/ostree/repo/objects/5c/7073b65b664558860916b29bfab6cc14e15a91b5aed75975e37a06b43ee2e1.file",
-        "path": "/usr/libexec/podman/quadlet",
-        "rpm_nevra": "podman-5:6.1.3-1.fc45.x86_64",
-        "sha256": "9875ff004074731a344beb0d158f2b891d36144cc29d96967440bb79f5f5ca8f"
-      },
-      "channel": "testing",
-      "classification": "accepted_risk",
-      "component_scope": "workstation_payload",
-      "component_type": "embedded_go",
-      "edition": "workstation",
-      "evidence": [
-        {
-          "path": "workstation-workstation_payload-testing-45.triage.md",
-          "sha256": "3681dc772cdd5bd0532f7e4756f10a8a26a4a8d0ab98eae2ed121120a7b65d71",
-          "size_bytes": 25672
-        }
-      ],
-      "expires_at": "2026-12-16T00:00:00Z",
-      "fedora": "45",
-      "issued_at": "2026-11-16T00:00:00Z",
-      "owner": "leandromqrs",
-      "package": "stdlib",
-      "package_version": "go1.27.1-X:nodwarf5",
-      "reason": "stdlib go1.27.1-X:nodwarf5 embedded in Fedora-built /usr/libexec/podman/quadlet from podman-5:6.1.3-1.fc45.x86_64; grype reports a fix in 1.26.9, 1.27.2. Bodhi FEDORA-2026-9b209999d0 (podman-6.2.0-1.fc45, skopeo-1.25.1-2.fc45) is pending; whether it fixes this advisory was not verified. Exposure: DEFAULT-EXPOSED: runs at every boot and user login as podman-system-generator/podman-user-generator, parsing local quadlet unit files (no network input). Binary has no setuid bit or file capabilities. Accepted for the testing channel only."
-    },
-    {
-      "advisory": "CVE-2026-78660",
-      "binary": {
-        "ostree_object": "/sysroot/ostree/repo/objects/90/51a1cb1dfada1c2a0dbae6257990b03537238eaaa112a9f9c398384de6e855.file",
-        "path": "/usr/bin/podman",
-        "rpm_nevra": "podman-5:6.1.3-1.fc45.x86_64",
-        "sha256": "246b121ff1063dc42de1b2d9c0db4be61dde67106b99abd0934aafb865a74bb1"
-      },
-      "channel": "testing",
-      "classification": "accepted_risk",
-      "component_scope": "workstation_payload",
-      "component_type": "embedded_go",
-      "edition": "workstation",
-      "evidence": [
-        {
-          "path": "workstation-workstation_payload-testing-45.triage.md",
-          "sha256": "3681dc772cdd5bd0532f7e4756f10a8a26a4a8d0ab98eae2ed121120a7b65d71",
-          "size_bytes": 25672
-        }
-      ],
-      "expires_at": "2026-12-16T00:00:00Z",
-      "fedora": "45",
-      "issued_at": "2026-11-16T00:00:00Z",
-      "owner": "leandromqrs",
-      "package": "stdlib",
-      "package_version": "go1.27.1-X:nodwarf5",
-      "reason": "stdlib go1.27.1-X:nodwarf5 embedded in Fedora-built /usr/bin/podman from podman-5:6.1.3-1.fc45.x86_64; grype reports a fix in 1.26.9, 1.27.2. Bodhi FEDORA-2026-9b209999d0 (podman-6.2.0-1.fc45, skopeo-1.25.1-2.fc45) is pending; whether it fixes this advisory was not verified. Exposure: CLI run on user invocation; podman.socket, podman.service and the other podman units are disabled system-wide and for users. Binary has no setuid bit or file capabilities. Accepted for the testing channel only."
-    },
-    {
-      "advisory": "CVE-2026-78660",
-      "binary": {
         "ostree_object": "/sysroot/ostree/repo/objects/2e/a8825505d254bd3966b6e98429884c7dab053debc646862a09ace80f9bc57c.file",
         "path": "/usr/bin/toolbox",
         "rpm_nevra": "toolbox-0.3-7.fc45.x86_64",
@@ -1063,118 +727,6 @@
     {
       "advisory": "CVE-2026-78663",
       "binary": {
-        "ostree_object": "/sysroot/ostree/repo/objects/2b/9e05183517660c9d28a9d875e6db695708f3a91fb75e7b7bd4b88fcb29c29f.file",
-        "path": "/usr/bin/skopeo",
-        "rpm_nevra": "skopeo-1:1.24.1-1.fc45.x86_64",
-        "sha256": "effe157831c2d72c21885b4cf97f021a3ff6957b6b6bc3715f57b95a926944b9"
-      },
-      "channel": "testing",
-      "classification": "accepted_risk",
-      "component_scope": "workstation_payload",
-      "component_type": "embedded_go",
-      "edition": "workstation",
-      "evidence": [
-        {
-          "path": "workstation-workstation_payload-testing-45.triage.md",
-          "sha256": "3681dc772cdd5bd0532f7e4756f10a8a26a4a8d0ab98eae2ed121120a7b65d71",
-          "size_bytes": 25672
-        }
-      ],
-      "expires_at": "2026-12-16T00:00:00Z",
-      "fedora": "45",
-      "issued_at": "2026-11-16T00:00:00Z",
-      "owner": "leandromqrs",
-      "package": "stdlib",
-      "package_version": "go1.27.1-X:nodwarf5",
-      "reason": "stdlib go1.27.1-X:nodwarf5 embedded in Fedora-built /usr/bin/skopeo from skopeo-1:1.24.1-1.fc45.x86_64; grype reports a fix in 1.26.9, 1.27.2. Bodhi FEDORA-2026-9b209999d0 (podman-6.2.0-1.fc45, skopeo-1.25.1-2.fc45) is pending; whether it fixes this advisory was not verified. Exposure: CLI run on user invocation; the RPM ships no systemd units. Binary has no setuid bit or file capabilities. Accepted for the testing channel only."
-    },
-    {
-      "advisory": "CVE-2026-78663",
-      "binary": {
-        "ostree_object": "/sysroot/ostree/repo/objects/58/4d130333ecbebb3eec0f11f9f82e8ee1feb98c06e1701331c8e877f9df9e74.file",
-        "path": "/usr/libexec/podman/rootlessport",
-        "rpm_nevra": "podman-5:6.1.3-1.fc45.x86_64",
-        "sha256": "abfac4e99d335066f6487c37c1cf041056f0450ea019fd2f6ec427a97abfee8a"
-      },
-      "channel": "testing",
-      "classification": "accepted_risk",
-      "component_scope": "workstation_payload",
-      "component_type": "embedded_go",
-      "edition": "workstation",
-      "evidence": [
-        {
-          "path": "workstation-workstation_payload-testing-45.triage.md",
-          "sha256": "3681dc772cdd5bd0532f7e4756f10a8a26a4a8d0ab98eae2ed121120a7b65d71",
-          "size_bytes": 25672
-        }
-      ],
-      "expires_at": "2026-12-16T00:00:00Z",
-      "fedora": "45",
-      "issued_at": "2026-11-16T00:00:00Z",
-      "owner": "leandromqrs",
-      "package": "stdlib",
-      "package_version": "go1.27.1-X:nodwarf5",
-      "reason": "stdlib go1.27.1-X:nodwarf5 embedded in Fedora-built /usr/libexec/podman/rootlessport from podman-5:6.1.3-1.fc45.x86_64; grype reports a fix in 1.26.9, 1.27.2. Bodhi FEDORA-2026-9b209999d0 (podman-6.2.0-1.fc45, skopeo-1.25.1-2.fc45) is pending; whether it fixes this advisory was not verified. Exposure: helper started only by a rootless podman container with published ports; podman units are disabled. Binary has no setuid bit or file capabilities. Accepted for the testing channel only."
-    },
-    {
-      "advisory": "CVE-2026-78663",
-      "binary": {
-        "ostree_object": "/sysroot/ostree/repo/objects/5c/7073b65b664558860916b29bfab6cc14e15a91b5aed75975e37a06b43ee2e1.file",
-        "path": "/usr/libexec/podman/quadlet",
-        "rpm_nevra": "podman-5:6.1.3-1.fc45.x86_64",
-        "sha256": "9875ff004074731a344beb0d158f2b891d36144cc29d96967440bb79f5f5ca8f"
-      },
-      "channel": "testing",
-      "classification": "accepted_risk",
-      "component_scope": "workstation_payload",
-      "component_type": "embedded_go",
-      "edition": "workstation",
-      "evidence": [
-        {
-          "path": "workstation-workstation_payload-testing-45.triage.md",
-          "sha256": "3681dc772cdd5bd0532f7e4756f10a8a26a4a8d0ab98eae2ed121120a7b65d71",
-          "size_bytes": 25672
-        }
-      ],
-      "expires_at": "2026-12-16T00:00:00Z",
-      "fedora": "45",
-      "issued_at": "2026-11-16T00:00:00Z",
-      "owner": "leandromqrs",
-      "package": "stdlib",
-      "package_version": "go1.27.1-X:nodwarf5",
-      "reason": "stdlib go1.27.1-X:nodwarf5 embedded in Fedora-built /usr/libexec/podman/quadlet from podman-5:6.1.3-1.fc45.x86_64; grype reports a fix in 1.26.9, 1.27.2. Bodhi FEDORA-2026-9b209999d0 (podman-6.2.0-1.fc45, skopeo-1.25.1-2.fc45) is pending; whether it fixes this advisory was not verified. Exposure: DEFAULT-EXPOSED: runs at every boot and user login as podman-system-generator/podman-user-generator, parsing local quadlet unit files (no network input). Binary has no setuid bit or file capabilities. Accepted for the testing channel only."
-    },
-    {
-      "advisory": "CVE-2026-78663",
-      "binary": {
-        "ostree_object": "/sysroot/ostree/repo/objects/90/51a1cb1dfada1c2a0dbae6257990b03537238eaaa112a9f9c398384de6e855.file",
-        "path": "/usr/bin/podman",
-        "rpm_nevra": "podman-5:6.1.3-1.fc45.x86_64",
-        "sha256": "246b121ff1063dc42de1b2d9c0db4be61dde67106b99abd0934aafb865a74bb1"
-      },
-      "channel": "testing",
-      "classification": "accepted_risk",
-      "component_scope": "workstation_payload",
-      "component_type": "embedded_go",
-      "edition": "workstation",
-      "evidence": [
-        {
-          "path": "workstation-workstation_payload-testing-45.triage.md",
-          "sha256": "3681dc772cdd5bd0532f7e4756f10a8a26a4a8d0ab98eae2ed121120a7b65d71",
-          "size_bytes": 25672
-        }
-      ],
-      "expires_at": "2026-12-16T00:00:00Z",
-      "fedora": "45",
-      "issued_at": "2026-11-16T00:00:00Z",
-      "owner": "leandromqrs",
-      "package": "stdlib",
-      "package_version": "go1.27.1-X:nodwarf5",
-      "reason": "stdlib go1.27.1-X:nodwarf5 embedded in Fedora-built /usr/bin/podman from podman-5:6.1.3-1.fc45.x86_64; grype reports a fix in 1.26.9, 1.27.2. Bodhi FEDORA-2026-9b209999d0 (podman-6.2.0-1.fc45, skopeo-1.25.1-2.fc45) is pending; whether it fixes this advisory was not verified. Exposure: CLI run on user invocation; podman.socket, podman.service and the other podman units are disabled system-wide and for users. Binary has no setuid bit or file capabilities. Accepted for the testing channel only."
-    },
-    {
-      "advisory": "CVE-2026-78663",
-      "binary": {
         "ostree_object": "/sysroot/ostree/repo/objects/2e/a8825505d254bd3966b6e98429884c7dab053debc646862a09ace80f9bc57c.file",
         "path": "/usr/bin/toolbox",
         "rpm_nevra": "toolbox-0.3-7.fc45.x86_64",
@@ -1284,118 +836,6 @@
     {
       "advisory": "CVE-2026-78667",
       "binary": {
-        "ostree_object": "/sysroot/ostree/repo/objects/2b/9e05183517660c9d28a9d875e6db695708f3a91fb75e7b7bd4b88fcb29c29f.file",
-        "path": "/usr/bin/skopeo",
-        "rpm_nevra": "skopeo-1:1.24.1-1.fc45.x86_64",
-        "sha256": "effe157831c2d72c21885b4cf97f021a3ff6957b6b6bc3715f57b95a926944b9"
-      },
-      "channel": "testing",
-      "classification": "accepted_risk",
-      "component_scope": "workstation_payload",
-      "component_type": "embedded_go",
-      "edition": "workstation",
-      "evidence": [
-        {
-          "path": "workstation-workstation_payload-testing-45.triage.md",
-          "sha256": "3681dc772cdd5bd0532f7e4756f10a8a26a4a8d0ab98eae2ed121120a7b65d71",
-          "size_bytes": 25672
-        }
-      ],
-      "expires_at": "2026-12-16T00:00:00Z",
-      "fedora": "45",
-      "issued_at": "2026-11-16T00:00:00Z",
-      "owner": "leandromqrs",
-      "package": "stdlib",
-      "package_version": "go1.27.1-X:nodwarf5",
-      "reason": "stdlib go1.27.1-X:nodwarf5 embedded in Fedora-built /usr/bin/skopeo from skopeo-1:1.24.1-1.fc45.x86_64; grype reports a fix in 1.26.9, 1.27.2. Bodhi FEDORA-2026-9b209999d0 (podman-6.2.0-1.fc45, skopeo-1.25.1-2.fc45) is pending; whether it fixes this advisory was not verified. Exposure: CLI run on user invocation; the RPM ships no systemd units. Binary has no setuid bit or file capabilities. Accepted for the testing channel only."
-    },
-    {
-      "advisory": "CVE-2026-78667",
-      "binary": {
-        "ostree_object": "/sysroot/ostree/repo/objects/58/4d130333ecbebb3eec0f11f9f82e8ee1feb98c06e1701331c8e877f9df9e74.file",
-        "path": "/usr/libexec/podman/rootlessport",
-        "rpm_nevra": "podman-5:6.1.3-1.fc45.x86_64",
-        "sha256": "abfac4e99d335066f6487c37c1cf041056f0450ea019fd2f6ec427a97abfee8a"
-      },
-      "channel": "testing",
-      "classification": "accepted_risk",
-      "component_scope": "workstation_payload",
-      "component_type": "embedded_go",
-      "edition": "workstation",
-      "evidence": [
-        {
-          "path": "workstation-workstation_payload-testing-45.triage.md",
-          "sha256": "3681dc772cdd5bd0532f7e4756f10a8a26a4a8d0ab98eae2ed121120a7b65d71",
-          "size_bytes": 25672
-        }
-      ],
-      "expires_at": "2026-12-16T00:00:00Z",
-      "fedora": "45",
-      "issued_at": "2026-11-16T00:00:00Z",
-      "owner": "leandromqrs",
-      "package": "stdlib",
-      "package_version": "go1.27.1-X:nodwarf5",
-      "reason": "stdlib go1.27.1-X:nodwarf5 embedded in Fedora-built /usr/libexec/podman/rootlessport from podman-5:6.1.3-1.fc45.x86_64; grype reports a fix in 1.26.9, 1.27.2. Bodhi FEDORA-2026-9b209999d0 (podman-6.2.0-1.fc45, skopeo-1.25.1-2.fc45) is pending; whether it fixes this advisory was not verified. Exposure: helper started only by a rootless podman container with published ports; podman units are disabled. Binary has no setuid bit or file capabilities. Accepted for the testing channel only."
-    },
-    {
-      "advisory": "CVE-2026-78667",
-      "binary": {
-        "ostree_object": "/sysroot/ostree/repo/objects/5c/7073b65b664558860916b29bfab6cc14e15a91b5aed75975e37a06b43ee2e1.file",
-        "path": "/usr/libexec/podman/quadlet",
-        "rpm_nevra": "podman-5:6.1.3-1.fc45.x86_64",
-        "sha256": "9875ff004074731a344beb0d158f2b891d36144cc29d96967440bb79f5f5ca8f"
-      },
-      "channel": "testing",
-      "classification": "accepted_risk",
-      "component_scope": "workstation_payload",
-      "component_type": "embedded_go",
-      "edition": "workstation",
-      "evidence": [
-        {
-          "path": "workstation-workstation_payload-testing-45.triage.md",
-          "sha256": "3681dc772cdd5bd0532f7e4756f10a8a26a4a8d0ab98eae2ed121120a7b65d71",
-          "size_bytes": 25672
-        }
-      ],
-      "expires_at": "2026-12-16T00:00:00Z",
-      "fedora": "45",
-      "issued_at": "2026-11-16T00:00:00Z",
-      "owner": "leandromqrs",
-      "package": "stdlib",
-      "package_version": "go1.27.1-X:nodwarf5",
-      "reason": "stdlib go1.27.1-X:nodwarf5 embedded in Fedora-built /usr/libexec/podman/quadlet from podman-5:6.1.3-1.fc45.x86_64; grype reports a fix in 1.26.9, 1.27.2. Bodhi FEDORA-2026-9b209999d0 (podman-6.2.0-1.fc45, skopeo-1.25.1-2.fc45) is pending; whether it fixes this advisory was not verified. Exposure: DEFAULT-EXPOSED: runs at every boot and user login as podman-system-generator/podman-user-generator, parsing local quadlet unit files (no network input). Binary has no setuid bit or file capabilities. Accepted for the testing channel only."
-    },
-    {
-      "advisory": "CVE-2026-78667",
-      "binary": {
-        "ostree_object": "/sysroot/ostree/repo/objects/90/51a1cb1dfada1c2a0dbae6257990b03537238eaaa112a9f9c398384de6e855.file",
-        "path": "/usr/bin/podman",
-        "rpm_nevra": "podman-5:6.1.3-1.fc45.x86_64",
-        "sha256": "246b121ff1063dc42de1b2d9c0db4be61dde67106b99abd0934aafb865a74bb1"
-      },
-      "channel": "testing",
-      "classification": "accepted_risk",
-      "component_scope": "workstation_payload",
-      "component_type": "embedded_go",
-      "edition": "workstation",
-      "evidence": [
-        {
-          "path": "workstation-workstation_payload-testing-45.triage.md",
-          "sha256": "3681dc772cdd5bd0532f7e4756f10a8a26a4a8d0ab98eae2ed121120a7b65d71",
-          "size_bytes": 25672
-        }
-      ],
-      "expires_at": "2026-12-16T00:00:00Z",
-      "fedora": "45",
-      "issued_at": "2026-11-16T00:00:00Z",
-      "owner": "leandromqrs",
-      "package": "stdlib",
-      "package_version": "go1.27.1-X:nodwarf5",
-      "reason": "stdlib go1.27.1-X:nodwarf5 embedded in Fedora-built /usr/bin/podman from podman-5:6.1.3-1.fc45.x86_64; grype reports a fix in 1.26.9, 1.27.2. Bodhi FEDORA-2026-9b209999d0 (podman-6.2.0-1.fc45, skopeo-1.25.1-2.fc45) is pending; whether it fixes this advisory was not verified. Exposure: CLI run on user invocation; podman.socket, podman.service and the other podman units are disabled system-wide and for users. Binary has no setuid bit or file capabilities. Accepted for the testing channel only."
-    },
-    {
-      "advisory": "CVE-2026-78667",
-      "binary": {
         "ostree_object": "/sysroot/ostree/repo/objects/2e/a8825505d254bd3966b6e98429884c7dab053debc646862a09ace80f9bc57c.file",
         "path": "/usr/bin/toolbox",
         "rpm_nevra": "toolbox-0.3-7.fc45.x86_64",
@@ -1505,118 +945,6 @@
     {
       "advisory": "CVE-2026-78669",
       "binary": {
-        "ostree_object": "/sysroot/ostree/repo/objects/2b/9e05183517660c9d28a9d875e6db695708f3a91fb75e7b7bd4b88fcb29c29f.file",
-        "path": "/usr/bin/skopeo",
-        "rpm_nevra": "skopeo-1:1.24.1-1.fc45.x86_64",
-        "sha256": "effe157831c2d72c21885b4cf97f021a3ff6957b6b6bc3715f57b95a926944b9"
-      },
-      "channel": "testing",
-      "classification": "accepted_risk",
-      "component_scope": "workstation_payload",
-      "component_type": "embedded_go",
-      "edition": "workstation",
-      "evidence": [
-        {
-          "path": "workstation-workstation_payload-testing-45.triage.md",
-          "sha256": "3681dc772cdd5bd0532f7e4756f10a8a26a4a8d0ab98eae2ed121120a7b65d71",
-          "size_bytes": 25672
-        }
-      ],
-      "expires_at": "2026-12-16T00:00:00Z",
-      "fedora": "45",
-      "issued_at": "2026-11-16T00:00:00Z",
-      "owner": "leandromqrs",
-      "package": "stdlib",
-      "package_version": "go1.27.1-X:nodwarf5",
-      "reason": "stdlib go1.27.1-X:nodwarf5 embedded in Fedora-built /usr/bin/skopeo from skopeo-1:1.24.1-1.fc45.x86_64; grype reports a fix in 1.26.9, 1.27.2. Bodhi FEDORA-2026-9b209999d0 (podman-6.2.0-1.fc45, skopeo-1.25.1-2.fc45) is pending; whether it fixes this advisory was not verified. Exposure: CLI run on user invocation; the RPM ships no systemd units. Binary has no setuid bit or file capabilities. Accepted for the testing channel only."
-    },
-    {
-      "advisory": "CVE-2026-78669",
-      "binary": {
-        "ostree_object": "/sysroot/ostree/repo/objects/58/4d130333ecbebb3eec0f11f9f82e8ee1feb98c06e1701331c8e877f9df9e74.file",
-        "path": "/usr/libexec/podman/rootlessport",
-        "rpm_nevra": "podman-5:6.1.3-1.fc45.x86_64",
-        "sha256": "abfac4e99d335066f6487c37c1cf041056f0450ea019fd2f6ec427a97abfee8a"
-      },
-      "channel": "testing",
-      "classification": "accepted_risk",
-      "component_scope": "workstation_payload",
-      "component_type": "embedded_go",
-      "edition": "workstation",
-      "evidence": [
-        {
-          "path": "workstation-workstation_payload-testing-45.triage.md",
-          "sha256": "3681dc772cdd5bd0532f7e4756f10a8a26a4a8d0ab98eae2ed121120a7b65d71",
-          "size_bytes": 25672
-        }
-      ],
-      "expires_at": "2026-12-16T00:00:00Z",
-      "fedora": "45",
-      "issued_at": "2026-11-16T00:00:00Z",
-      "owner": "leandromqrs",
-      "package": "stdlib",
-      "package_version": "go1.27.1-X:nodwarf5",
-      "reason": "stdlib go1.27.1-X:nodwarf5 embedded in Fedora-built /usr/libexec/podman/rootlessport from podman-5:6.1.3-1.fc45.x86_64; grype reports a fix in 1.26.9, 1.27.2. Bodhi FEDORA-2026-9b209999d0 (podman-6.2.0-1.fc45, skopeo-1.25.1-2.fc45) is pending; whether it fixes this advisory was not verified. Exposure: helper started only by a rootless podman container with published ports; podman units are disabled. Binary has no setuid bit or file capabilities. Accepted for the testing channel only."
-    },
-    {
-      "advisory": "CVE-2026-78669",
-      "binary": {
-        "ostree_object": "/sysroot/ostree/repo/objects/5c/7073b65b664558860916b29bfab6cc14e15a91b5aed75975e37a06b43ee2e1.file",
-        "path": "/usr/libexec/podman/quadlet",
-        "rpm_nevra": "podman-5:6.1.3-1.fc45.x86_64",
-        "sha256": "9875ff004074731a344beb0d158f2b891d36144cc29d96967440bb79f5f5ca8f"
-      },
-      "channel": "testing",
-      "classification": "accepted_risk",
-      "component_scope": "workstation_payload",
-      "component_type": "embedded_go",
-      "edition": "workstation",
-      "evidence": [
-        {
-          "path": "workstation-workstation_payload-testing-45.triage.md",
-          "sha256": "3681dc772cdd5bd0532f7e4756f10a8a26a4a8d0ab98eae2ed121120a7b65d71",
-          "size_bytes": 25672
-        }
-      ],
-      "expires_at": "2026-12-16T00:00:00Z",
-      "fedora": "45",
-      "issued_at": "2026-11-16T00:00:00Z",
-      "owner": "leandromqrs",
-      "package": "stdlib",
-      "package_version": "go1.27.1-X:nodwarf5",
-      "reason": "stdlib go1.27.1-X:nodwarf5 embedded in Fedora-built /usr/libexec/podman/quadlet from podman-5:6.1.3-1.fc45.x86_64; grype reports a fix in 1.26.9, 1.27.2. Bodhi FEDORA-2026-9b209999d0 (podman-6.2.0-1.fc45, skopeo-1.25.1-2.fc45) is pending; whether it fixes this advisory was not verified. Exposure: DEFAULT-EXPOSED: runs at every boot and user login as podman-system-generator/podman-user-generator, parsing local quadlet unit files (no network input). Binary has no setuid bit or file capabilities. Accepted for the testing channel only."
-    },
-    {
-      "advisory": "CVE-2026-78669",
-      "binary": {
-        "ostree_object": "/sysroot/ostree/repo/objects/90/51a1cb1dfada1c2a0dbae6257990b03537238eaaa112a9f9c398384de6e855.file",
-        "path": "/usr/bin/podman",
-        "rpm_nevra": "podman-5:6.1.3-1.fc45.x86_64",
-        "sha256": "246b121ff1063dc42de1b2d9c0db4be61dde67106b99abd0934aafb865a74bb1"
-      },
-      "channel": "testing",
-      "classification": "accepted_risk",
-      "component_scope": "workstation_payload",
-      "component_type": "embedded_go",
-      "edition": "workstation",
-      "evidence": [
-        {
-          "path": "workstation-workstation_payload-testing-45.triage.md",
-          "sha256": "3681dc772cdd5bd0532f7e4756f10a8a26a4a8d0ab98eae2ed121120a7b65d71",
-          "size_bytes": 25672
-        }
-      ],
-      "expires_at": "2026-12-16T00:00:00Z",
-      "fedora": "45",
-      "issued_at": "2026-11-16T00:00:00Z",
-      "owner": "leandromqrs",
-      "package": "stdlib",
-      "package_version": "go1.27.1-X:nodwarf5",
-      "reason": "stdlib go1.27.1-X:nodwarf5 embedded in Fedora-built /usr/bin/podman from podman-5:6.1.3-1.fc45.x86_64; grype reports a fix in 1.26.9, 1.27.2. Bodhi FEDORA-2026-9b209999d0 (podman-6.2.0-1.fc45, skopeo-1.25.1-2.fc45) is pending; whether it fixes this advisory was not verified. Exposure: CLI run on user invocation; podman.socket, podman.service and the other podman units are disabled system-wide and for users. Binary has no setuid bit or file capabilities. Accepted for the testing channel only."
-    },
-    {
-      "advisory": "CVE-2026-78669",
-      "binary": {
         "ostree_object": "/sysroot/ostree/repo/objects/2e/a8825505d254bd3966b6e98429884c7dab053debc646862a09ace80f9bc57c.file",
         "path": "/usr/bin/toolbox",
         "rpm_nevra": "toolbox-0.3-7.fc45.x86_64",
@@ -1722,118 +1050,6 @@
       "package": "stdlib",
       "package_version": "go1.27rc2-X:nodwarf5",
       "reason": "stdlib go1.27rc2-X:nodwarf5 embedded in Fedora-built /usr/bin/ql2tpd from go-l2tp-0.1.8-5.fc45.x86_64; grype reports a fix in 1.26.9, 1.27.2. Bodhi has no newer Fedora 45 go-l2tp build. Exposure: go-l2tp ships no systemd units; required only by NetworkManager-l2tp-1.52.6-1.fc45 and not started by default. Binary has no setuid bit or file capabilities. Accepted for the testing channel only."
-    },
-    {
-      "advisory": "CVE-2026-94439",
-      "binary": {
-        "ostree_object": "/sysroot/ostree/repo/objects/2b/9e05183517660c9d28a9d875e6db695708f3a91fb75e7b7bd4b88fcb29c29f.file",
-        "path": "/usr/bin/skopeo",
-        "rpm_nevra": "skopeo-1:1.24.1-1.fc45.x86_64",
-        "sha256": "effe157831c2d72c21885b4cf97f021a3ff6957b6b6bc3715f57b95a926944b9"
-      },
-      "channel": "testing",
-      "classification": "accepted_risk",
-      "component_scope": "workstation_payload",
-      "component_type": "embedded_go",
-      "edition": "workstation",
-      "evidence": [
-        {
-          "path": "workstation-workstation_payload-testing-45.triage.md",
-          "sha256": "3681dc772cdd5bd0532f7e4756f10a8a26a4a8d0ab98eae2ed121120a7b65d71",
-          "size_bytes": 25672
-        }
-      ],
-      "expires_at": "2026-12-16T00:00:00Z",
-      "fedora": "45",
-      "issued_at": "2026-11-16T00:00:00Z",
-      "owner": "leandromqrs",
-      "package": "stdlib",
-      "package_version": "go1.27.1-X:nodwarf5",
-      "reason": "stdlib go1.27.1-X:nodwarf5 embedded in Fedora-built /usr/bin/skopeo from skopeo-1:1.24.1-1.fc45.x86_64; grype reports a fix in 1.26.9, 1.27.2. Bodhi FEDORA-2026-9b209999d0 (podman-6.2.0-1.fc45, skopeo-1.25.1-2.fc45) is pending; whether it fixes this advisory was not verified. Exposure: CLI run on user invocation; the RPM ships no systemd units. Binary has no setuid bit or file capabilities. Accepted for the testing channel only."
-    },
-    {
-      "advisory": "CVE-2026-94439",
-      "binary": {
-        "ostree_object": "/sysroot/ostree/repo/objects/58/4d130333ecbebb3eec0f11f9f82e8ee1feb98c06e1701331c8e877f9df9e74.file",
-        "path": "/usr/libexec/podman/rootlessport",
-        "rpm_nevra": "podman-5:6.1.3-1.fc45.x86_64",
-        "sha256": "abfac4e99d335066f6487c37c1cf041056f0450ea019fd2f6ec427a97abfee8a"
-      },
-      "channel": "testing",
-      "classification": "accepted_risk",
-      "component_scope": "workstation_payload",
-      "component_type": "embedded_go",
-      "edition": "workstation",
-      "evidence": [
-        {
-          "path": "workstation-workstation_payload-testing-45.triage.md",
-          "sha256": "3681dc772cdd5bd0532f7e4756f10a8a26a4a8d0ab98eae2ed121120a7b65d71",
-          "size_bytes": 25672
-        }
-      ],
-      "expires_at": "2026-12-16T00:00:00Z",
-      "fedora": "45",
-      "issued_at": "2026-11-16T00:00:00Z",
-      "owner": "leandromqrs",
-      "package": "stdlib",
-      "package_version": "go1.27.1-X:nodwarf5",
-      "reason": "stdlib go1.27.1-X:nodwarf5 embedded in Fedora-built /usr/libexec/podman/rootlessport from podman-5:6.1.3-1.fc45.x86_64; grype reports a fix in 1.26.9, 1.27.2. Bodhi FEDORA-2026-9b209999d0 (podman-6.2.0-1.fc45, skopeo-1.25.1-2.fc45) is pending; whether it fixes this advisory was not verified. Exposure: helper started only by a rootless podman container with published ports; podman units are disabled. Binary has no setuid bit or file capabilities. Accepted for the testing channel only."
-    },
-    {
-      "advisory": "CVE-2026-94439",
-      "binary": {
-        "ostree_object": "/sysroot/ostree/repo/objects/5c/7073b65b664558860916b29bfab6cc14e15a91b5aed75975e37a06b43ee2e1.file",
-        "path": "/usr/libexec/podman/quadlet",
-        "rpm_nevra": "podman-5:6.1.3-1.fc45.x86_64",
-        "sha256": "9875ff004074731a344beb0d158f2b891d36144cc29d96967440bb79f5f5ca8f"
-      },
-      "channel": "testing",
-      "classification": "accepted_risk",
-      "component_scope": "workstation_payload",
-      "component_type": "embedded_go",
-      "edition": "workstation",
-      "evidence": [
-        {
-          "path": "workstation-workstation_payload-testing-45.triage.md",
-          "sha256": "3681dc772cdd5bd0532f7e4756f10a8a26a4a8d0ab98eae2ed121120a7b65d71",
-          "size_bytes": 25672
-        }
-      ],
-      "expires_at": "2026-12-16T00:00:00Z",
-      "fedora": "45",
-      "issued_at": "2026-11-16T00:00:00Z",
-      "owner": "leandromqrs",
-      "package": "stdlib",
-      "package_version": "go1.27.1-X:nodwarf5",
-      "reason": "stdlib go1.27.1-X:nodwarf5 embedded in Fedora-built /usr/libexec/podman/quadlet from podman-5:6.1.3-1.fc45.x86_64; grype reports a fix in 1.26.9, 1.27.2. Bodhi FEDORA-2026-9b209999d0 (podman-6.2.0-1.fc45, skopeo-1.25.1-2.fc45) is pending; whether it fixes this advisory was not verified. Exposure: DEFAULT-EXPOSED: runs at every boot and user login as podman-system-generator/podman-user-generator, parsing local quadlet unit files (no network input). Binary has no setuid bit or file capabilities. Accepted for the testing channel only."
-    },
-    {
-      "advisory": "CVE-2026-94439",
-      "binary": {
-        "ostree_object": "/sysroot/ostree/repo/objects/90/51a1cb1dfada1c2a0dbae6257990b03537238eaaa112a9f9c398384de6e855.file",
-        "path": "/usr/bin/podman",
-        "rpm_nevra": "podman-5:6.1.3-1.fc45.x86_64",
-        "sha256": "246b121ff1063dc42de1b2d9c0db4be61dde67106b99abd0934aafb865a74bb1"
-      },
-      "channel": "testing",
-      "classification": "accepted_risk",
-      "component_scope": "workstation_payload",
-      "component_type": "embedded_go",
-      "edition": "workstation",
-      "evidence": [
-        {
-          "path": "workstation-workstation_payload-testing-45.triage.md",
-          "sha256": "3681dc772cdd5bd0532f7e4756f10a8a26a4a8d0ab98eae2ed121120a7b65d71",
-          "size_bytes": 25672
-        }
-      ],
-      "expires_at": "2026-12-16T00:00:00Z",
-      "fedora": "45",
-      "issued_at": "2026-11-16T00:00:00Z",
-      "owner": "leandromqrs",
-      "package": "stdlib",
-      "package_version": "go1.27.1-X:nodwarf5",
-      "reason": "stdlib go1.27.1-X:nodwarf5 embedded in Fedora-built /usr/bin/podman from podman-5:6.1.3-1.fc45.x86_64; grype reports a fix in 1.26.9, 1.27.2. Bodhi FEDORA-2026-9b209999d0 (podman-6.2.0-1.fc45, skopeo-1.25.1-2.fc45) is pending; whether it fixes this advisory was not verified. Exposure: CLI run on user invocation; podman.socket, podman.service and the other podman units are disabled system-wide and for users. Binary has no setuid bit or file capabilities. Accepted for the testing channel only."
     },
     {
       "advisory": "CVE-2026-94439",
@@ -1947,118 +1163,6 @@
     {
       "advisory": "CVE-2026-94440",
       "binary": {
-        "ostree_object": "/sysroot/ostree/repo/objects/2b/9e05183517660c9d28a9d875e6db695708f3a91fb75e7b7bd4b88fcb29c29f.file",
-        "path": "/usr/bin/skopeo",
-        "rpm_nevra": "skopeo-1:1.24.1-1.fc45.x86_64",
-        "sha256": "effe157831c2d72c21885b4cf97f021a3ff6957b6b6bc3715f57b95a926944b9"
-      },
-      "channel": "testing",
-      "classification": "accepted_risk",
-      "component_scope": "workstation_payload",
-      "component_type": "embedded_go",
-      "edition": "workstation",
-      "evidence": [
-        {
-          "path": "workstation-workstation_payload-testing-45.triage.md",
-          "sha256": "3681dc772cdd5bd0532f7e4756f10a8a26a4a8d0ab98eae2ed121120a7b65d71",
-          "size_bytes": 25672
-        }
-      ],
-      "expires_at": "2026-12-16T00:00:00Z",
-      "fedora": "45",
-      "issued_at": "2026-11-16T00:00:00Z",
-      "owner": "leandromqrs",
-      "package": "stdlib",
-      "package_version": "go1.27.1-X:nodwarf5",
-      "reason": "stdlib go1.27.1-X:nodwarf5 embedded in Fedora-built /usr/bin/skopeo from skopeo-1:1.24.1-1.fc45.x86_64; grype reports a fix in 1.26.9, 1.27.2. Bodhi FEDORA-2026-9b209999d0 (podman-6.2.0-1.fc45, skopeo-1.25.1-2.fc45) is pending; whether it fixes this advisory was not verified. Exposure: CLI run on user invocation; the RPM ships no systemd units. Binary has no setuid bit or file capabilities. Accepted for the testing channel only."
-    },
-    {
-      "advisory": "CVE-2026-94440",
-      "binary": {
-        "ostree_object": "/sysroot/ostree/repo/objects/58/4d130333ecbebb3eec0f11f9f82e8ee1feb98c06e1701331c8e877f9df9e74.file",
-        "path": "/usr/libexec/podman/rootlessport",
-        "rpm_nevra": "podman-5:6.1.3-1.fc45.x86_64",
-        "sha256": "abfac4e99d335066f6487c37c1cf041056f0450ea019fd2f6ec427a97abfee8a"
-      },
-      "channel": "testing",
-      "classification": "accepted_risk",
-      "component_scope": "workstation_payload",
-      "component_type": "embedded_go",
-      "edition": "workstation",
-      "evidence": [
-        {
-          "path": "workstation-workstation_payload-testing-45.triage.md",
-          "sha256": "3681dc772cdd5bd0532f7e4756f10a8a26a4a8d0ab98eae2ed121120a7b65d71",
-          "size_bytes": 25672
-        }
-      ],
-      "expires_at": "2026-12-16T00:00:00Z",
-      "fedora": "45",
-      "issued_at": "2026-11-16T00:00:00Z",
-      "owner": "leandromqrs",
-      "package": "stdlib",
-      "package_version": "go1.27.1-X:nodwarf5",
-      "reason": "stdlib go1.27.1-X:nodwarf5 embedded in Fedora-built /usr/libexec/podman/rootlessport from podman-5:6.1.3-1.fc45.x86_64; grype reports a fix in 1.26.9, 1.27.2. Bodhi FEDORA-2026-9b209999d0 (podman-6.2.0-1.fc45, skopeo-1.25.1-2.fc45) is pending; whether it fixes this advisory was not verified. Exposure: helper started only by a rootless podman container with published ports; podman units are disabled. Binary has no setuid bit or file capabilities. Accepted for the testing channel only."
-    },
-    {
-      "advisory": "CVE-2026-94440",
-      "binary": {
-        "ostree_object": "/sysroot/ostree/repo/objects/5c/7073b65b664558860916b29bfab6cc14e15a91b5aed75975e37a06b43ee2e1.file",
-        "path": "/usr/libexec/podman/quadlet",
-        "rpm_nevra": "podman-5:6.1.3-1.fc45.x86_64",
-        "sha256": "9875ff004074731a344beb0d158f2b891d36144cc29d96967440bb79f5f5ca8f"
-      },
-      "channel": "testing",
-      "classification": "accepted_risk",
-      "component_scope": "workstation_payload",
-      "component_type": "embedded_go",
-      "edition": "workstation",
-      "evidence": [
-        {
-          "path": "workstation-workstation_payload-testing-45.triage.md",
-          "sha256": "3681dc772cdd5bd0532f7e4756f10a8a26a4a8d0ab98eae2ed121120a7b65d71",
-          "size_bytes": 25672
-        }
-      ],
-      "expires_at": "2026-12-16T00:00:00Z",
-      "fedora": "45",
-      "issued_at": "2026-11-16T00:00:00Z",
-      "owner": "leandromqrs",
-      "package": "stdlib",
-      "package_version": "go1.27.1-X:nodwarf5",
-      "reason": "stdlib go1.27.1-X:nodwarf5 embedded in Fedora-built /usr/libexec/podman/quadlet from podman-5:6.1.3-1.fc45.x86_64; grype reports a fix in 1.26.9, 1.27.2. Bodhi FEDORA-2026-9b209999d0 (podman-6.2.0-1.fc45, skopeo-1.25.1-2.fc45) is pending; whether it fixes this advisory was not verified. Exposure: DEFAULT-EXPOSED: runs at every boot and user login as podman-system-generator/podman-user-generator, parsing local quadlet unit files (no network input). Binary has no setuid bit or file capabilities. Accepted for the testing channel only."
-    },
-    {
-      "advisory": "CVE-2026-94440",
-      "binary": {
-        "ostree_object": "/sysroot/ostree/repo/objects/90/51a1cb1dfada1c2a0dbae6257990b03537238eaaa112a9f9c398384de6e855.file",
-        "path": "/usr/bin/podman",
-        "rpm_nevra": "podman-5:6.1.3-1.fc45.x86_64",
-        "sha256": "246b121ff1063dc42de1b2d9c0db4be61dde67106b99abd0934aafb865a74bb1"
-      },
-      "channel": "testing",
-      "classification": "accepted_risk",
-      "component_scope": "workstation_payload",
-      "component_type": "embedded_go",
-      "edition": "workstation",
-      "evidence": [
-        {
-          "path": "workstation-workstation_payload-testing-45.triage.md",
-          "sha256": "3681dc772cdd5bd0532f7e4756f10a8a26a4a8d0ab98eae2ed121120a7b65d71",
-          "size_bytes": 25672
-        }
-      ],
-      "expires_at": "2026-12-16T00:00:00Z",
-      "fedora": "45",
-      "issued_at": "2026-11-16T00:00:00Z",
-      "owner": "leandromqrs",
-      "package": "stdlib",
-      "package_version": "go1.27.1-X:nodwarf5",
-      "reason": "stdlib go1.27.1-X:nodwarf5 embedded in Fedora-built /usr/bin/podman from podman-5:6.1.3-1.fc45.x86_64; grype reports a fix in 1.26.9, 1.27.2. Bodhi FEDORA-2026-9b209999d0 (podman-6.2.0-1.fc45, skopeo-1.25.1-2.fc45) is pending; whether it fixes this advisory was not verified. Exposure: CLI run on user invocation; podman.socket, podman.service and the other podman units are disabled system-wide and for users. Binary has no setuid bit or file capabilities. Accepted for the testing channel only."
-    },
-    {
-      "advisory": "CVE-2026-94440",
-      "binary": {
         "ostree_object": "/sysroot/ostree/repo/objects/2e/a8825505d254bd3966b6e98429884c7dab053debc646862a09ace80f9bc57c.file",
         "path": "/usr/bin/toolbox",
         "rpm_nevra": "toolbox-0.3-7.fc45.x86_64",
@@ -2164,118 +1268,6 @@
       "package": "stdlib",
       "package_version": "go1.27rc2-X:nodwarf5",
       "reason": "stdlib go1.27rc2-X:nodwarf5 embedded in Fedora-built /usr/bin/ql2tpd from go-l2tp-0.1.8-5.fc45.x86_64; grype reports a fix in 1.26.9, 1.27.2. Bodhi has no newer Fedora 45 go-l2tp build. Exposure: go-l2tp ships no systemd units; required only by NetworkManager-l2tp-1.52.6-1.fc45 and not started by default. Binary has no setuid bit or file capabilities. Accepted for the testing channel only."
-    },
-    {
-      "advisory": "CVE-2026-94444",
-      "binary": {
-        "ostree_object": "/sysroot/ostree/repo/objects/2b/9e05183517660c9d28a9d875e6db695708f3a91fb75e7b7bd4b88fcb29c29f.file",
-        "path": "/usr/bin/skopeo",
-        "rpm_nevra": "skopeo-1:1.24.1-1.fc45.x86_64",
-        "sha256": "effe157831c2d72c21885b4cf97f021a3ff6957b6b6bc3715f57b95a926944b9"
-      },
-      "channel": "testing",
-      "classification": "accepted_risk",
-      "component_scope": "workstation_payload",
-      "component_type": "embedded_go",
-      "edition": "workstation",
-      "evidence": [
-        {
-          "path": "workstation-workstation_payload-testing-45.triage.md",
-          "sha256": "3681dc772cdd5bd0532f7e4756f10a8a26a4a8d0ab98eae2ed121120a7b65d71",
-          "size_bytes": 25672
-        }
-      ],
-      "expires_at": "2026-12-16T00:00:00Z",
-      "fedora": "45",
-      "issued_at": "2026-11-16T00:00:00Z",
-      "owner": "leandromqrs",
-      "package": "stdlib",
-      "package_version": "go1.27.1-X:nodwarf5",
-      "reason": "stdlib go1.27.1-X:nodwarf5 embedded in Fedora-built /usr/bin/skopeo from skopeo-1:1.24.1-1.fc45.x86_64; grype reports a fix in 1.26.9, 1.27.2. Bodhi FEDORA-2026-9b209999d0 (podman-6.2.0-1.fc45, skopeo-1.25.1-2.fc45) is pending; whether it fixes this advisory was not verified. Exposure: CLI run on user invocation; the RPM ships no systemd units. Binary has no setuid bit or file capabilities. Accepted for the testing channel only."
-    },
-    {
-      "advisory": "CVE-2026-94444",
-      "binary": {
-        "ostree_object": "/sysroot/ostree/repo/objects/58/4d130333ecbebb3eec0f11f9f82e8ee1feb98c06e1701331c8e877f9df9e74.file",
-        "path": "/usr/libexec/podman/rootlessport",
-        "rpm_nevra": "podman-5:6.1.3-1.fc45.x86_64",
-        "sha256": "abfac4e99d335066f6487c37c1cf041056f0450ea019fd2f6ec427a97abfee8a"
-      },
-      "channel": "testing",
-      "classification": "accepted_risk",
-      "component_scope": "workstation_payload",
-      "component_type": "embedded_go",
-      "edition": "workstation",
-      "evidence": [
-        {
-          "path": "workstation-workstation_payload-testing-45.triage.md",
-          "sha256": "3681dc772cdd5bd0532f7e4756f10a8a26a4a8d0ab98eae2ed121120a7b65d71",
-          "size_bytes": 25672
-        }
-      ],
-      "expires_at": "2026-12-16T00:00:00Z",
-      "fedora": "45",
-      "issued_at": "2026-11-16T00:00:00Z",
-      "owner": "leandromqrs",
-      "package": "stdlib",
-      "package_version": "go1.27.1-X:nodwarf5",
-      "reason": "stdlib go1.27.1-X:nodwarf5 embedded in Fedora-built /usr/libexec/podman/rootlessport from podman-5:6.1.3-1.fc45.x86_64; grype reports a fix in 1.26.9, 1.27.2. Bodhi FEDORA-2026-9b209999d0 (podman-6.2.0-1.fc45, skopeo-1.25.1-2.fc45) is pending; whether it fixes this advisory was not verified. Exposure: helper started only by a rootless podman container with published ports; podman units are disabled. Binary has no setuid bit or file capabilities. Accepted for the testing channel only."
-    },
-    {
-      "advisory": "CVE-2026-94444",
-      "binary": {
-        "ostree_object": "/sysroot/ostree/repo/objects/5c/7073b65b664558860916b29bfab6cc14e15a91b5aed75975e37a06b43ee2e1.file",
-        "path": "/usr/libexec/podman/quadlet",
-        "rpm_nevra": "podman-5:6.1.3-1.fc45.x86_64",
-        "sha256": "9875ff004074731a344beb0d158f2b891d36144cc29d96967440bb79f5f5ca8f"
-      },
-      "channel": "testing",
-      "classification": "accepted_risk",
-      "component_scope": "workstation_payload",
-      "component_type": "embedded_go",
-      "edition": "workstation",
-      "evidence": [
-        {
-          "path": "workstation-workstation_payload-testing-45.triage.md",
-          "sha256": "3681dc772cdd5bd0532f7e4756f10a8a26a4a8d0ab98eae2ed121120a7b65d71",
-          "size_bytes": 25672
-        }
-      ],
-      "expires_at": "2026-12-16T00:00:00Z",
-      "fedora": "45",
-      "issued_at": "2026-11-16T00:00:00Z",
-      "owner": "leandromqrs",
-      "package": "stdlib",
-      "package_version": "go1.27.1-X:nodwarf5",
-      "reason": "stdlib go1.27.1-X:nodwarf5 embedded in Fedora-built /usr/libexec/podman/quadlet from podman-5:6.1.3-1.fc45.x86_64; grype reports a fix in 1.26.9, 1.27.2. Bodhi FEDORA-2026-9b209999d0 (podman-6.2.0-1.fc45, skopeo-1.25.1-2.fc45) is pending; whether it fixes this advisory was not verified. Exposure: DEFAULT-EXPOSED: runs at every boot and user login as podman-system-generator/podman-user-generator, parsing local quadlet unit files (no network input). Binary has no setuid bit or file capabilities. Accepted for the testing channel only."
-    },
-    {
-      "advisory": "CVE-2026-94444",
-      "binary": {
-        "ostree_object": "/sysroot/ostree/repo/objects/90/51a1cb1dfada1c2a0dbae6257990b03537238eaaa112a9f9c398384de6e855.file",
-        "path": "/usr/bin/podman",
-        "rpm_nevra": "podman-5:6.1.3-1.fc45.x86_64",
-        "sha256": "246b121ff1063dc42de1b2d9c0db4be61dde67106b99abd0934aafb865a74bb1"
-      },
-      "channel": "testing",
-      "classification": "accepted_risk",
-      "component_scope": "workstation_payload",
-      "component_type": "embedded_go",
-      "edition": "workstation",
-      "evidence": [
-        {
-          "path": "workstation-workstation_payload-testing-45.triage.md",
-          "sha256": "3681dc772cdd5bd0532f7e4756f10a8a26a4a8d0ab98eae2ed121120a7b65d71",
-          "size_bytes": 25672
-        }
-      ],
-      "expires_at": "2026-12-16T00:00:00Z",
-      "fedora": "45",
-      "issued_at": "2026-11-16T00:00:00Z",
-      "owner": "leandromqrs",
-      "package": "stdlib",
-      "package_version": "go1.27.1-X:nodwarf5",
-      "reason": "stdlib go1.27.1-X:nodwarf5 embedded in Fedora-built /usr/bin/podman from podman-5:6.1.3-1.fc45.x86_64; grype reports a fix in 1.26.9, 1.27.2. Bodhi FEDORA-2026-9b209999d0 (podman-6.2.0-1.fc45, skopeo-1.25.1-2.fc45) is pending; whether it fixes this advisory was not verified. Exposure: CLI run on user invocation; podman.socket, podman.service and the other podman units are disabled system-wide and for users. Binary has no setuid bit or file capabilities. Accepted for the testing channel only."
     },
     {
       "advisory": "CVE-2026-94444",
@@ -2389,118 +1381,6 @@
     {
       "advisory": "CVE-2026-94447",
       "binary": {
-        "ostree_object": "/sysroot/ostree/repo/objects/2b/9e05183517660c9d28a9d875e6db695708f3a91fb75e7b7bd4b88fcb29c29f.file",
-        "path": "/usr/bin/skopeo",
-        "rpm_nevra": "skopeo-1:1.24.1-1.fc45.x86_64",
-        "sha256": "effe157831c2d72c21885b4cf97f021a3ff6957b6b6bc3715f57b95a926944b9"
-      },
-      "channel": "testing",
-      "classification": "accepted_risk",
-      "component_scope": "workstation_payload",
-      "component_type": "embedded_go",
-      "edition": "workstation",
-      "evidence": [
-        {
-          "path": "workstation-workstation_payload-testing-45.triage.md",
-          "sha256": "3681dc772cdd5bd0532f7e4756f10a8a26a4a8d0ab98eae2ed121120a7b65d71",
-          "size_bytes": 25672
-        }
-      ],
-      "expires_at": "2026-12-16T00:00:00Z",
-      "fedora": "45",
-      "issued_at": "2026-11-16T00:00:00Z",
-      "owner": "leandromqrs",
-      "package": "stdlib",
-      "package_version": "go1.27.1-X:nodwarf5",
-      "reason": "stdlib go1.27.1-X:nodwarf5 embedded in Fedora-built /usr/bin/skopeo from skopeo-1:1.24.1-1.fc45.x86_64; grype reports a fix in 1.26.9, 1.27.2. Bodhi FEDORA-2026-9b209999d0 (podman-6.2.0-1.fc45, skopeo-1.25.1-2.fc45) is pending; whether it fixes this advisory was not verified. Exposure: CLI run on user invocation; the RPM ships no systemd units. Binary has no setuid bit or file capabilities. Accepted for the testing channel only."
-    },
-    {
-      "advisory": "CVE-2026-94447",
-      "binary": {
-        "ostree_object": "/sysroot/ostree/repo/objects/58/4d130333ecbebb3eec0f11f9f82e8ee1feb98c06e1701331c8e877f9df9e74.file",
-        "path": "/usr/libexec/podman/rootlessport",
-        "rpm_nevra": "podman-5:6.1.3-1.fc45.x86_64",
-        "sha256": "abfac4e99d335066f6487c37c1cf041056f0450ea019fd2f6ec427a97abfee8a"
-      },
-      "channel": "testing",
-      "classification": "accepted_risk",
-      "component_scope": "workstation_payload",
-      "component_type": "embedded_go",
-      "edition": "workstation",
-      "evidence": [
-        {
-          "path": "workstation-workstation_payload-testing-45.triage.md",
-          "sha256": "3681dc772cdd5bd0532f7e4756f10a8a26a4a8d0ab98eae2ed121120a7b65d71",
-          "size_bytes": 25672
-        }
-      ],
-      "expires_at": "2026-12-16T00:00:00Z",
-      "fedora": "45",
-      "issued_at": "2026-11-16T00:00:00Z",
-      "owner": "leandromqrs",
-      "package": "stdlib",
-      "package_version": "go1.27.1-X:nodwarf5",
-      "reason": "stdlib go1.27.1-X:nodwarf5 embedded in Fedora-built /usr/libexec/podman/rootlessport from podman-5:6.1.3-1.fc45.x86_64; grype reports a fix in 1.26.9, 1.27.2. Bodhi FEDORA-2026-9b209999d0 (podman-6.2.0-1.fc45, skopeo-1.25.1-2.fc45) is pending; whether it fixes this advisory was not verified. Exposure: helper started only by a rootless podman container with published ports; podman units are disabled. Binary has no setuid bit or file capabilities. Accepted for the testing channel only."
-    },
-    {
-      "advisory": "CVE-2026-94447",
-      "binary": {
-        "ostree_object": "/sysroot/ostree/repo/objects/5c/7073b65b664558860916b29bfab6cc14e15a91b5aed75975e37a06b43ee2e1.file",
-        "path": "/usr/libexec/podman/quadlet",
-        "rpm_nevra": "podman-5:6.1.3-1.fc45.x86_64",
-        "sha256": "9875ff004074731a344beb0d158f2b891d36144cc29d96967440bb79f5f5ca8f"
-      },
-      "channel": "testing",
-      "classification": "accepted_risk",
-      "component_scope": "workstation_payload",
-      "component_type": "embedded_go",
-      "edition": "workstation",
-      "evidence": [
-        {
-          "path": "workstation-workstation_payload-testing-45.triage.md",
-          "sha256": "3681dc772cdd5bd0532f7e4756f10a8a26a4a8d0ab98eae2ed121120a7b65d71",
-          "size_bytes": 25672
-        }
-      ],
-      "expires_at": "2026-12-16T00:00:00Z",
-      "fedora": "45",
-      "issued_at": "2026-11-16T00:00:00Z",
-      "owner": "leandromqrs",
-      "package": "stdlib",
-      "package_version": "go1.27.1-X:nodwarf5",
-      "reason": "stdlib go1.27.1-X:nodwarf5 embedded in Fedora-built /usr/libexec/podman/quadlet from podman-5:6.1.3-1.fc45.x86_64; grype reports a fix in 1.26.9, 1.27.2. Bodhi FEDORA-2026-9b209999d0 (podman-6.2.0-1.fc45, skopeo-1.25.1-2.fc45) is pending; whether it fixes this advisory was not verified. Exposure: DEFAULT-EXPOSED: runs at every boot and user login as podman-system-generator/podman-user-generator, parsing local quadlet unit files (no network input). Binary has no setuid bit or file capabilities. Accepted for the testing channel only."
-    },
-    {
-      "advisory": "CVE-2026-94447",
-      "binary": {
-        "ostree_object": "/sysroot/ostree/repo/objects/90/51a1cb1dfada1c2a0dbae6257990b03537238eaaa112a9f9c398384de6e855.file",
-        "path": "/usr/bin/podman",
-        "rpm_nevra": "podman-5:6.1.3-1.fc45.x86_64",
-        "sha256": "246b121ff1063dc42de1b2d9c0db4be61dde67106b99abd0934aafb865a74bb1"
-      },
-      "channel": "testing",
-      "classification": "accepted_risk",
-      "component_scope": "workstation_payload",
-      "component_type": "embedded_go",
-      "edition": "workstation",
-      "evidence": [
-        {
-          "path": "workstation-workstation_payload-testing-45.triage.md",
-          "sha256": "3681dc772cdd5bd0532f7e4756f10a8a26a4a8d0ab98eae2ed121120a7b65d71",
-          "size_bytes": 25672
-        }
-      ],
-      "expires_at": "2026-12-16T00:00:00Z",
-      "fedora": "45",
-      "issued_at": "2026-11-16T00:00:00Z",
-      "owner": "leandromqrs",
-      "package": "stdlib",
-      "package_version": "go1.27.1-X:nodwarf5",
-      "reason": "stdlib go1.27.1-X:nodwarf5 embedded in Fedora-built /usr/bin/podman from podman-5:6.1.3-1.fc45.x86_64; grype reports a fix in 1.26.9, 1.27.2. Bodhi FEDORA-2026-9b209999d0 (podman-6.2.0-1.fc45, skopeo-1.25.1-2.fc45) is pending; whether it fixes this advisory was not verified. Exposure: CLI run on user invocation; podman.socket, podman.service and the other podman units are disabled system-wide and for users. Binary has no setuid bit or file capabilities. Accepted for the testing channel only."
-    },
-    {
-      "advisory": "CVE-2026-94447",
-      "binary": {
         "ostree_object": "/sysroot/ostree/repo/objects/2e/a8825505d254bd3966b6e98429884c7dab053debc646862a09ace80f9bc57c.file",
         "path": "/usr/bin/toolbox",
         "rpm_nevra": "toolbox-0.3-7.fc45.x86_64",
@@ -2606,118 +1486,6 @@
       "package": "stdlib",
       "package_version": "go1.27rc2-X:nodwarf5",
       "reason": "stdlib go1.27rc2-X:nodwarf5 embedded in Fedora-built /usr/bin/ql2tpd from go-l2tp-0.1.8-5.fc45.x86_64; grype reports a fix in 1.26.9, 1.27.2. Bodhi has no newer Fedora 45 go-l2tp build. Exposure: go-l2tp ships no systemd units; required only by NetworkManager-l2tp-1.52.6-1.fc45 and not started by default. Binary has no setuid bit or file capabilities. Accepted for the testing channel only."
-    },
-    {
-      "advisory": "CVE-2026-97031",
-      "binary": {
-        "ostree_object": "/sysroot/ostree/repo/objects/2b/9e05183517660c9d28a9d875e6db695708f3a91fb75e7b7bd4b88fcb29c29f.file",
-        "path": "/usr/bin/skopeo",
-        "rpm_nevra": "skopeo-1:1.24.1-1.fc45.x86_64",
-        "sha256": "effe157831c2d72c21885b4cf97f021a3ff6957b6b6bc3715f57b95a926944b9"
-      },
-      "channel": "testing",
-      "classification": "accepted_risk",
-      "component_scope": "workstation_payload",
-      "component_type": "embedded_go",
-      "edition": "workstation",
-      "evidence": [
-        {
-          "path": "workstation-workstation_payload-testing-45.triage.md",
-          "sha256": "3681dc772cdd5bd0532f7e4756f10a8a26a4a8d0ab98eae2ed121120a7b65d71",
-          "size_bytes": 25672
-        }
-      ],
-      "expires_at": "2026-12-16T00:00:00Z",
-      "fedora": "45",
-      "issued_at": "2026-11-16T00:00:00Z",
-      "owner": "leandromqrs",
-      "package": "stdlib",
-      "package_version": "go1.27.1-X:nodwarf5",
-      "reason": "stdlib go1.27.1-X:nodwarf5 embedded in Fedora-built /usr/bin/skopeo from skopeo-1:1.24.1-1.fc45.x86_64; grype reports a fix in 1.26.9, 1.27.2. Bodhi FEDORA-2026-9b209999d0 (podman-6.2.0-1.fc45, skopeo-1.25.1-2.fc45) is pending; whether it fixes this advisory was not verified. Exposure: CLI run on user invocation; the RPM ships no systemd units. Binary has no setuid bit or file capabilities. Accepted for the testing channel only."
-    },
-    {
-      "advisory": "CVE-2026-97031",
-      "binary": {
-        "ostree_object": "/sysroot/ostree/repo/objects/58/4d130333ecbebb3eec0f11f9f82e8ee1feb98c06e1701331c8e877f9df9e74.file",
-        "path": "/usr/libexec/podman/rootlessport",
-        "rpm_nevra": "podman-5:6.1.3-1.fc45.x86_64",
-        "sha256": "abfac4e99d335066f6487c37c1cf041056f0450ea019fd2f6ec427a97abfee8a"
-      },
-      "channel": "testing",
-      "classification": "accepted_risk",
-      "component_scope": "workstation_payload",
-      "component_type": "embedded_go",
-      "edition": "workstation",
-      "evidence": [
-        {
-          "path": "workstation-workstation_payload-testing-45.triage.md",
-          "sha256": "3681dc772cdd5bd0532f7e4756f10a8a26a4a8d0ab98eae2ed121120a7b65d71",
-          "size_bytes": 25672
-        }
-      ],
-      "expires_at": "2026-12-16T00:00:00Z",
-      "fedora": "45",
-      "issued_at": "2026-11-16T00:00:00Z",
-      "owner": "leandromqrs",
-      "package": "stdlib",
-      "package_version": "go1.27.1-X:nodwarf5",
-      "reason": "stdlib go1.27.1-X:nodwarf5 embedded in Fedora-built /usr/libexec/podman/rootlessport from podman-5:6.1.3-1.fc45.x86_64; grype reports a fix in 1.26.9, 1.27.2. Bodhi FEDORA-2026-9b209999d0 (podman-6.2.0-1.fc45, skopeo-1.25.1-2.fc45) is pending; whether it fixes this advisory was not verified. Exposure: helper started only by a rootless podman container with published ports; podman units are disabled. Binary has no setuid bit or file capabilities. Accepted for the testing channel only."
-    },
-    {
-      "advisory": "CVE-2026-97031",
-      "binary": {
-        "ostree_object": "/sysroot/ostree/repo/objects/5c/7073b65b664558860916b29bfab6cc14e15a91b5aed75975e37a06b43ee2e1.file",
-        "path": "/usr/libexec/podman/quadlet",
-        "rpm_nevra": "podman-5:6.1.3-1.fc45.x86_64",
-        "sha256": "9875ff004074731a344beb0d158f2b891d36144cc29d96967440bb79f5f5ca8f"
-      },
-      "channel": "testing",
-      "classification": "accepted_risk",
-      "component_scope": "workstation_payload",
-      "component_type": "embedded_go",
-      "edition": "workstation",
-      "evidence": [
-        {
-          "path": "workstation-workstation_payload-testing-45.triage.md",
-          "sha256": "3681dc772cdd5bd0532f7e4756f10a8a26a4a8d0ab98eae2ed121120a7b65d71",
-          "size_bytes": 25672
-        }
-      ],
-      "expires_at": "2026-12-16T00:00:00Z",
-      "fedora": "45",
-      "issued_at": "2026-11-16T00:00:00Z",
-      "owner": "leandromqrs",
-      "package": "stdlib",
-      "package_version": "go1.27.1-X:nodwarf5",
-      "reason": "stdlib go1.27.1-X:nodwarf5 embedded in Fedora-built /usr/libexec/podman/quadlet from podman-5:6.1.3-1.fc45.x86_64; grype reports a fix in 1.26.9, 1.27.2. Bodhi FEDORA-2026-9b209999d0 (podman-6.2.0-1.fc45, skopeo-1.25.1-2.fc45) is pending; whether it fixes this advisory was not verified. Exposure: DEFAULT-EXPOSED: runs at every boot and user login as podman-system-generator/podman-user-generator, parsing local quadlet unit files (no network input). Binary has no setuid bit or file capabilities. Accepted for the testing channel only."
-    },
-    {
-      "advisory": "CVE-2026-97031",
-      "binary": {
-        "ostree_object": "/sysroot/ostree/repo/objects/90/51a1cb1dfada1c2a0dbae6257990b03537238eaaa112a9f9c398384de6e855.file",
-        "path": "/usr/bin/podman",
-        "rpm_nevra": "podman-5:6.1.3-1.fc45.x86_64",
-        "sha256": "246b121ff1063dc42de1b2d9c0db4be61dde67106b99abd0934aafb865a74bb1"
-      },
-      "channel": "testing",
-      "classification": "accepted_risk",
-      "component_scope": "workstation_payload",
-      "component_type": "embedded_go",
-      "edition": "workstation",
-      "evidence": [
-        {
-          "path": "workstation-workstation_payload-testing-45.triage.md",
-          "sha256": "3681dc772cdd5bd0532f7e4756f10a8a26a4a8d0ab98eae2ed121120a7b65d71",
-          "size_bytes": 25672
-        }
-      ],
-      "expires_at": "2026-12-16T00:00:00Z",
-      "fedora": "45",
-      "issued_at": "2026-11-16T00:00:00Z",
-      "owner": "leandromqrs",
-      "package": "stdlib",
-      "package_version": "go1.27.1-X:nodwarf5",
-      "reason": "stdlib go1.27.1-X:nodwarf5 embedded in Fedora-built /usr/bin/podman from podman-5:6.1.3-1.fc45.x86_64; grype reports a fix in 1.26.9, 1.27.2. Bodhi FEDORA-2026-9b209999d0 (podman-6.2.0-1.fc45, skopeo-1.25.1-2.fc45) is pending; whether it fixes this advisory was not verified. Exposure: CLI run on user invocation; podman.socket, podman.service and the other podman units are disabled system-wide and for users. Binary has no setuid bit or file capabilities. Accepted for the testing channel only."
     },
     {
       "advisory": "CVE-2026-97031",
@@ -2831,118 +1599,6 @@
     {
       "advisory": "CVE-2026-97032",
       "binary": {
-        "ostree_object": "/sysroot/ostree/repo/objects/2b/9e05183517660c9d28a9d875e6db695708f3a91fb75e7b7bd4b88fcb29c29f.file",
-        "path": "/usr/bin/skopeo",
-        "rpm_nevra": "skopeo-1:1.24.1-1.fc45.x86_64",
-        "sha256": "effe157831c2d72c21885b4cf97f021a3ff6957b6b6bc3715f57b95a926944b9"
-      },
-      "channel": "testing",
-      "classification": "accepted_risk",
-      "component_scope": "workstation_payload",
-      "component_type": "embedded_go",
-      "edition": "workstation",
-      "evidence": [
-        {
-          "path": "workstation-workstation_payload-testing-45.triage.md",
-          "sha256": "3681dc772cdd5bd0532f7e4756f10a8a26a4a8d0ab98eae2ed121120a7b65d71",
-          "size_bytes": 25672
-        }
-      ],
-      "expires_at": "2026-12-16T00:00:00Z",
-      "fedora": "45",
-      "issued_at": "2026-11-16T00:00:00Z",
-      "owner": "leandromqrs",
-      "package": "stdlib",
-      "package_version": "go1.27.1-X:nodwarf5",
-      "reason": "stdlib go1.27.1-X:nodwarf5 embedded in Fedora-built /usr/bin/skopeo from skopeo-1:1.24.1-1.fc45.x86_64; grype reports a fix in 1.26.9, 1.27.2. Bodhi FEDORA-2026-9b209999d0 (podman-6.2.0-1.fc45, skopeo-1.25.1-2.fc45) is pending; whether it fixes this advisory was not verified. Exposure: CLI run on user invocation; the RPM ships no systemd units. Binary has no setuid bit or file capabilities. Accepted for the testing channel only."
-    },
-    {
-      "advisory": "CVE-2026-97032",
-      "binary": {
-        "ostree_object": "/sysroot/ostree/repo/objects/58/4d130333ecbebb3eec0f11f9f82e8ee1feb98c06e1701331c8e877f9df9e74.file",
-        "path": "/usr/libexec/podman/rootlessport",
-        "rpm_nevra": "podman-5:6.1.3-1.fc45.x86_64",
-        "sha256": "abfac4e99d335066f6487c37c1cf041056f0450ea019fd2f6ec427a97abfee8a"
-      },
-      "channel": "testing",
-      "classification": "accepted_risk",
-      "component_scope": "workstation_payload",
-      "component_type": "embedded_go",
-      "edition": "workstation",
-      "evidence": [
-        {
-          "path": "workstation-workstation_payload-testing-45.triage.md",
-          "sha256": "3681dc772cdd5bd0532f7e4756f10a8a26a4a8d0ab98eae2ed121120a7b65d71",
-          "size_bytes": 25672
-        }
-      ],
-      "expires_at": "2026-12-16T00:00:00Z",
-      "fedora": "45",
-      "issued_at": "2026-11-16T00:00:00Z",
-      "owner": "leandromqrs",
-      "package": "stdlib",
-      "package_version": "go1.27.1-X:nodwarf5",
-      "reason": "stdlib go1.27.1-X:nodwarf5 embedded in Fedora-built /usr/libexec/podman/rootlessport from podman-5:6.1.3-1.fc45.x86_64; grype reports a fix in 1.26.9, 1.27.2. Bodhi FEDORA-2026-9b209999d0 (podman-6.2.0-1.fc45, skopeo-1.25.1-2.fc45) is pending; whether it fixes this advisory was not verified. Exposure: helper started only by a rootless podman container with published ports; podman units are disabled. Binary has no setuid bit or file capabilities. Accepted for the testing channel only."
-    },
-    {
-      "advisory": "CVE-2026-97032",
-      "binary": {
-        "ostree_object": "/sysroot/ostree/repo/objects/5c/7073b65b664558860916b29bfab6cc14e15a91b5aed75975e37a06b43ee2e1.file",
-        "path": "/usr/libexec/podman/quadlet",
-        "rpm_nevra": "podman-5:6.1.3-1.fc45.x86_64",
-        "sha256": "9875ff004074731a344beb0d158f2b891d36144cc29d96967440bb79f5f5ca8f"
-      },
-      "channel": "testing",
-      "classification": "accepted_risk",
-      "component_scope": "workstation_payload",
-      "component_type": "embedded_go",
-      "edition": "workstation",
-      "evidence": [
-        {
-          "path": "workstation-workstation_payload-testing-45.triage.md",
-          "sha256": "3681dc772cdd5bd0532f7e4756f10a8a26a4a8d0ab98eae2ed121120a7b65d71",
-          "size_bytes": 25672
-        }
-      ],
-      "expires_at": "2026-12-16T00:00:00Z",
-      "fedora": "45",
-      "issued_at": "2026-11-16T00:00:00Z",
-      "owner": "leandromqrs",
-      "package": "stdlib",
-      "package_version": "go1.27.1-X:nodwarf5",
-      "reason": "stdlib go1.27.1-X:nodwarf5 embedded in Fedora-built /usr/libexec/podman/quadlet from podman-5:6.1.3-1.fc45.x86_64; grype reports a fix in 1.26.9, 1.27.2. Bodhi FEDORA-2026-9b209999d0 (podman-6.2.0-1.fc45, skopeo-1.25.1-2.fc45) is pending; whether it fixes this advisory was not verified. Exposure: DEFAULT-EXPOSED: runs at every boot and user login as podman-system-generator/podman-user-generator, parsing local quadlet unit files (no network input). Binary has no setuid bit or file capabilities. Accepted for the testing channel only."
-    },
-    {
-      "advisory": "CVE-2026-97032",
-      "binary": {
-        "ostree_object": "/sysroot/ostree/repo/objects/90/51a1cb1dfada1c2a0dbae6257990b03537238eaaa112a9f9c398384de6e855.file",
-        "path": "/usr/bin/podman",
-        "rpm_nevra": "podman-5:6.1.3-1.fc45.x86_64",
-        "sha256": "246b121ff1063dc42de1b2d9c0db4be61dde67106b99abd0934aafb865a74bb1"
-      },
-      "channel": "testing",
-      "classification": "accepted_risk",
-      "component_scope": "workstation_payload",
-      "component_type": "embedded_go",
-      "edition": "workstation",
-      "evidence": [
-        {
-          "path": "workstation-workstation_payload-testing-45.triage.md",
-          "sha256": "3681dc772cdd5bd0532f7e4756f10a8a26a4a8d0ab98eae2ed121120a7b65d71",
-          "size_bytes": 25672
-        }
-      ],
-      "expires_at": "2026-12-16T00:00:00Z",
-      "fedora": "45",
-      "issued_at": "2026-11-16T00:00:00Z",
-      "owner": "leandromqrs",
-      "package": "stdlib",
-      "package_version": "go1.27.1-X:nodwarf5",
-      "reason": "stdlib go1.27.1-X:nodwarf5 embedded in Fedora-built /usr/bin/podman from podman-5:6.1.3-1.fc45.x86_64; grype reports a fix in 1.26.9, 1.27.2. Bodhi FEDORA-2026-9b209999d0 (podman-6.2.0-1.fc45, skopeo-1.25.1-2.fc45) is pending; whether it fixes this advisory was not verified. Exposure: CLI run on user invocation; podman.socket, podman.service and the other podman units are disabled system-wide and for users. Binary has no setuid bit or file capabilities. Accepted for the testing channel only."
-    },
-    {
-      "advisory": "CVE-2026-97032",
-      "binary": {
         "ostree_object": "/sysroot/ostree/repo/objects/2e/a8825505d254bd3966b6e98429884c7dab053debc646862a09ace80f9bc57c.file",
         "path": "/usr/bin/toolbox",
         "rpm_nevra": "toolbox-0.3-7.fc45.x86_64",
@@ -3048,62 +1704,6 @@
       "package": "stdlib",
       "package_version": "go1.27rc2-X:nodwarf5",
       "reason": "stdlib go1.27rc2-X:nodwarf5 embedded in Fedora-built /usr/bin/ql2tpd from go-l2tp-0.1.8-5.fc45.x86_64; grype reports a fix in 1.26.9, 1.27.2. Bodhi has no newer Fedora 45 go-l2tp build. Exposure: go-l2tp ships no systemd units; required only by NetworkManager-l2tp-1.52.6-1.fc45 and not started by default. Binary has no setuid bit or file capabilities. Accepted for the testing channel only."
-    },
-    {
-      "advisory": "GHSA-2v4p-qf9q-27wj",
-      "binary": {
-        "ostree_object": "/sysroot/ostree/repo/objects/2b/9e05183517660c9d28a9d875e6db695708f3a91fb75e7b7bd4b88fcb29c29f.file",
-        "path": "/usr/bin/skopeo",
-        "rpm_nevra": "skopeo-1:1.24.1-1.fc45.x86_64",
-        "sha256": "effe157831c2d72c21885b4cf97f021a3ff6957b6b6bc3715f57b95a926944b9"
-      },
-      "channel": "testing",
-      "classification": "accepted_risk",
-      "component_scope": "workstation_payload",
-      "component_type": "embedded_go",
-      "edition": "workstation",
-      "evidence": [
-        {
-          "path": "workstation-workstation_payload-testing-45.triage.md",
-          "sha256": "3681dc772cdd5bd0532f7e4756f10a8a26a4a8d0ab98eae2ed121120a7b65d71",
-          "size_bytes": 25672
-        }
-      ],
-      "expires_at": "2026-12-16T00:00:00Z",
-      "fedora": "45",
-      "issued_at": "2026-11-16T00:00:00Z",
-      "owner": "leandromqrs",
-      "package": "google.golang.org/grpc",
-      "package_version": "v1.82.0",
-      "reason": "google.golang.org/grpc v1.82.0 embedded in Fedora-built /usr/bin/skopeo from skopeo-1:1.24.1-1.fc45.x86_64; grype reports a fix in 1.82.2. Bodhi FEDORA-2026-9b209999d0 (podman-6.2.0-1.fc45, skopeo-1.25.1-2.fc45) is pending; whether it fixes this advisory was not verified. Exposure: CLI run on user invocation; the RPM ships no systemd units. Binary has no setuid bit or file capabilities. Accepted for the testing channel only."
-    },
-    {
-      "advisory": "GHSA-2v4p-qf9q-27wj",
-      "binary": {
-        "ostree_object": "/sysroot/ostree/repo/objects/90/51a1cb1dfada1c2a0dbae6257990b03537238eaaa112a9f9c398384de6e855.file",
-        "path": "/usr/bin/podman",
-        "rpm_nevra": "podman-5:6.1.3-1.fc45.x86_64",
-        "sha256": "246b121ff1063dc42de1b2d9c0db4be61dde67106b99abd0934aafb865a74bb1"
-      },
-      "channel": "testing",
-      "classification": "accepted_risk",
-      "component_scope": "workstation_payload",
-      "component_type": "embedded_go",
-      "edition": "workstation",
-      "evidence": [
-        {
-          "path": "workstation-workstation_payload-testing-45.triage.md",
-          "sha256": "3681dc772cdd5bd0532f7e4756f10a8a26a4a8d0ab98eae2ed121120a7b65d71",
-          "size_bytes": 25672
-        }
-      ],
-      "expires_at": "2026-12-16T00:00:00Z",
-      "fedora": "45",
-      "issued_at": "2026-11-16T00:00:00Z",
-      "owner": "leandromqrs",
-      "package": "google.golang.org/grpc",
-      "package_version": "v1.82.1",
-      "reason": "google.golang.org/grpc v1.82.1 embedded in Fedora-built /usr/bin/podman from podman-5:6.1.3-1.fc45.x86_64; grype reports a fix in 1.82.2. Bodhi FEDORA-2026-9b209999d0 (podman-6.2.0-1.fc45, skopeo-1.25.1-2.fc45) is pending; whether it fixes this advisory was not verified. Exposure: CLI run on user invocation; podman.socket, podman.service and the other podman units are disabled system-wide and for users. Binary has no setuid bit or file capabilities. Accepted for the testing channel only."
     },
     {
       "advisory": "GHSA-4374-p667-p6c8",
@@ -3189,122 +1789,94 @@
     {
       "advisory": "GHSA-4hq8-gpf5-8p68",
       "binary": {
-        "ostree_object": "/sysroot/ostree/repo/objects/58/4d130333ecbebb3eec0f11f9f82e8ee1feb98c06e1701331c8e877f9df9e74.file",
+        "ostree_object": "/sysroot/ostree/repo/objects/94/3e9fd89da99dae9856d747a888589709877c369fbe3ce82e379a72d058e1a9.file",
         "path": "/usr/libexec/podman/rootlessport",
-        "rpm_nevra": "podman-5:6.1.3-1.fc45.x86_64",
-        "sha256": "abfac4e99d335066f6487c37c1cf041056f0450ea019fd2f6ec427a97abfee8a"
+        "rpm_nevra": "podman-5:6.2.0-1.fc45.x86_64",
+        "sha256": "376de78283b7dfbf1e9429948e846c81dd1bdc2e9276cd23ef0c9f616cec057c"
       },
       "channel": "testing",
-      "classification": "accepted_risk",
+      "classification": "proven_false_positive",
       "component_scope": "workstation_payload",
       "component_type": "embedded_go",
       "edition": "workstation",
       "evidence": [
         {
-          "path": "workstation-workstation_payload-testing-45.triage.md",
-          "sha256": "3681dc772cdd5bd0532f7e4756f10a8a26a4a8d0ab98eae2ed121120a7b65d71",
-          "size_bytes": 25672
+          "path": "stable-45.triage.md",
+          "sha256": "e2b328ce02886c3c2c5299ef74ff0d48df1fa576d313bdb8b180aa7cc39b82ac",
+          "size_bytes": 33140
         }
       ],
       "expires_at": "2026-12-16T00:00:00Z",
       "fedora": "45",
-      "issued_at": "2026-11-16T00:00:00Z",
+      "issued_at": "2026-11-18T00:00:00Z",
       "owner": "leandromqrs",
       "package": "go.podman.io/podman/v6",
-      "package_version": "v6.0.0-20260929000000-b3b4b2d4f590+dirty",
-      "reason": "go.podman.io/podman/v6 v6.0.0-20260929000000-b3b4b2d4f590+dirty embedded in Fedora-built /usr/libexec/podman/rootlessport from podman-5:6.1.3-1.fc45.x86_64; grype reports a fix in 6.0.0. Bodhi FEDORA-2026-9b209999d0 (podman-6.2.0-1.fc45, skopeo-1.25.1-2.fc45) is pending; whether it fixes this advisory was not verified. Exposure: helper started only by a rootless podman container with published ports; podman units are disabled. Binary has no setuid bit or file capabilities. Accepted for the testing channel only."
+      "package_version": "v6.0.0-20261110000000-d3ee8c5e6fec+dirty",
+      "reason": "/usr/libexec/podman/rootlessport is built by Fedora from the upstream podman v6.2.0 tarball (podman-6.2.0-1.fc45); Go records the main module as the pseudo-version v6.0.0-20261110000000-d3ee8c5e6fec+dirty, which sorts before 6.0.0, so the range '< 6.0.0' matches. The fix, commit 6c431b73dbf8 'fix image host env leak', is an ancestor of tag v6.2.0 (GitHub compare API: ahead, behind 0). Applied to testing on 2026-11-18 when the base moved to podman 6.2.0."
     },
     {
       "advisory": "GHSA-4hq8-gpf5-8p68",
       "binary": {
-        "ostree_object": "/sysroot/ostree/repo/objects/5c/7073b65b664558860916b29bfab6cc14e15a91b5aed75975e37a06b43ee2e1.file",
+        "ostree_object": "/sysroot/ostree/repo/objects/d3/e24b52ba6b325a14f0643701119d94b9fe298b214d0f1bdcee6668d7eabd07.file",
+        "path": "/usr/bin/podman",
+        "rpm_nevra": "podman-5:6.2.0-1.fc45.x86_64",
+        "sha256": "c7c17121bf99b9326e6411a7ad0d4eb286dc491aac5f97582b2847ddd46105ec"
+      },
+      "channel": "testing",
+      "classification": "proven_false_positive",
+      "component_scope": "workstation_payload",
+      "component_type": "embedded_go",
+      "edition": "workstation",
+      "evidence": [
+        {
+          "path": "stable-45.triage.md",
+          "sha256": "e2b328ce02886c3c2c5299ef74ff0d48df1fa576d313bdb8b180aa7cc39b82ac",
+          "size_bytes": 33140
+        }
+      ],
+      "expires_at": "2026-12-16T00:00:00Z",
+      "fedora": "45",
+      "issued_at": "2026-11-18T00:00:00Z",
+      "owner": "leandromqrs",
+      "package": "go.podman.io/podman/v6",
+      "package_version": "v6.0.0-20261110000000-d3ee8c5e6fec+dirty",
+      "reason": "/usr/bin/podman is built by Fedora from the upstream podman v6.2.0 tarball (podman-6.2.0-1.fc45); Go records the main module as the pseudo-version v6.0.0-20261110000000-d3ee8c5e6fec+dirty, which sorts before 6.0.0, so the range '< 6.0.0' matches. The fix, commit 6c431b73dbf8 'fix image host env leak', is an ancestor of tag v6.2.0 (GitHub compare API: ahead, behind 0). Applied to testing on 2026-11-18 when the base moved to podman 6.2.0."
+    },
+    {
+      "advisory": "GHSA-4hq8-gpf5-8p68",
+      "binary": {
+        "ostree_object": "/sysroot/ostree/repo/objects/fb/05b06251e848999c38158aa4095e88ac8247113a3d128074148ccf59c0db84.file",
         "path": "/usr/libexec/podman/quadlet",
-        "rpm_nevra": "podman-5:6.1.3-1.fc45.x86_64",
-        "sha256": "9875ff004074731a344beb0d158f2b891d36144cc29d96967440bb79f5f5ca8f"
+        "rpm_nevra": "podman-5:6.2.0-1.fc45.x86_64",
+        "sha256": "0639f268d7a43224ed3846b2c66189cbd50e7d08038a77b7a46437835f332a78"
       },
       "channel": "testing",
-      "classification": "accepted_risk",
+      "classification": "proven_false_positive",
       "component_scope": "workstation_payload",
       "component_type": "embedded_go",
       "edition": "workstation",
       "evidence": [
         {
-          "path": "workstation-workstation_payload-testing-45.triage.md",
-          "sha256": "3681dc772cdd5bd0532f7e4756f10a8a26a4a8d0ab98eae2ed121120a7b65d71",
-          "size_bytes": 25672
+          "path": "stable-45.triage.md",
+          "sha256": "e2b328ce02886c3c2c5299ef74ff0d48df1fa576d313bdb8b180aa7cc39b82ac",
+          "size_bytes": 33140
         }
       ],
       "expires_at": "2026-12-16T00:00:00Z",
       "fedora": "45",
-      "issued_at": "2026-11-16T00:00:00Z",
+      "issued_at": "2026-11-18T00:00:00Z",
       "owner": "leandromqrs",
       "package": "go.podman.io/podman/v6",
-      "package_version": "v6.0.0-20260929000000-b3b4b2d4f590+dirty",
-      "reason": "go.podman.io/podman/v6 v6.0.0-20260929000000-b3b4b2d4f590+dirty embedded in Fedora-built /usr/libexec/podman/quadlet from podman-5:6.1.3-1.fc45.x86_64; grype reports a fix in 6.0.0. Bodhi FEDORA-2026-9b209999d0 (podman-6.2.0-1.fc45, skopeo-1.25.1-2.fc45) is pending; whether it fixes this advisory was not verified. Exposure: DEFAULT-EXPOSED: runs at every boot and user login as podman-system-generator/podman-user-generator, parsing local quadlet unit files (no network input). Binary has no setuid bit or file capabilities. Accepted for the testing channel only."
-    },
-    {
-      "advisory": "GHSA-4hq8-gpf5-8p68",
-      "binary": {
-        "ostree_object": "/sysroot/ostree/repo/objects/90/51a1cb1dfada1c2a0dbae6257990b03537238eaaa112a9f9c398384de6e855.file",
-        "path": "/usr/bin/podman",
-        "rpm_nevra": "podman-5:6.1.3-1.fc45.x86_64",
-        "sha256": "246b121ff1063dc42de1b2d9c0db4be61dde67106b99abd0934aafb865a74bb1"
-      },
-      "channel": "testing",
-      "classification": "accepted_risk",
-      "component_scope": "workstation_payload",
-      "component_type": "embedded_go",
-      "edition": "workstation",
-      "evidence": [
-        {
-          "path": "workstation-workstation_payload-testing-45.triage.md",
-          "sha256": "3681dc772cdd5bd0532f7e4756f10a8a26a4a8d0ab98eae2ed121120a7b65d71",
-          "size_bytes": 25672
-        }
-      ],
-      "expires_at": "2026-12-16T00:00:00Z",
-      "fedora": "45",
-      "issued_at": "2026-11-16T00:00:00Z",
-      "owner": "leandromqrs",
-      "package": "go.podman.io/podman/v6",
-      "package_version": "v6.0.0-20260929000000-b3b4b2d4f590+dirty",
-      "reason": "go.podman.io/podman/v6 v6.0.0-20260929000000-b3b4b2d4f590+dirty embedded in Fedora-built /usr/bin/podman from podman-5:6.1.3-1.fc45.x86_64; grype reports a fix in 6.0.0. Bodhi FEDORA-2026-9b209999d0 (podman-6.2.0-1.fc45, skopeo-1.25.1-2.fc45) is pending; whether it fixes this advisory was not verified. Exposure: CLI run on user invocation; podman.socket, podman.service and the other podman units are disabled system-wide and for users. Binary has no setuid bit or file capabilities. Accepted for the testing channel only."
-    },
-    {
-      "advisory": "GHSA-hrxh-6v49-42gf",
-      "binary": {
-        "ostree_object": "/sysroot/ostree/repo/objects/2b/9e05183517660c9d28a9d875e6db695708f3a91fb75e7b7bd4b88fcb29c29f.file",
-        "path": "/usr/bin/skopeo",
-        "rpm_nevra": "skopeo-1:1.24.1-1.fc45.x86_64",
-        "sha256": "effe157831c2d72c21885b4cf97f021a3ff6957b6b6bc3715f57b95a926944b9"
-      },
-      "channel": "testing",
-      "classification": "accepted_risk",
-      "component_scope": "workstation_payload",
-      "component_type": "embedded_go",
-      "edition": "workstation",
-      "evidence": [
-        {
-          "path": "workstation-workstation_payload-testing-45.triage.md",
-          "sha256": "3681dc772cdd5bd0532f7e4756f10a8a26a4a8d0ab98eae2ed121120a7b65d71",
-          "size_bytes": 25672
-        }
-      ],
-      "expires_at": "2026-12-16T00:00:00Z",
-      "fedora": "45",
-      "issued_at": "2026-11-16T00:00:00Z",
-      "owner": "leandromqrs",
-      "package": "google.golang.org/grpc",
-      "package_version": "v1.82.0",
-      "reason": "google.golang.org/grpc v1.82.0 embedded in Fedora-built /usr/bin/skopeo from skopeo-1:1.24.1-1.fc45.x86_64; grype reports a fix in 1.82.1. Bodhi FEDORA-2026-9b209999d0 (podman-6.2.0-1.fc45, skopeo-1.25.1-2.fc45) is pending; whether it fixes this advisory was not verified. Exposure: CLI run on user invocation; the RPM ships no systemd units. Binary has no setuid bit or file capabilities. Accepted for the testing channel only."
+      "package_version": "v6.0.0-20261110000000-d3ee8c5e6fec+dirty",
+      "reason": "/usr/libexec/podman/quadlet is built by Fedora from the upstream podman v6.2.0 tarball (podman-6.2.0-1.fc45); Go records the main module as the pseudo-version v6.0.0-20261110000000-d3ee8c5e6fec+dirty, which sorts before 6.0.0, so the range '< 6.0.0' matches. The fix, commit 6c431b73dbf8 'fix image host env leak', is an ancestor of tag v6.2.0 (GitHub compare API: ahead, behind 0). Applied to testing on 2026-11-18 when the base moved to podman 6.2.0."
     },
     {
       "advisory": "GHSA-mgcc-cww5-fp2q",
       "binary": {
-        "ostree_object": "/sysroot/ostree/repo/objects/2b/9e05183517660c9d28a9d875e6db695708f3a91fb75e7b7bd4b88fcb29c29f.file",
+        "ostree_object": "/sysroot/ostree/repo/objects/8f/63d9016d8d9c9d1d103271d56f69dd052b9bc879c3fcbf5f80f7f60a1f2fb9.file",
         "path": "/usr/bin/skopeo",
-        "rpm_nevra": "skopeo-1:1.24.1-1.fc45.x86_64",
-        "sha256": "effe157831c2d72c21885b4cf97f021a3ff6957b6b6bc3715f57b95a926944b9"
+        "rpm_nevra": "skopeo-1:1.25.1-2.fc45.x86_64",
+        "sha256": "0e6ca9bfd1fb368914e1a02f39f9c2a698c5c0d8b2dc37a7953113d27ef633f0"
       },
       "channel": "testing",
       "classification": "accepted_risk",
@@ -3313,26 +1885,26 @@
       "edition": "workstation",
       "evidence": [
         {
-          "path": "workstation-workstation_payload-testing-45.triage.md",
-          "sha256": "3681dc772cdd5bd0532f7e4756f10a8a26a4a8d0ab98eae2ed121120a7b65d71",
-          "size_bytes": 25672
+          "path": "stable-45.triage.md",
+          "sha256": "e2b328ce02886c3c2c5299ef74ff0d48df1fa576d313bdb8b180aa7cc39b82ac",
+          "size_bytes": 33140
         }
       ],
       "expires_at": "2026-12-16T00:00:00Z",
       "fedora": "45",
-      "issued_at": "2026-11-16T00:00:00Z",
+      "issued_at": "2026-11-18T00:00:00Z",
       "owner": "leandromqrs",
       "package": "github.com/go-jose/go-jose/v4",
-      "package_version": "v4.1.4",
-      "reason": "github.com/go-jose/go-jose/v4 v4.1.4 embedded in Fedora-built /usr/bin/skopeo from skopeo-1:1.24.1-1.fc45.x86_64; grype reports a fix in 4.1.6. Bodhi FEDORA-2026-9b209999d0 (podman-6.2.0-1.fc45, skopeo-1.25.1-2.fc45) is pending; whether it fixes this advisory was not verified. Exposure: CLI run on user invocation; the RPM ships no systemd units. Binary has no setuid bit or file capabilities. Accepted for the testing channel only."
+      "package_version": "v4.1.5",
+      "reason": "github.com/go-jose/go-jose/v4 v4.1.5 embedded in Fedora-built /usr/bin/skopeo from skopeo-1:1.25.1-2.fc45.x86_64; grype reports a fix in 4.1.6. Owner accepted the risk for the testing channel on 2026-11-17 (decision table stable-risk/2026-11-17-decisions.md). Applied to testing on 2026-11-18 when the base moved to podman 6.2.0."
     },
     {
       "advisory": "GHSA-mgcc-cww5-fp2q",
       "binary": {
-        "ostree_object": "/sysroot/ostree/repo/objects/90/51a1cb1dfada1c2a0dbae6257990b03537238eaaa112a9f9c398384de6e855.file",
+        "ostree_object": "/sysroot/ostree/repo/objects/d3/e24b52ba6b325a14f0643701119d94b9fe298b214d0f1bdcee6668d7eabd07.file",
         "path": "/usr/bin/podman",
-        "rpm_nevra": "podman-5:6.1.3-1.fc45.x86_64",
-        "sha256": "246b121ff1063dc42de1b2d9c0db4be61dde67106b99abd0934aafb865a74bb1"
+        "rpm_nevra": "podman-5:6.2.0-1.fc45.x86_64",
+        "sha256": "c7c17121bf99b9326e6411a7ad0d4eb286dc491aac5f97582b2847ddd46105ec"
       },
       "channel": "testing",
       "classification": "accepted_risk",
@@ -3341,74 +1913,18 @@
       "edition": "workstation",
       "evidence": [
         {
-          "path": "workstation-workstation_payload-testing-45.triage.md",
-          "sha256": "3681dc772cdd5bd0532f7e4756f10a8a26a4a8d0ab98eae2ed121120a7b65d71",
-          "size_bytes": 25672
+          "path": "stable-45.triage.md",
+          "sha256": "e2b328ce02886c3c2c5299ef74ff0d48df1fa576d313bdb8b180aa7cc39b82ac",
+          "size_bytes": 33140
         }
       ],
       "expires_at": "2026-12-16T00:00:00Z",
       "fedora": "45",
-      "issued_at": "2026-11-16T00:00:00Z",
+      "issued_at": "2026-11-18T00:00:00Z",
       "owner": "leandromqrs",
       "package": "github.com/go-jose/go-jose/v4",
-      "package_version": "v4.1.4",
-      "reason": "github.com/go-jose/go-jose/v4 v4.1.4 embedded in Fedora-built /usr/bin/podman from podman-5:6.1.3-1.fc45.x86_64; grype reports a fix in 4.1.6. Bodhi FEDORA-2026-9b209999d0 (podman-6.2.0-1.fc45, skopeo-1.25.1-2.fc45) is pending; whether it fixes this advisory was not verified. Exposure: CLI run on user invocation; podman.socket, podman.service and the other podman units are disabled system-wide and for users. Binary has no setuid bit or file capabilities. Accepted for the testing channel only."
-    },
-    {
-      "advisory": "GHSA-vp52-pcj8-j9qc",
-      "binary": {
-        "ostree_object": "/sysroot/ostree/repo/objects/2b/9e05183517660c9d28a9d875e6db695708f3a91fb75e7b7bd4b88fcb29c29f.file",
-        "path": "/usr/bin/skopeo",
-        "rpm_nevra": "skopeo-1:1.24.1-1.fc45.x86_64",
-        "sha256": "effe157831c2d72c21885b4cf97f021a3ff6957b6b6bc3715f57b95a926944b9"
-      },
-      "channel": "testing",
-      "classification": "accepted_risk",
-      "component_scope": "workstation_payload",
-      "component_type": "embedded_go",
-      "edition": "workstation",
-      "evidence": [
-        {
-          "path": "workstation-workstation_payload-testing-45.triage.md",
-          "sha256": "3681dc772cdd5bd0532f7e4756f10a8a26a4a8d0ab98eae2ed121120a7b65d71",
-          "size_bytes": 25672
-        }
-      ],
-      "expires_at": "2026-12-16T00:00:00Z",
-      "fedora": "45",
-      "issued_at": "2026-11-16T00:00:00Z",
-      "owner": "leandromqrs",
-      "package": "google.golang.org/grpc",
-      "package_version": "v1.82.0",
-      "reason": "google.golang.org/grpc v1.82.0 embedded in Fedora-built /usr/bin/skopeo from skopeo-1:1.24.1-1.fc45.x86_64; grype reports a fix in 1.83.1. Bodhi FEDORA-2026-9b209999d0 (podman-6.2.0-1.fc45, skopeo-1.25.1-2.fc45) is pending; whether it fixes this advisory was not verified. Exposure: CLI run on user invocation; the RPM ships no systemd units. Binary has no setuid bit or file capabilities. Accepted for the testing channel only."
-    },
-    {
-      "advisory": "GHSA-vp52-pcj8-j9qc",
-      "binary": {
-        "ostree_object": "/sysroot/ostree/repo/objects/90/51a1cb1dfada1c2a0dbae6257990b03537238eaaa112a9f9c398384de6e855.file",
-        "path": "/usr/bin/podman",
-        "rpm_nevra": "podman-5:6.1.3-1.fc45.x86_64",
-        "sha256": "246b121ff1063dc42de1b2d9c0db4be61dde67106b99abd0934aafb865a74bb1"
-      },
-      "channel": "testing",
-      "classification": "accepted_risk",
-      "component_scope": "workstation_payload",
-      "component_type": "embedded_go",
-      "edition": "workstation",
-      "evidence": [
-        {
-          "path": "workstation-workstation_payload-testing-45.triage.md",
-          "sha256": "3681dc772cdd5bd0532f7e4756f10a8a26a4a8d0ab98eae2ed121120a7b65d71",
-          "size_bytes": 25672
-        }
-      ],
-      "expires_at": "2026-12-16T00:00:00Z",
-      "fedora": "45",
-      "issued_at": "2026-11-16T00:00:00Z",
-      "owner": "leandromqrs",
-      "package": "google.golang.org/grpc",
-      "package_version": "v1.82.1",
-      "reason": "google.golang.org/grpc v1.82.1 embedded in Fedora-built /usr/bin/podman from podman-5:6.1.3-1.fc45.x86_64; grype reports a fix in 1.83.1. Bodhi FEDORA-2026-9b209999d0 (podman-6.2.0-1.fc45, skopeo-1.25.1-2.fc45) is pending; whether it fixes this advisory was not verified. Exposure: CLI run on user invocation; podman.socket, podman.service and the other podman units are disabled system-wide and for users. Binary has no setuid bit or file capabilities. Accepted for the testing channel only."
+      "package_version": "v4.1.5",
+      "reason": "github.com/go-jose/go-jose/v4 v4.1.5 embedded in Fedora-built /usr/bin/podman from podman-5:6.2.0-1.fc45.x86_64; grype reports a fix in 4.1.6. Owner accepted the risk for the testing channel on 2026-11-17 (decision table stable-risk/2026-11-17-decisions.md). Applied to testing on 2026-11-18 when the base moved to podman 6.2.0."
     },
     {
       "advisory": "GO-2026-4918",
@@ -3575,10 +2091,10 @@
     {
       "advisory": "GO-2026-5932",
       "binary": {
-        "ostree_object": "/sysroot/ostree/repo/objects/2b/9e05183517660c9d28a9d875e6db695708f3a91fb75e7b7bd4b88fcb29c29f.file",
+        "ostree_object": "/sysroot/ostree/repo/objects/8f/63d9016d8d9c9d1d103271d56f69dd052b9bc879c3fcbf5f80f7f60a1f2fb9.file",
         "path": "/usr/bin/skopeo",
-        "rpm_nevra": "skopeo-1:1.24.1-1.fc45.x86_64",
-        "sha256": "effe157831c2d72c21885b4cf97f021a3ff6957b6b6bc3715f57b95a926944b9"
+        "rpm_nevra": "skopeo-1:1.25.1-2.fc45.x86_64",
+        "sha256": "0e6ca9bfd1fb368914e1a02f39f9c2a698c5c0d8b2dc37a7953113d27ef633f0"
       },
       "channel": "testing",
       "classification": "accepted_risk",
@@ -3587,26 +2103,26 @@
       "edition": "workstation",
       "evidence": [
         {
-          "path": "workstation-workstation_payload-testing-45.triage.md",
-          "sha256": "3681dc772cdd5bd0532f7e4756f10a8a26a4a8d0ab98eae2ed121120a7b65d71",
-          "size_bytes": 25672
+          "path": "stable-45.triage.md",
+          "sha256": "e2b328ce02886c3c2c5299ef74ff0d48df1fa576d313bdb8b180aa7cc39b82ac",
+          "size_bytes": 33140
         }
       ],
       "expires_at": "2026-12-16T00:00:00Z",
       "fedora": "45",
-      "issued_at": "2026-11-16T00:00:00Z",
+      "issued_at": "2026-11-18T00:00:00Z",
       "owner": "leandromqrs",
       "package": "golang.org/x/crypto",
-      "package_version": "v0.54.0",
-      "reason": "golang.org/x/crypto v0.54.0 embedded in Fedora-built /usr/bin/skopeo from skopeo-1:1.24.1-1.fc45.x86_64; grype reports a fix in 0.58.1-0.20261009181718-2f1f834330b2. Bodhi FEDORA-2026-9b209999d0 (podman-6.2.0-1.fc45, skopeo-1.25.1-2.fc45) is pending; whether it fixes this advisory was not verified. Exposure: CLI run on user invocation; the RPM ships no systemd units. Binary has no setuid bit or file capabilities. Accepted for the testing channel only."
+      "package_version": "v0.58.0",
+      "reason": "golang.org/x/crypto v0.58.0 embedded in Fedora-built /usr/bin/skopeo from skopeo-1:1.25.1-2.fc45.x86_64; grype reports a fix in 0.58.1-0.20261009181718-2f1f834330b2. Owner accepted the risk for the testing channel on 2026-11-17 (decision table stable-risk/2026-11-17-decisions.md). Applied to testing on 2026-11-18 when the base moved to podman 6.2.0."
     },
     {
       "advisory": "GO-2026-5932",
       "binary": {
-        "ostree_object": "/sysroot/ostree/repo/objects/90/51a1cb1dfada1c2a0dbae6257990b03537238eaaa112a9f9c398384de6e855.file",
+        "ostree_object": "/sysroot/ostree/repo/objects/d3/e24b52ba6b325a14f0643701119d94b9fe298b214d0f1bdcee6668d7eabd07.file",
         "path": "/usr/bin/podman",
-        "rpm_nevra": "podman-5:6.1.3-1.fc45.x86_64",
-        "sha256": "246b121ff1063dc42de1b2d9c0db4be61dde67106b99abd0934aafb865a74bb1"
+        "rpm_nevra": "podman-5:6.2.0-1.fc45.x86_64",
+        "sha256": "c7c17121bf99b9326e6411a7ad0d4eb286dc491aac5f97582b2847ddd46105ec"
       },
       "channel": "testing",
       "classification": "accepted_risk",
@@ -3615,18 +2131,18 @@
       "edition": "workstation",
       "evidence": [
         {
-          "path": "workstation-workstation_payload-testing-45.triage.md",
-          "sha256": "3681dc772cdd5bd0532f7e4756f10a8a26a4a8d0ab98eae2ed121120a7b65d71",
-          "size_bytes": 25672
+          "path": "stable-45.triage.md",
+          "sha256": "e2b328ce02886c3c2c5299ef74ff0d48df1fa576d313bdb8b180aa7cc39b82ac",
+          "size_bytes": 33140
         }
       ],
       "expires_at": "2026-12-16T00:00:00Z",
       "fedora": "45",
-      "issued_at": "2026-11-16T00:00:00Z",
+      "issued_at": "2026-11-18T00:00:00Z",
       "owner": "leandromqrs",
       "package": "golang.org/x/crypto",
-      "package_version": "v0.56.0",
-      "reason": "golang.org/x/crypto v0.56.0 embedded in Fedora-built /usr/bin/podman from podman-5:6.1.3-1.fc45.x86_64; grype reports a fix in 0.58.1-0.20261009181718-2f1f834330b2. Bodhi FEDORA-2026-9b209999d0 (podman-6.2.0-1.fc45, skopeo-1.25.1-2.fc45) is pending; whether it fixes this advisory was not verified. Exposure: CLI run on user invocation; podman.socket, podman.service and the other podman units are disabled system-wide and for users. Binary has no setuid bit or file capabilities. Accepted for the testing channel only."
+      "package_version": "v0.58.0",
+      "reason": "golang.org/x/crypto v0.58.0 embedded in Fedora-built /usr/bin/podman from podman-5:6.2.0-1.fc45.x86_64; grype reports a fix in 0.58.1-0.20261009181718-2f1f834330b2. Owner accepted the risk for the testing channel on 2026-11-17 (decision table stable-risk/2026-11-17-decisions.md). Applied to testing on 2026-11-18 when the base moved to podman 6.2.0."
     },
     {
       "advisory": "GO-2026-5942",
@@ -3766,34 +2282,6 @@
       "reason": "golang.org/x/mod v0.20.0 embedded in Fedora-built /usr/bin/toolbox from toolbox-0.3-7.fc45.x86_64; grype reports a fix in 0.40.0. Bodhi has no newer Fedora 45 toolbox build. Exposure: CLI run on user invocation; the RPM ships no systemd units. Binary has no setuid bit or file capabilities. Accepted for the testing channel only."
     },
     {
-      "advisory": "GO-2026-6179",
-      "binary": {
-        "ostree_object": "/sysroot/ostree/repo/objects/90/51a1cb1dfada1c2a0dbae6257990b03537238eaaa112a9f9c398384de6e855.file",
-        "path": "/usr/bin/podman",
-        "rpm_nevra": "podman-5:6.1.3-1.fc45.x86_64",
-        "sha256": "246b121ff1063dc42de1b2d9c0db4be61dde67106b99abd0934aafb865a74bb1"
-      },
-      "channel": "testing",
-      "classification": "accepted_risk",
-      "component_scope": "workstation_payload",
-      "component_type": "embedded_go",
-      "edition": "workstation",
-      "evidence": [
-        {
-          "path": "workstation-workstation_payload-testing-45.triage.md",
-          "sha256": "3681dc772cdd5bd0532f7e4756f10a8a26a4a8d0ab98eae2ed121120a7b65d71",
-          "size_bytes": 25672
-        }
-      ],
-      "expires_at": "2026-12-16T00:00:00Z",
-      "fedora": "45",
-      "issued_at": "2026-11-16T00:00:00Z",
-      "owner": "leandromqrs",
-      "package": "golang.org/x/mod",
-      "package_version": "v0.38.0",
-      "reason": "golang.org/x/mod v0.38.0 embedded in Fedora-built /usr/bin/podman from podman-5:6.1.3-1.fc45.x86_64; grype reports a fix in 0.40.0. Bodhi FEDORA-2026-9b209999d0 (podman-6.2.0-1.fc45, skopeo-1.25.1-2.fc45) is pending; whether it fixes this advisory was not verified. Exposure: CLI run on user invocation; podman.socket, podman.service and the other podman units are disabled system-wide and for users. Binary has no setuid bit or file capabilities. Accepted for the testing channel only."
-    },
-    {
       "advisory": "GO-2026-6180",
       "binary": {
         "ostree_object": "/sysroot/ostree/repo/objects/2e/a8825505d254bd3966b6e98429884c7dab053debc646862a09ace80f9bc57c.file",
@@ -3822,118 +2310,6 @@
       "reason": "golang.org/x/mod v0.20.0 embedded in Fedora-built /usr/bin/toolbox from toolbox-0.3-7.fc45.x86_64; grype reports a fix in 0.40.0. Bodhi has no newer Fedora 45 toolbox build. Exposure: CLI run on user invocation; the RPM ships no systemd units. Binary has no setuid bit or file capabilities. Accepted for the testing channel only."
     },
     {
-      "advisory": "GO-2026-6180",
-      "binary": {
-        "ostree_object": "/sysroot/ostree/repo/objects/90/51a1cb1dfada1c2a0dbae6257990b03537238eaaa112a9f9c398384de6e855.file",
-        "path": "/usr/bin/podman",
-        "rpm_nevra": "podman-5:6.1.3-1.fc45.x86_64",
-        "sha256": "246b121ff1063dc42de1b2d9c0db4be61dde67106b99abd0934aafb865a74bb1"
-      },
-      "channel": "testing",
-      "classification": "accepted_risk",
-      "component_scope": "workstation_payload",
-      "component_type": "embedded_go",
-      "edition": "workstation",
-      "evidence": [
-        {
-          "path": "workstation-workstation_payload-testing-45.triage.md",
-          "sha256": "3681dc772cdd5bd0532f7e4756f10a8a26a4a8d0ab98eae2ed121120a7b65d71",
-          "size_bytes": 25672
-        }
-      ],
-      "expires_at": "2026-12-16T00:00:00Z",
-      "fedora": "45",
-      "issued_at": "2026-11-16T00:00:00Z",
-      "owner": "leandromqrs",
-      "package": "golang.org/x/mod",
-      "package_version": "v0.38.0",
-      "reason": "golang.org/x/mod v0.38.0 embedded in Fedora-built /usr/bin/podman from podman-5:6.1.3-1.fc45.x86_64; grype reports a fix in 0.40.0. Bodhi FEDORA-2026-9b209999d0 (podman-6.2.0-1.fc45, skopeo-1.25.1-2.fc45) is pending; whether it fixes this advisory was not verified. Exposure: CLI run on user invocation; podman.socket, podman.service and the other podman units are disabled system-wide and for users. Binary has no setuid bit or file capabilities. Accepted for the testing channel only."
-    },
-    {
-      "advisory": "GO-2026-6303",
-      "binary": {
-        "ostree_object": "/sysroot/ostree/repo/objects/2b/9e05183517660c9d28a9d875e6db695708f3a91fb75e7b7bd4b88fcb29c29f.file",
-        "path": "/usr/bin/skopeo",
-        "rpm_nevra": "skopeo-1:1.24.1-1.fc45.x86_64",
-        "sha256": "effe157831c2d72c21885b4cf97f021a3ff6957b6b6bc3715f57b95a926944b9"
-      },
-      "channel": "testing",
-      "classification": "accepted_risk",
-      "component_scope": "workstation_payload",
-      "component_type": "embedded_go",
-      "edition": "workstation",
-      "evidence": [
-        {
-          "path": "workstation-workstation_payload-testing-45.triage.md",
-          "sha256": "3681dc772cdd5bd0532f7e4756f10a8a26a4a8d0ab98eae2ed121120a7b65d71",
-          "size_bytes": 25672
-        }
-      ],
-      "expires_at": "2026-12-16T00:00:00Z",
-      "fedora": "45",
-      "issued_at": "2026-11-16T00:00:00Z",
-      "owner": "leandromqrs",
-      "package": "golang.org/x/crypto",
-      "package_version": "v0.54.0",
-      "reason": "golang.org/x/crypto v0.54.0 embedded in Fedora-built /usr/bin/skopeo from skopeo-1:1.24.1-1.fc45.x86_64; grype reports a fix in 0.55.0. Bodhi FEDORA-2026-9b209999d0 (podman-6.2.0-1.fc45, skopeo-1.25.1-2.fc45) is pending; whether it fixes this advisory was not verified. Exposure: CLI run on user invocation; the RPM ships no systemd units. Binary has no setuid bit or file capabilities. Accepted for the testing channel only."
-    },
-    {
-      "advisory": "GO-2026-6354",
-      "binary": {
-        "ostree_object": "/sysroot/ostree/repo/objects/2b/9e05183517660c9d28a9d875e6db695708f3a91fb75e7b7bd4b88fcb29c29f.file",
-        "path": "/usr/bin/skopeo",
-        "rpm_nevra": "skopeo-1:1.24.1-1.fc45.x86_64",
-        "sha256": "effe157831c2d72c21885b4cf97f021a3ff6957b6b6bc3715f57b95a926944b9"
-      },
-      "channel": "testing",
-      "classification": "accepted_risk",
-      "component_scope": "workstation_payload",
-      "component_type": "embedded_go",
-      "edition": "workstation",
-      "evidence": [
-        {
-          "path": "workstation-workstation_payload-testing-45.triage.md",
-          "sha256": "3681dc772cdd5bd0532f7e4756f10a8a26a4a8d0ab98eae2ed121120a7b65d71",
-          "size_bytes": 25672
-        }
-      ],
-      "expires_at": "2026-12-16T00:00:00Z",
-      "fedora": "45",
-      "issued_at": "2026-11-16T00:00:00Z",
-      "owner": "leandromqrs",
-      "package": "golang.org/x/crypto",
-      "package_version": "v0.54.0",
-      "reason": "golang.org/x/crypto v0.54.0 embedded in Fedora-built /usr/bin/skopeo from skopeo-1:1.24.1-1.fc45.x86_64; grype reports a fix in 0.56.0. Bodhi FEDORA-2026-9b209999d0 (podman-6.2.0-1.fc45, skopeo-1.25.1-2.fc45) is pending; whether it fixes this advisory was not verified. Exposure: CLI run on user invocation; the RPM ships no systemd units. Binary has no setuid bit or file capabilities. Accepted for the testing channel only."
-    },
-    {
-      "advisory": "GO-2026-6355",
-      "binary": {
-        "ostree_object": "/sysroot/ostree/repo/objects/2b/9e05183517660c9d28a9d875e6db695708f3a91fb75e7b7bd4b88fcb29c29f.file",
-        "path": "/usr/bin/skopeo",
-        "rpm_nevra": "skopeo-1:1.24.1-1.fc45.x86_64",
-        "sha256": "effe157831c2d72c21885b4cf97f021a3ff6957b6b6bc3715f57b95a926944b9"
-      },
-      "channel": "testing",
-      "classification": "accepted_risk",
-      "component_scope": "workstation_payload",
-      "component_type": "embedded_go",
-      "edition": "workstation",
-      "evidence": [
-        {
-          "path": "workstation-workstation_payload-testing-45.triage.md",
-          "sha256": "3681dc772cdd5bd0532f7e4756f10a8a26a4a8d0ab98eae2ed121120a7b65d71",
-          "size_bytes": 25672
-        }
-      ],
-      "expires_at": "2026-12-16T00:00:00Z",
-      "fedora": "45",
-      "issued_at": "2026-11-16T00:00:00Z",
-      "owner": "leandromqrs",
-      "package": "golang.org/x/crypto",
-      "package_version": "v0.54.0",
-      "reason": "golang.org/x/crypto v0.54.0 embedded in Fedora-built /usr/bin/skopeo from skopeo-1:1.24.1-1.fc45.x86_64; grype reports a fix in 0.56.0. Bodhi FEDORA-2026-9b209999d0 (podman-6.2.0-1.fc45, skopeo-1.25.1-2.fc45) is pending; whether it fixes this advisory was not verified. Exposure: CLI run on user invocation; the RPM ships no systemd units. Binary has no setuid bit or file capabilities. Accepted for the testing channel only."
-    },
-    {
       "advisory": "GO-2026-6603",
       "binary": {
         "path": "/usr/bin/kl2tpd",
@@ -4013,62 +2389,6 @@
       "package": "golang.org/x/net",
       "package_version": "v0.15.0",
       "reason": "golang.org/x/net v0.15.0 embedded in Fedora-built /usr/bin/ql2tpd from go-l2tp-0.1.8-5.fc45.x86_64; grype reports a fix in 0.60.0. Bodhi has no newer Fedora 45 go-l2tp build. Exposure: go-l2tp ships no systemd units; required only by NetworkManager-l2tp-1.52.6-1.fc45 and not started by default. Binary has no setuid bit or file capabilities. Accepted for the testing channel only."
-    },
-    {
-      "advisory": "GO-2026-6603",
-      "binary": {
-        "ostree_object": "/sysroot/ostree/repo/objects/2b/9e05183517660c9d28a9d875e6db695708f3a91fb75e7b7bd4b88fcb29c29f.file",
-        "path": "/usr/bin/skopeo",
-        "rpm_nevra": "skopeo-1:1.24.1-1.fc45.x86_64",
-        "sha256": "effe157831c2d72c21885b4cf97f021a3ff6957b6b6bc3715f57b95a926944b9"
-      },
-      "channel": "testing",
-      "classification": "accepted_risk",
-      "component_scope": "workstation_payload",
-      "component_type": "embedded_go",
-      "edition": "workstation",
-      "evidence": [
-        {
-          "path": "workstation-workstation_payload-testing-45.triage.md",
-          "sha256": "3681dc772cdd5bd0532f7e4756f10a8a26a4a8d0ab98eae2ed121120a7b65d71",
-          "size_bytes": 25672
-        }
-      ],
-      "expires_at": "2026-12-16T00:00:00Z",
-      "fedora": "45",
-      "issued_at": "2026-11-16T00:00:00Z",
-      "owner": "leandromqrs",
-      "package": "golang.org/x/net",
-      "package_version": "v0.56.0",
-      "reason": "golang.org/x/net v0.56.0 embedded in Fedora-built /usr/bin/skopeo from skopeo-1:1.24.1-1.fc45.x86_64; grype reports a fix in 0.60.0. Bodhi FEDORA-2026-9b209999d0 (podman-6.2.0-1.fc45, skopeo-1.25.1-2.fc45) is pending; whether it fixes this advisory was not verified. Exposure: CLI run on user invocation; the RPM ships no systemd units. Binary has no setuid bit or file capabilities. Accepted for the testing channel only."
-    },
-    {
-      "advisory": "GO-2026-6603",
-      "binary": {
-        "ostree_object": "/sysroot/ostree/repo/objects/90/51a1cb1dfada1c2a0dbae6257990b03537238eaaa112a9f9c398384de6e855.file",
-        "path": "/usr/bin/podman",
-        "rpm_nevra": "podman-5:6.1.3-1.fc45.x86_64",
-        "sha256": "246b121ff1063dc42de1b2d9c0db4be61dde67106b99abd0934aafb865a74bb1"
-      },
-      "channel": "testing",
-      "classification": "accepted_risk",
-      "component_scope": "workstation_payload",
-      "component_type": "embedded_go",
-      "edition": "workstation",
-      "evidence": [
-        {
-          "path": "workstation-workstation_payload-testing-45.triage.md",
-          "sha256": "3681dc772cdd5bd0532f7e4756f10a8a26a4a8d0ab98eae2ed121120a7b65d71",
-          "size_bytes": 25672
-        }
-      ],
-      "expires_at": "2026-12-16T00:00:00Z",
-      "fedora": "45",
-      "issued_at": "2026-11-16T00:00:00Z",
-      "owner": "leandromqrs",
-      "package": "golang.org/x/net",
-      "package_version": "v0.57.0",
-      "reason": "golang.org/x/net v0.57.0 embedded in Fedora-built /usr/bin/podman from podman-5:6.1.3-1.fc45.x86_64; grype reports a fix in 0.60.0. Bodhi FEDORA-2026-9b209999d0 (podman-6.2.0-1.fc45, skopeo-1.25.1-2.fc45) is pending; whether it fixes this advisory was not verified. Exposure: CLI run on user invocation; podman.socket, podman.service and the other podman units are disabled system-wide and for users. Binary has no setuid bit or file capabilities. Accepted for the testing channel only."
     },
     {
       "advisory": "GO-2026-6610",
@@ -4152,62 +2472,6 @@
       "reason": "golang.org/x/net v0.15.0 embedded in Fedora-built /usr/bin/ql2tpd from go-l2tp-0.1.8-5.fc45.x86_64; grype reports a fix in 0.60.0. Bodhi has no newer Fedora 45 go-l2tp build. Exposure: go-l2tp ships no systemd units; required only by NetworkManager-l2tp-1.52.6-1.fc45 and not started by default. Binary has no setuid bit or file capabilities. Accepted for the testing channel only."
     },
     {
-      "advisory": "GO-2026-6610",
-      "binary": {
-        "ostree_object": "/sysroot/ostree/repo/objects/2b/9e05183517660c9d28a9d875e6db695708f3a91fb75e7b7bd4b88fcb29c29f.file",
-        "path": "/usr/bin/skopeo",
-        "rpm_nevra": "skopeo-1:1.24.1-1.fc45.x86_64",
-        "sha256": "effe157831c2d72c21885b4cf97f021a3ff6957b6b6bc3715f57b95a926944b9"
-      },
-      "channel": "testing",
-      "classification": "accepted_risk",
-      "component_scope": "workstation_payload",
-      "component_type": "embedded_go",
-      "edition": "workstation",
-      "evidence": [
-        {
-          "path": "workstation-workstation_payload-testing-45.triage.md",
-          "sha256": "3681dc772cdd5bd0532f7e4756f10a8a26a4a8d0ab98eae2ed121120a7b65d71",
-          "size_bytes": 25672
-        }
-      ],
-      "expires_at": "2026-12-16T00:00:00Z",
-      "fedora": "45",
-      "issued_at": "2026-11-16T00:00:00Z",
-      "owner": "leandromqrs",
-      "package": "golang.org/x/net",
-      "package_version": "v0.56.0",
-      "reason": "golang.org/x/net v0.56.0 embedded in Fedora-built /usr/bin/skopeo from skopeo-1:1.24.1-1.fc45.x86_64; grype reports a fix in 0.60.0. Bodhi FEDORA-2026-9b209999d0 (podman-6.2.0-1.fc45, skopeo-1.25.1-2.fc45) is pending; whether it fixes this advisory was not verified. Exposure: CLI run on user invocation; the RPM ships no systemd units. Binary has no setuid bit or file capabilities. Accepted for the testing channel only."
-    },
-    {
-      "advisory": "GO-2026-6610",
-      "binary": {
-        "ostree_object": "/sysroot/ostree/repo/objects/90/51a1cb1dfada1c2a0dbae6257990b03537238eaaa112a9f9c398384de6e855.file",
-        "path": "/usr/bin/podman",
-        "rpm_nevra": "podman-5:6.1.3-1.fc45.x86_64",
-        "sha256": "246b121ff1063dc42de1b2d9c0db4be61dde67106b99abd0934aafb865a74bb1"
-      },
-      "channel": "testing",
-      "classification": "accepted_risk",
-      "component_scope": "workstation_payload",
-      "component_type": "embedded_go",
-      "edition": "workstation",
-      "evidence": [
-        {
-          "path": "workstation-workstation_payload-testing-45.triage.md",
-          "sha256": "3681dc772cdd5bd0532f7e4756f10a8a26a4a8d0ab98eae2ed121120a7b65d71",
-          "size_bytes": 25672
-        }
-      ],
-      "expires_at": "2026-12-16T00:00:00Z",
-      "fedora": "45",
-      "issued_at": "2026-11-16T00:00:00Z",
-      "owner": "leandromqrs",
-      "package": "golang.org/x/net",
-      "package_version": "v0.57.0",
-      "reason": "golang.org/x/net v0.57.0 embedded in Fedora-built /usr/bin/podman from podman-5:6.1.3-1.fc45.x86_64; grype reports a fix in 0.60.0. Bodhi FEDORA-2026-9b209999d0 (podman-6.2.0-1.fc45, skopeo-1.25.1-2.fc45) is pending; whether it fixes this advisory was not verified. Exposure: CLI run on user invocation; podman.socket, podman.service and the other podman units are disabled system-wide and for users. Binary has no setuid bit or file capabilities. Accepted for the testing channel only."
-    },
-    {
       "advisory": "GO-2026-6611",
       "binary": {
         "path": "/usr/bin/kl2tpd",
@@ -4287,62 +2551,6 @@
       "package": "golang.org/x/net",
       "package_version": "v0.15.0",
       "reason": "golang.org/x/net v0.15.0 embedded in Fedora-built /usr/bin/ql2tpd from go-l2tp-0.1.8-5.fc45.x86_64; grype reports a fix in 0.60.0. Bodhi has no newer Fedora 45 go-l2tp build. Exposure: go-l2tp ships no systemd units; required only by NetworkManager-l2tp-1.52.6-1.fc45 and not started by default. Binary has no setuid bit or file capabilities. Accepted for the testing channel only."
-    },
-    {
-      "advisory": "GO-2026-6611",
-      "binary": {
-        "ostree_object": "/sysroot/ostree/repo/objects/2b/9e05183517660c9d28a9d875e6db695708f3a91fb75e7b7bd4b88fcb29c29f.file",
-        "path": "/usr/bin/skopeo",
-        "rpm_nevra": "skopeo-1:1.24.1-1.fc45.x86_64",
-        "sha256": "effe157831c2d72c21885b4cf97f021a3ff6957b6b6bc3715f57b95a926944b9"
-      },
-      "channel": "testing",
-      "classification": "accepted_risk",
-      "component_scope": "workstation_payload",
-      "component_type": "embedded_go",
-      "edition": "workstation",
-      "evidence": [
-        {
-          "path": "workstation-workstation_payload-testing-45.triage.md",
-          "sha256": "3681dc772cdd5bd0532f7e4756f10a8a26a4a8d0ab98eae2ed121120a7b65d71",
-          "size_bytes": 25672
-        }
-      ],
-      "expires_at": "2026-12-16T00:00:00Z",
-      "fedora": "45",
-      "issued_at": "2026-11-16T00:00:00Z",
-      "owner": "leandromqrs",
-      "package": "golang.org/x/net",
-      "package_version": "v0.56.0",
-      "reason": "golang.org/x/net v0.56.0 embedded in Fedora-built /usr/bin/skopeo from skopeo-1:1.24.1-1.fc45.x86_64; grype reports a fix in 0.60.0. Bodhi FEDORA-2026-9b209999d0 (podman-6.2.0-1.fc45, skopeo-1.25.1-2.fc45) is pending; whether it fixes this advisory was not verified. Exposure: CLI run on user invocation; the RPM ships no systemd units. Binary has no setuid bit or file capabilities. Accepted for the testing channel only."
-    },
-    {
-      "advisory": "GO-2026-6611",
-      "binary": {
-        "ostree_object": "/sysroot/ostree/repo/objects/90/51a1cb1dfada1c2a0dbae6257990b03537238eaaa112a9f9c398384de6e855.file",
-        "path": "/usr/bin/podman",
-        "rpm_nevra": "podman-5:6.1.3-1.fc45.x86_64",
-        "sha256": "246b121ff1063dc42de1b2d9c0db4be61dde67106b99abd0934aafb865a74bb1"
-      },
-      "channel": "testing",
-      "classification": "accepted_risk",
-      "component_scope": "workstation_payload",
-      "component_type": "embedded_go",
-      "edition": "workstation",
-      "evidence": [
-        {
-          "path": "workstation-workstation_payload-testing-45.triage.md",
-          "sha256": "3681dc772cdd5bd0532f7e4756f10a8a26a4a8d0ab98eae2ed121120a7b65d71",
-          "size_bytes": 25672
-        }
-      ],
-      "expires_at": "2026-12-16T00:00:00Z",
-      "fedora": "45",
-      "issued_at": "2026-11-16T00:00:00Z",
-      "owner": "leandromqrs",
-      "package": "golang.org/x/net",
-      "package_version": "v0.57.0",
-      "reason": "golang.org/x/net v0.57.0 embedded in Fedora-built /usr/bin/podman from podman-5:6.1.3-1.fc45.x86_64; grype reports a fix in 0.60.0. Bodhi FEDORA-2026-9b209999d0 (podman-6.2.0-1.fc45, skopeo-1.25.1-2.fc45) is pending; whether it fixes this advisory was not verified. Exposure: CLI run on user invocation; podman.socket, podman.service and the other podman units are disabled system-wide and for users. Binary has no setuid bit or file capabilities. Accepted for the testing channel only."
     },
     {
       "advisory": "GO-2026-6612",
@@ -4426,62 +2634,6 @@
       "reason": "golang.org/x/net v0.15.0 embedded in Fedora-built /usr/bin/ql2tpd from go-l2tp-0.1.8-5.fc45.x86_64; grype reports a fix in 0.60.0. Bodhi has no newer Fedora 45 go-l2tp build. Exposure: go-l2tp ships no systemd units; required only by NetworkManager-l2tp-1.52.6-1.fc45 and not started by default. Binary has no setuid bit or file capabilities. Accepted for the testing channel only."
     },
     {
-      "advisory": "GO-2026-6612",
-      "binary": {
-        "ostree_object": "/sysroot/ostree/repo/objects/2b/9e05183517660c9d28a9d875e6db695708f3a91fb75e7b7bd4b88fcb29c29f.file",
-        "path": "/usr/bin/skopeo",
-        "rpm_nevra": "skopeo-1:1.24.1-1.fc45.x86_64",
-        "sha256": "effe157831c2d72c21885b4cf97f021a3ff6957b6b6bc3715f57b95a926944b9"
-      },
-      "channel": "testing",
-      "classification": "accepted_risk",
-      "component_scope": "workstation_payload",
-      "component_type": "embedded_go",
-      "edition": "workstation",
-      "evidence": [
-        {
-          "path": "workstation-workstation_payload-testing-45.triage.md",
-          "sha256": "3681dc772cdd5bd0532f7e4756f10a8a26a4a8d0ab98eae2ed121120a7b65d71",
-          "size_bytes": 25672
-        }
-      ],
-      "expires_at": "2026-12-16T00:00:00Z",
-      "fedora": "45",
-      "issued_at": "2026-11-16T00:00:00Z",
-      "owner": "leandromqrs",
-      "package": "golang.org/x/net",
-      "package_version": "v0.56.0",
-      "reason": "golang.org/x/net v0.56.0 embedded in Fedora-built /usr/bin/skopeo from skopeo-1:1.24.1-1.fc45.x86_64; grype reports a fix in 0.60.0. Bodhi FEDORA-2026-9b209999d0 (podman-6.2.0-1.fc45, skopeo-1.25.1-2.fc45) is pending; whether it fixes this advisory was not verified. Exposure: CLI run on user invocation; the RPM ships no systemd units. Binary has no setuid bit or file capabilities. Accepted for the testing channel only."
-    },
-    {
-      "advisory": "GO-2026-6612",
-      "binary": {
-        "ostree_object": "/sysroot/ostree/repo/objects/90/51a1cb1dfada1c2a0dbae6257990b03537238eaaa112a9f9c398384de6e855.file",
-        "path": "/usr/bin/podman",
-        "rpm_nevra": "podman-5:6.1.3-1.fc45.x86_64",
-        "sha256": "246b121ff1063dc42de1b2d9c0db4be61dde67106b99abd0934aafb865a74bb1"
-      },
-      "channel": "testing",
-      "classification": "accepted_risk",
-      "component_scope": "workstation_payload",
-      "component_type": "embedded_go",
-      "edition": "workstation",
-      "evidence": [
-        {
-          "path": "workstation-workstation_payload-testing-45.triage.md",
-          "sha256": "3681dc772cdd5bd0532f7e4756f10a8a26a4a8d0ab98eae2ed121120a7b65d71",
-          "size_bytes": 25672
-        }
-      ],
-      "expires_at": "2026-12-16T00:00:00Z",
-      "fedora": "45",
-      "issued_at": "2026-11-16T00:00:00Z",
-      "owner": "leandromqrs",
-      "package": "golang.org/x/net",
-      "package_version": "v0.57.0",
-      "reason": "golang.org/x/net v0.57.0 embedded in Fedora-built /usr/bin/podman from podman-5:6.1.3-1.fc45.x86_64; grype reports a fix in 0.60.0. Bodhi FEDORA-2026-9b209999d0 (podman-6.2.0-1.fc45, skopeo-1.25.1-2.fc45) is pending; whether it fixes this advisory was not verified. Exposure: CLI run on user invocation; podman.socket, podman.service and the other podman units are disabled system-wide and for users. Binary has no setuid bit or file capabilities. Accepted for the testing channel only."
-    },
-    {
       "advisory": "GO-2026-6617",
       "binary": {
         "path": "/usr/bin/kl2tpd",
@@ -4561,62 +2713,6 @@
       "package": "golang.org/x/net",
       "package_version": "v0.15.0",
       "reason": "golang.org/x/net v0.15.0 embedded in Fedora-built /usr/bin/ql2tpd from go-l2tp-0.1.8-5.fc45.x86_64; grype reports a fix in 0.60.0. Bodhi has no newer Fedora 45 go-l2tp build. Exposure: go-l2tp ships no systemd units; required only by NetworkManager-l2tp-1.52.6-1.fc45 and not started by default. Binary has no setuid bit or file capabilities. Accepted for the testing channel only."
-    },
-    {
-      "advisory": "GO-2026-6617",
-      "binary": {
-        "ostree_object": "/sysroot/ostree/repo/objects/2b/9e05183517660c9d28a9d875e6db695708f3a91fb75e7b7bd4b88fcb29c29f.file",
-        "path": "/usr/bin/skopeo",
-        "rpm_nevra": "skopeo-1:1.24.1-1.fc45.x86_64",
-        "sha256": "effe157831c2d72c21885b4cf97f021a3ff6957b6b6bc3715f57b95a926944b9"
-      },
-      "channel": "testing",
-      "classification": "accepted_risk",
-      "component_scope": "workstation_payload",
-      "component_type": "embedded_go",
-      "edition": "workstation",
-      "evidence": [
-        {
-          "path": "workstation-workstation_payload-testing-45.triage.md",
-          "sha256": "3681dc772cdd5bd0532f7e4756f10a8a26a4a8d0ab98eae2ed121120a7b65d71",
-          "size_bytes": 25672
-        }
-      ],
-      "expires_at": "2026-12-16T00:00:00Z",
-      "fedora": "45",
-      "issued_at": "2026-11-16T00:00:00Z",
-      "owner": "leandromqrs",
-      "package": "golang.org/x/net",
-      "package_version": "v0.56.0",
-      "reason": "golang.org/x/net v0.56.0 embedded in Fedora-built /usr/bin/skopeo from skopeo-1:1.24.1-1.fc45.x86_64; grype reports a fix in 0.60.0. Bodhi FEDORA-2026-9b209999d0 (podman-6.2.0-1.fc45, skopeo-1.25.1-2.fc45) is pending; whether it fixes this advisory was not verified. Exposure: CLI run on user invocation; the RPM ships no systemd units. Binary has no setuid bit or file capabilities. Accepted for the testing channel only."
-    },
-    {
-      "advisory": "GO-2026-6617",
-      "binary": {
-        "ostree_object": "/sysroot/ostree/repo/objects/90/51a1cb1dfada1c2a0dbae6257990b03537238eaaa112a9f9c398384de6e855.file",
-        "path": "/usr/bin/podman",
-        "rpm_nevra": "podman-5:6.1.3-1.fc45.x86_64",
-        "sha256": "246b121ff1063dc42de1b2d9c0db4be61dde67106b99abd0934aafb865a74bb1"
-      },
-      "channel": "testing",
-      "classification": "accepted_risk",
-      "component_scope": "workstation_payload",
-      "component_type": "embedded_go",
-      "edition": "workstation",
-      "evidence": [
-        {
-          "path": "workstation-workstation_payload-testing-45.triage.md",
-          "sha256": "3681dc772cdd5bd0532f7e4756f10a8a26a4a8d0ab98eae2ed121120a7b65d71",
-          "size_bytes": 25672
-        }
-      ],
-      "expires_at": "2026-12-16T00:00:00Z",
-      "fedora": "45",
-      "issued_at": "2026-11-16T00:00:00Z",
-      "owner": "leandromqrs",
-      "package": "golang.org/x/net",
-      "package_version": "v0.57.0",
-      "reason": "golang.org/x/net v0.57.0 embedded in Fedora-built /usr/bin/podman from podman-5:6.1.3-1.fc45.x86_64; grype reports a fix in 0.60.0. Bodhi FEDORA-2026-9b209999d0 (podman-6.2.0-1.fc45, skopeo-1.25.1-2.fc45) is pending; whether it fixes this advisory was not verified. Exposure: CLI run on user invocation; podman.socket, podman.service and the other podman units are disabled system-wide and for users. Binary has no setuid bit or file capabilities. Accepted for the testing channel only."
     },
     {
       "advisory": "GO-2026-6629",
@@ -4645,34 +2741,6 @@
       "package": "golang.org/x/text",
       "package_version": "v0.21.0",
       "reason": "golang.org/x/text v0.21.0 embedded in Fedora-built /usr/bin/toolbox from toolbox-0.3-7.fc45.x86_64; grype reports a fix in 0.41.0. Bodhi has no newer Fedora 45 toolbox build. Exposure: CLI run on user invocation; the RPM ships no systemd units. Binary has no setuid bit or file capabilities. Accepted for the testing channel only."
-    },
-    {
-      "advisory": "GO-2026-6629",
-      "binary": {
-        "ostree_object": "/sysroot/ostree/repo/objects/2b/9e05183517660c9d28a9d875e6db695708f3a91fb75e7b7bd4b88fcb29c29f.file",
-        "path": "/usr/bin/skopeo",
-        "rpm_nevra": "skopeo-1:1.24.1-1.fc45.x86_64",
-        "sha256": "effe157831c2d72c21885b4cf97f021a3ff6957b6b6bc3715f57b95a926944b9"
-      },
-      "channel": "testing",
-      "classification": "accepted_risk",
-      "component_scope": "workstation_payload",
-      "component_type": "embedded_go",
-      "edition": "workstation",
-      "evidence": [
-        {
-          "path": "workstation-workstation_payload-testing-45.triage.md",
-          "sha256": "3681dc772cdd5bd0532f7e4756f10a8a26a4a8d0ab98eae2ed121120a7b65d71",
-          "size_bytes": 25672
-        }
-      ],
-      "expires_at": "2026-12-16T00:00:00Z",
-      "fedora": "45",
-      "issued_at": "2026-11-16T00:00:00Z",
-      "owner": "leandromqrs",
-      "package": "golang.org/x/text",
-      "package_version": "v0.40.0",
-      "reason": "golang.org/x/text v0.40.0 embedded in Fedora-built /usr/bin/skopeo from skopeo-1:1.24.1-1.fc45.x86_64; grype reports a fix in 0.41.0. Bodhi FEDORA-2026-9b209999d0 (podman-6.2.0-1.fc45, skopeo-1.25.1-2.fc45) is pending; whether it fixes this advisory was not verified. Exposure: CLI run on user invocation; the RPM ships no systemd units. Binary has no setuid bit or file capabilities. Accepted for the testing channel only."
     },
     {
       "advisory": "GO-2026-6860",
@@ -4758,10 +2826,10 @@
     {
       "advisory": "GO-2026-6860",
       "binary": {
-        "ostree_object": "/sysroot/ostree/repo/objects/2b/9e05183517660c9d28a9d875e6db695708f3a91fb75e7b7bd4b88fcb29c29f.file",
+        "ostree_object": "/sysroot/ostree/repo/objects/8f/63d9016d8d9c9d1d103271d56f69dd052b9bc879c3fcbf5f80f7f60a1f2fb9.file",
         "path": "/usr/bin/skopeo",
-        "rpm_nevra": "skopeo-1:1.24.1-1.fc45.x86_64",
-        "sha256": "effe157831c2d72c21885b4cf97f021a3ff6957b6b6bc3715f57b95a926944b9"
+        "rpm_nevra": "skopeo-1:1.25.1-2.fc45.x86_64",
+        "sha256": "0e6ca9bfd1fb368914e1a02f39f9c2a698c5c0d8b2dc37a7953113d27ef633f0"
       },
       "channel": "testing",
       "classification": "accepted_risk",
@@ -4770,26 +2838,26 @@
       "edition": "workstation",
       "evidence": [
         {
-          "path": "workstation-workstation_payload-testing-45.triage.md",
-          "sha256": "3681dc772cdd5bd0532f7e4756f10a8a26a4a8d0ab98eae2ed121120a7b65d71",
-          "size_bytes": 25672
+          "path": "stable-45.triage.md",
+          "sha256": "e2b328ce02886c3c2c5299ef74ff0d48df1fa576d313bdb8b180aa7cc39b82ac",
+          "size_bytes": 33140
         }
       ],
       "expires_at": "2026-12-16T00:00:00Z",
       "fedora": "45",
-      "issued_at": "2026-11-16T00:00:00Z",
+      "issued_at": "2026-11-18T00:00:00Z",
       "owner": "leandromqrs",
       "package": "golang.org/x/net",
-      "package_version": "v0.56.0",
-      "reason": "golang.org/x/net v0.56.0 embedded in Fedora-built /usr/bin/skopeo from skopeo-1:1.24.1-1.fc45.x86_64; grype reports a fix in 0.62.0. Bodhi FEDORA-2026-9b209999d0 (podman-6.2.0-1.fc45, skopeo-1.25.1-2.fc45) is pending; whether it fixes this advisory was not verified. Exposure: CLI run on user invocation; the RPM ships no systemd units. Binary has no setuid bit or file capabilities. Accepted for the testing channel only."
+      "package_version": "v0.60.0",
+      "reason": "golang.org/x/net v0.60.0 embedded in Fedora-built /usr/bin/skopeo from skopeo-1:1.25.1-2.fc45.x86_64; grype reports a fix in 0.62.0. Owner accepted the risk for the testing channel on 2026-11-17 (decision table stable-risk/2026-11-17-decisions.md). Applied to testing on 2026-11-18 when the base moved to podman 6.2.0."
     },
     {
       "advisory": "GO-2026-6860",
       "binary": {
-        "ostree_object": "/sysroot/ostree/repo/objects/90/51a1cb1dfada1c2a0dbae6257990b03537238eaaa112a9f9c398384de6e855.file",
+        "ostree_object": "/sysroot/ostree/repo/objects/d3/e24b52ba6b325a14f0643701119d94b9fe298b214d0f1bdcee6668d7eabd07.file",
         "path": "/usr/bin/podman",
-        "rpm_nevra": "podman-5:6.1.3-1.fc45.x86_64",
-        "sha256": "246b121ff1063dc42de1b2d9c0db4be61dde67106b99abd0934aafb865a74bb1"
+        "rpm_nevra": "podman-5:6.2.0-1.fc45.x86_64",
+        "sha256": "c7c17121bf99b9326e6411a7ad0d4eb286dc491aac5f97582b2847ddd46105ec"
       },
       "channel": "testing",
       "classification": "accepted_risk",
@@ -4798,74 +2866,18 @@
       "edition": "workstation",
       "evidence": [
         {
-          "path": "workstation-workstation_payload-testing-45.triage.md",
-          "sha256": "3681dc772cdd5bd0532f7e4756f10a8a26a4a8d0ab98eae2ed121120a7b65d71",
-          "size_bytes": 25672
+          "path": "stable-45.triage.md",
+          "sha256": "e2b328ce02886c3c2c5299ef74ff0d48df1fa576d313bdb8b180aa7cc39b82ac",
+          "size_bytes": 33140
         }
       ],
       "expires_at": "2026-12-16T00:00:00Z",
       "fedora": "45",
-      "issued_at": "2026-11-16T00:00:00Z",
+      "issued_at": "2026-11-18T00:00:00Z",
       "owner": "leandromqrs",
       "package": "golang.org/x/net",
-      "package_version": "v0.57.0",
-      "reason": "golang.org/x/net v0.57.0 embedded in Fedora-built /usr/bin/podman from podman-5:6.1.3-1.fc45.x86_64; grype reports a fix in 0.62.0. Bodhi FEDORA-2026-9b209999d0 (podman-6.2.0-1.fc45, skopeo-1.25.1-2.fc45) is pending; whether it fixes this advisory was not verified. Exposure: CLI run on user invocation; podman.socket, podman.service and the other podman units are disabled system-wide and for users. Binary has no setuid bit or file capabilities. Accepted for the testing channel only."
-    },
-    {
-      "advisory": "GO-2026-6865",
-      "binary": {
-        "ostree_object": "/sysroot/ostree/repo/objects/2b/9e05183517660c9d28a9d875e6db695708f3a91fb75e7b7bd4b88fcb29c29f.file",
-        "path": "/usr/bin/skopeo",
-        "rpm_nevra": "skopeo-1:1.24.1-1.fc45.x86_64",
-        "sha256": "effe157831c2d72c21885b4cf97f021a3ff6957b6b6bc3715f57b95a926944b9"
-      },
-      "channel": "testing",
-      "classification": "accepted_risk",
-      "component_scope": "workstation_payload",
-      "component_type": "embedded_go",
-      "edition": "workstation",
-      "evidence": [
-        {
-          "path": "workstation-workstation_payload-testing-45.triage.md",
-          "sha256": "3681dc772cdd5bd0532f7e4756f10a8a26a4a8d0ab98eae2ed121120a7b65d71",
-          "size_bytes": 25672
-        }
-      ],
-      "expires_at": "2026-12-16T00:00:00Z",
-      "fedora": "45",
-      "issued_at": "2026-11-16T00:00:00Z",
-      "owner": "leandromqrs",
-      "package": "github.com/klauspost/compress",
-      "package_version": "v1.19.1",
-      "reason": "github.com/klauspost/compress v1.19.1 embedded in Fedora-built /usr/bin/skopeo from skopeo-1:1.24.1-1.fc45.x86_64; grype reports a fix in 1.20.2. Bodhi FEDORA-2026-9b209999d0 (podman-6.2.0-1.fc45, skopeo-1.25.1-2.fc45) is pending; whether it fixes this advisory was not verified. Exposure: CLI run on user invocation; the RPM ships no systemd units. Binary has no setuid bit or file capabilities. Accepted for the testing channel only."
-    },
-    {
-      "advisory": "GO-2026-6865",
-      "binary": {
-        "ostree_object": "/sysroot/ostree/repo/objects/90/51a1cb1dfada1c2a0dbae6257990b03537238eaaa112a9f9c398384de6e855.file",
-        "path": "/usr/bin/podman",
-        "rpm_nevra": "podman-5:6.1.3-1.fc45.x86_64",
-        "sha256": "246b121ff1063dc42de1b2d9c0db4be61dde67106b99abd0934aafb865a74bb1"
-      },
-      "channel": "testing",
-      "classification": "accepted_risk",
-      "component_scope": "workstation_payload",
-      "component_type": "embedded_go",
-      "edition": "workstation",
-      "evidence": [
-        {
-          "path": "workstation-workstation_payload-testing-45.triage.md",
-          "sha256": "3681dc772cdd5bd0532f7e4756f10a8a26a4a8d0ab98eae2ed121120a7b65d71",
-          "size_bytes": 25672
-        }
-      ],
-      "expires_at": "2026-12-16T00:00:00Z",
-      "fedora": "45",
-      "issued_at": "2026-11-16T00:00:00Z",
-      "owner": "leandromqrs",
-      "package": "github.com/klauspost/compress",
-      "package_version": "v1.19.1",
-      "reason": "github.com/klauspost/compress v1.19.1 embedded in Fedora-built /usr/bin/podman from podman-5:6.1.3-1.fc45.x86_64; grype reports a fix in 1.20.2. Bodhi FEDORA-2026-9b209999d0 (podman-6.2.0-1.fc45, skopeo-1.25.1-2.fc45) is pending; whether it fixes this advisory was not verified. Exposure: CLI run on user invocation; podman.socket, podman.service and the other podman units are disabled system-wide and for users. Binary has no setuid bit or file capabilities. Accepted for the testing channel only."
+      "package_version": "v0.61.0",
+      "reason": "golang.org/x/net v0.61.0 embedded in Fedora-built /usr/bin/podman from podman-5:6.2.0-1.fc45.x86_64; grype reports a fix in 0.62.0. Owner accepted the risk for the testing channel on 2026-11-17 (decision table stable-risk/2026-11-17-decisions.md). Applied to testing on 2026-11-18 when the base moved to podman 6.2.0."
     }
   ],
   "kind": "policy",
