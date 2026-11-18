@@ -32,6 +32,7 @@ CHECKS = (
     "rollback",
     "selinux_enforcing",
     "firewall",
+    "no_tcp_ssh",
     "secure_boot",
 )
 GATES = ("quality", "boot", "signature", "sbom", "vulnerability")

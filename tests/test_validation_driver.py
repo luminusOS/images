@@ -243,6 +243,60 @@ class DriverTests(unittest.TestCase):
                 "Enforcing",
             )
 
+    def test_installed_system_has_no_tcp_ssh_listener(self):
+        clean = done(
+            'LISTEN 0 4096 127.0.0.1:631 0.0.0.0:* users:(("cupsd",pid=9,fd=7))\n'
+            'LISTEN 0 4096 [::1]:631 [::]:* users:(("cupsd",pid=9,fd=8))\n'
+            'LISTEN 0 4096 127.0.0.54:53 0.0.0.0:* users:(("systemd-resolve",pid=7,fd=9))\n'
+            'LISTEN 0 4096 0.0.0.0:5355 0.0.0.0:* users:(("systemd-resolve",pid=7,fd=11))\n'
+            'LISTEN 0 4096 [::]:5355 [::]:* users:(("systemd-resolve",pid=7,fd=13))\n'
+            "---\n"
+            "vsock::22 sshd-vsock.socket sshd-vsock@0.service\n"
+            "/run/dbus/system_bus_socket dbus.socket dbus-broker.service\n"
+            "127.0.0.1:631 cups.socket cups.service\n"
+        )
+        guest = FakeGuest({"no_tcp_ssh": clean})
+        driver.no_tcp_ssh(guest, self.receipts)
+        self.assertIn("ss -Hltnp", guest.commands["no_tcp_ssh"])
+        self.assertIn("systemctl list-sockets", guest.commands["no_tcp_ssh"])
+        self.assertEqual(self.written(), {"no_tcp_ssh"})
+        for output, code in (
+            ("LISTEN 0 128 0.0.0.0:22 0.0.0.0:*\n---\n", 0),
+            ("LISTEN 0 128 [::]:22 [::]:*\n---\n", 0),
+            (
+                'LISTEN 0 128 0.0.0.0:2222 0.0.0.0:* users:(("sshd",pid=4,fd=3))\n---\n',
+                0,
+            ),
+            (
+                'LISTEN 0 128 127.0.0.1:8022 0.0.0.0:* users:(("sshd-session",pid=4,fd=3))\n---\n',
+                0,
+            ),
+            ("---\n[::]:2222 sshd.socket sshd@0.service\n", 0),
+            ("---\n0.0.0.0:2200 ssh-alt.socket sshd.service\n", 0),
+            (
+                'LISTEN 0 128 0.0.0.0:2222 0.0.0.0:* users:(("dropbear",pid=4,fd=3))\n---\n',
+                0,
+            ),
+            ('LISTEN 0 128 [::]:8080 [::]:* users:(("httpd",pid=4,fd=3))\n---\n', 0),
+            (
+                'LISTEN 0 128 192.168.1.5:631 0.0.0.0:* users:(("cupsd",pid=4,fd=3))\n---\n',
+                0,
+            ),
+            ("---\n0.0.0.0:2200 remote-shell.socket dropbear.service\n", 0),
+            (
+                'LISTEN 0 4096 0.0.0.0:2222 0.0.0.0:* users:(("systemd-resolve",pid=7,fd=11))\n---\n',
+                0,
+            ),
+            ("no separator\n", 0),
+            ("---\n", 1),
+        ):
+            receipts = driver.Receipts(Path(tempfile.mkdtemp()), candidate())
+            with self.subTest(output=output), self.assertRaises(driver.CheckFailed):
+                driver.no_tcp_ssh(
+                    FakeGuest({"no_tcp_ssh": done(output, code)}), receipts
+                )
+            self.assertEqual(list(receipts.directory.glob("*.json")), [])
+
     def test_sirius_install_receipt_requires_finished(self):
         finished = done('{"Step":{"fraction":1.0,"message":"x"}}\n"Finished"\n')
         guest = FakeGuest({"sirius-run-playbook": finished})

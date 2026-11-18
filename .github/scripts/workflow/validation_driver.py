@@ -15,6 +15,7 @@ import hashlib
 import io
 import json
 import os
+import re
 import shutil
 import signal
 import subprocess
@@ -504,6 +505,7 @@ def _validate(args, candidate, receipts, diagnostics, work) -> None:
         live_isolation(guest, receipts)
         expected_key(guest, receipts)
         security_state(guest, receipts)
+        no_tcp_ssh(guest, receipts)
         secure_boot(guest, receipts)
         install_fixture_trust(guest, fixtures["public_key"])
         for name, ref in (
@@ -689,6 +691,46 @@ def exact(guest: Guest, receipts: Receipts, name: str, command: str, want: str) 
     if result.returncode != 0 or result.stdout.strip() != want:
         raise CheckFailed(f"{command} returned {result.stdout.strip()!r}")
     receipts.write(name, argv, started, transcript(argv, result))
+
+
+def loopback(address: str) -> bool:
+    host = address.rpartition(":")[0].strip("[]")
+    return host.startswith(("127.", "::ffff:127.")) or host == "::1"
+
+
+def resolver_llmnr(line: str) -> bool:
+    # Fedora's systemd-resolved answers LLMNR on TCP 5355 by default. Turning
+    # LLMNR off is a product decision, not something this receipt should force.
+    return line.split()[3].endswith(":5355") and '(("systemd-resolve"' in line
+
+
+def no_tcp_ssh(guest: Guest, receipts: Receipts) -> None:
+    # The harness reaches the guest over vsock. An installed system must not
+    # offer SSH, or any other service, on a non-loopback TCP address, whatever
+    # the build-time checks claim; SSH is refused even on loopback. Socket
+    # activation holds listeners in systemd, so socket units are checked too.
+    started = now()
+    argv, result = guest.run(
+        "no_tcp_ssh",
+        "ss -Hltnp && echo --- && systemctl list-sockets --no-legend --no-pager",
+    )
+    listeners, separator, sockets = result.stdout.partition("---\n")
+    problems = [
+        line
+        for line in listeners.splitlines()
+        if len(line.split()) < 4
+        or not (loopback(line.split()[3]) or resolver_llmnr(line))
+        or re.search(r":22\s", line)
+        or re.search(r'\(\("sshd', line)
+    ] + [
+        line
+        for line in sockets.splitlines()
+        if not line.split()[0].startswith(("vsock:", "/", "@"))
+        and (":" in line.split()[0] and not loopback(line.split()[0]) or "ssh" in line)
+    ]
+    if result.returncode != 0 or not separator or problems:
+        raise CheckFailed(f"TCP listener refused: {problems or result.stdout!r}")
+    receipts.write("no_tcp_ssh", argv, started, transcript(argv, result))
 
 
 def secure_boot(guest: Guest, receipts: Receipts) -> None:
