@@ -838,15 +838,22 @@ class CandidateSigningTests(unittest.TestCase):
 
     def test_public_tag_writers_are_serialized_and_testing_enabled(self):
         workflow = yaml.safe_load((ROOT / ".github/workflows/publish.yml").read_text())
-        for job in ("release",):
+        # Channels write disjoint tags, paths and releases, so each channel
+        # serializes only with itself: a stable run waiting days for approval
+        # must not hold back, or let GitHub cancel, testing publications.
+        for job, channel in (("release", "testing"), ("release-stable", "stable")):
             with self.subTest(job=job):
                 self.assertEqual(
                     workflow["jobs"][job]["concurrency"],
                     {
-                        "group": "image-publication-${{ github.repository }}",
+                        "group": f"image-publication-${{{{ github.repository }}}}-{channel}",
                         "cancel-in-progress": False,
                     },
                 )
+        group = workflow["concurrency"]["group"]
+        self.assertIn("inputs.channel", group)
+        self.assertIn("luminus-inert-r2-", group)
+        self.assertFalse(workflow["concurrency"]["cancel-in-progress"])
         self.assertNotIn("require slice 5b", str(workflow["jobs"]["prepare-candidate"]))
         self.assertNotIn("require slice 5b", str(workflow["jobs"]["release"]))
         self.assertIn(
