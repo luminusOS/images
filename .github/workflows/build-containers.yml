@@ -2,9 +2,9 @@ name: Image Build Validation
 
 on:
   push:
-    branches: ["main", "f*"]
+    branches: ["main", "f*", "release/*"]
   pull_request:
-    branches: ["main", "f*"]
+    branches: ["main", "f*", "release/*"]
   workflow_dispatch:
     inputs:
       fedora_version:
@@ -31,6 +31,7 @@ jobs:
     uses: ./.github/workflows/containers.yml
     with:
       fedora_version: ${{ inputs.fedora_version || '' }}
+      channel: ${{ startsWith(github.base_ref || github.ref_name, 'release/') && 'stable' || 'testing' }}
       builder_mode: local
       publish: false
       build_installer: ${{ github.event_name == 'workflow_dispatch' && inputs.build_installer == true }}

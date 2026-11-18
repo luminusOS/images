@@ -25,7 +25,6 @@ def module(name):
 meta = module("build_metadata")
 reuse = module("core_reuse")
 archive_tools = module("image_archive")
-installer_payload = module("installer_payload")
 BASE = "sha256:" + "a" * 64
 CONFIG = {
     "UPDATE_CHANNEL": "testing",
@@ -38,7 +37,7 @@ ENV = {
     "GITHUB_RUN_ID": "12",
     "GITHUB_RUN_ATTEMPT": "2",
 }
-RELEASES = {"SUPPORTED_RELEASES": "45", "LATEST_RELEASE": "45"}
+RELEASES = {"SUPPORTED_RELEASES": "45", "LATEST_RELEASE": "45", "STABLE_LINES": "45"}
 
 
 class MetadataTests(unittest.TestCase):
@@ -205,15 +204,93 @@ class MetadataTests(unittest.TestCase):
             result["workstation_image"],
             "ghcr.io/luminusos/luminusos-workstation:candidate-12-2",
         )
+        self.assertEqual(result["target_tag"], "testing-45")
         stable = meta.metadata(
-            {**ENV, "CHANNEL": "stable", "PROMOTE_VERSION": "45.20261103.2"},
-            CONFIG,
+            {**ENV, "CHANNEL": "stable", "GITHUB_REF_NAME": "release/45"},
+            CONFIG | {"UPDATE_CHANNEL": "stable"},
             RELEASES,
             BASE,
             "20261105",
+            2,
         )
-        self.assertTrue(stable["workstation_image"].endswith(":testing-45.20261103.2"))
-        self.assertEqual(stable["build_version"], "45.20261103.2")
+        self.assertEqual(stable["build_version"], "45.20261105.2")
+        self.assertEqual(stable["version_tag"], "45.20261105.2")
+        self.assertEqual(stable["release_tag"], "45.20261105.2")
+        self.assertEqual(stable["target_tag"], "45")
+        self.assertEqual(stable["branch_tag"], "45")
+        self.assertEqual(stable["channel_tag"], "latest")
+        self.assertEqual(
+            stable["workstation_image"],
+            "ghcr.io/luminusos/luminusos-workstation:candidate-12-2",
+        )
+        self.assertEqual(
+            stable["core_image"], "ghcr.io/luminusos/luminusos:candidate-12-2"
+        )
+
+    def test_pull_requests_into_a_release_line_build_that_line(self):
+        result = meta.metadata(
+            {
+                **ENV,
+                "CHANNEL": "stable",
+                "GITHUB_REF_NAME": "7/merge",
+                "GITHUB_BASE_REF": "release/45",
+            },
+            CONFIG | {"UPDATE_CHANNEL": "stable"},
+            RELEASES,
+            BASE,
+            "20261105",
+            1,
+        )
+        self.assertEqual(result["build_version"], "45.20261105.1")
+        build = yaml.safe_load(
+            (ROOT / ".github/workflows/build-containers.yml").read_text()
+        )
+        self.assertIn("release/*", build[True]["pull_request"]["branches"])
+        self.assertIn("release/*", build[True]["push"]["branches"])
+        self.assertIn(
+            "'release/'", build["jobs"]["build-containers"]["with"]["channel"]
+        )
+
+    def test_stable_builds_only_on_its_release_line_with_a_stable_target(self):
+        stable_env = {**ENV, "CHANNEL": "stable", "GITHUB_REF_NAME": "release/45"}
+        stable_config = CONFIG | {"UPDATE_CHANNEL": "stable"}
+        for env, config, sequence in (
+            ({**stable_env, "GITHUB_REF_NAME": "main"}, stable_config, 1),
+            ({**stable_env, "GITHUB_REF_NAME": "release/46"}, stable_config, 1),
+            ({**stable_env, "GITHUB_REF_NAME": "release/45x"}, stable_config, 1),
+            (stable_env, CONFIG, 1),
+            (stable_env, stable_config, 0),
+            (ENV, stable_config, 0),
+        ):
+            with (
+                self.subTest(ref=env.get("GITHUB_REF_NAME"), config=config),
+                self.assertRaises(ValueError),
+            ):
+                meta.metadata(env, config, RELEASES, BASE, "20261105", sequence)
+
+    def test_stable_lines_are_opt_in_and_supported(self):
+        self.assertEqual(
+            meta.releases("SUPPORTED_RELEASES=45\nLATEST_RELEASE=45\n")["STABLE_LINES"],
+            "",
+        )
+        self.assertEqual(
+            meta.releases(
+                'SUPPORTED_RELEASES="45 46"\nLATEST_RELEASE=46\nSTABLE_LINES=45\n'
+            )["STABLE_LINES"],
+            "45",
+        )
+        with self.assertRaises(ValueError):
+            meta.releases("SUPPORTED_RELEASES=45\nLATEST_RELEASE=45\nSTABLE_LINES=46\n")
+        env = {**ENV, "CHANNEL": "stable", "GITHUB_REF_NAME": "release/45"}
+        stable = CONFIG | {"UPDATE_CHANNEL": "stable"}
+        with self.assertRaisesRegex(ValueError, "stable line"):
+            meta.metadata(
+                env, stable, RELEASES | {"STABLE_LINES": ""}, BASE, "20261105", 1
+            )
+        self.assertEqual(
+            meta.metadata(env, stable, RELEASES, BASE, "20261105", 1)["fedora_version"],
+            "45",
+        )
 
     def test_rejects_shell_config_and_bad_overrides(self):
         with self.assertRaises(ValueError):
@@ -251,7 +328,7 @@ class MetadataTests(unittest.TestCase):
 class ContainerCachePolicyTests(unittest.TestCase):
     def test_publish_jobs_use_containerd_store_before_loading_archives(self):
         text = (ROOT / ".github/workflows/publish.yml").read_text()
-        for name in ("publish-images", "publish-stable-installer"):
+        for name in ("publish-images",):
             with self.subTest(job=name):
                 section = re.split(
                     r"\n  [\w-]+:\n", text.split(f"  {name}:\n", 1)[1], maxsplit=1
@@ -424,23 +501,6 @@ class ReuseTests(unittest.TestCase):
             ):
                 archive_tools.load("local:core", archive, checksum, BASE)
 
-    def test_stable_installer_requires_digest(self):
-        with (
-            patch.object(installer_payload, "command") as cmd,
-            patch.object(installer_payload.Path, "mkdir"),
-        ):
-            with self.assertRaises(ValueError):
-                installer_payload.export_payload(
-                    "ghcr.io/luminusos/luminusos-workstation:testing-45",
-                    "stable",
-                    "45.20261105",
-                )
-            cmd.assert_not_called()
-            installer_payload.export_payload(
-                "ghcr.io/luminusos/luminusos-workstation:testing-45", "stable", BASE
-            )
-            self.assertIn("@" + BASE, cmd.call_args_list[0].args[0][-1])
-
     def test_archive_save_returns_image_identity_and_checksum(self):
         with tempfile.TemporaryDirectory() as tmp:
             archive = Path(tmp) / "image.tar"
@@ -491,71 +551,3 @@ class ReuseTests(unittest.TestCase):
             ):
                 archive_tools.load("local:core", archive, checksum, BASE)
             command.assert_called_once_with(["docker", "load", "-i", str(archive)])
-
-    def test_testing_payload_uses_local_image_without_pull(self):
-        image = "ghcr.io/luminusos/luminusos-workstation:testing-45"
-        with (
-            patch.object(installer_payload, "command") as command,
-            patch.object(installer_payload.Path, "mkdir"),
-        ):
-            installer_payload.export_payload(
-                image, "testing", "local-image-id", "unix:///tmp/docker.sock"
-            )
-        command.assert_called_once_with(
-            [
-                "skopeo",
-                "copy",
-                "--src-daemon-host",
-                "unix:///tmp/docker.sock",
-                "docker-daemon:" + image,
-                "oci:.test/payload.oci:latest",
-            ]
-        )
-
-    def test_testing_payload_rejects_missing_docker_host(self):
-        with (
-            patch.object(installer_payload, "command") as command,
-            patch.object(installer_payload.Path, "mkdir"),
-            self.assertRaisesRegex(ValueError, "requires Docker daemon host"),
-        ):
-            installer_payload.export_payload("local:workstation", "testing", "")
-        command.assert_not_called()
-
-    def test_stable_payload_pulls_immutable_digest_reference(self):
-        image = "ghcr.io/luminusos/luminusos-workstation:testing-45"
-        with (
-            patch.object(installer_payload, "command") as command,
-            patch.object(installer_payload.Path, "mkdir"),
-        ):
-            installer_payload.export_payload(image, "stable", BASE)
-        self.assertEqual(
-            [call.args[0] for call in command.call_args_list],
-            [
-                ["docker", "pull", "ghcr.io/luminusos/luminusos-workstation@" + BASE],
-                [
-                    "docker",
-                    "tag",
-                    "ghcr.io/luminusos/luminusos-workstation@" + BASE,
-                    image,
-                ],
-                [
-                    "skopeo",
-                    "copy",
-                    "docker://ghcr.io/luminusos/luminusos-workstation@" + BASE,
-                    "oci:.test/payload.oci:latest",
-                ],
-            ],
-        )
-
-    def test_payload_rejects_unknown_channel_and_invalid_stable_digest(self):
-        with (
-            patch.object(installer_payload, "command") as command,
-            patch.object(installer_payload.Path, "mkdir"),
-        ):
-            with self.assertRaises(ValueError):
-                installer_payload.export_payload("local:workstation", "preview", BASE)
-            with self.assertRaises(ValueError):
-                installer_payload.export_payload(
-                    "local:workstation", "stable", "not-a-digest"
-                )
-        command.assert_not_called()
