@@ -232,6 +232,7 @@ jobs:
             image_version=${{ needs.metadata.outputs.build_version }}
             edition_name=Workstation
             edition_id=workstation
+            image_channel=${{ inputs.channel }}
             skip_flatpaks=${{ inputs.skip_flatpaks }}
           tags: '${{ needs.metadata.outputs.workstation_image }}'
       - name: Install workstation OCI export tools
