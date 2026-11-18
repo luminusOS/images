@@ -53,7 +53,7 @@ name: Image Publication
       CANDIDATE_COSIGN_PASSWORD:
         description: "Isolated candidate signing key; read from the candidate-staging environment"
         required: false
-      COSIGN_PRIVATE_KEY: {required: true}
+      COSIGN_PRIVATE_KEY: {required: false}
       COSIGN_PASSWORD: {required: false}
       R2_ACCESS_KEY_ID: {required: false}
       R2_SECRET_ACCESS_KEY: {required: false}
@@ -69,8 +69,11 @@ env:
   BYPASS_CANDIDATE: ${{ inputs.candidate_run_id }}
   BYPASS_VALIDATION: ${{ inputs.validation_run_id }}
 
+# Each channel and line serializes only with itself: a stable run waiting
+# days for approval must not queue another line or testing, or let GitHub
+# cancel a run already pending.
 concurrency:
-  group: ${{ github.event_name == 'workflow_dispatch' && inputs.inert_r2_probe == true && format('luminus-inert-r2-{0}', github.repository) || format('luminus-release-{0}', github.repository) }}
+  group: ${{ github.event_name == 'workflow_dispatch' && inputs.inert_r2_probe == true && format('luminus-inert-r2-{0}', github.repository) || format('luminus-release-{0}-{1}-{2}', github.repository, inputs.channel, github.ref_name) }}
   cancel-in-progress: false
 
 jobs:
@@ -521,12 +524,14 @@ jobs:
   release-evidence:
     name: Assemble candidate evidence
     needs: [quality, inputs]
-    if: ${{ !(github.event_name == 'workflow_dispatch' && inputs.inert_r2_probe == true) && (!inputs.security_findings_bypass && github.ref == 'refs/heads/main' && inputs.candidate_run_id != '' && inputs.validation_run_id != '') }}
+    if: ${{ !(github.event_name == 'workflow_dispatch' && inputs.inert_r2_probe == true) && (!inputs.security_findings_bypass && ((inputs.channel == 'testing' && github.ref == 'refs/heads/main') || (inputs.channel == 'stable' && startsWith(github.ref, 'refs/heads/release/'))) && inputs.candidate_run_id != '' && inputs.validation_run_id != '') }}
     runs-on: ubuntu-latest
     environment: candidate-staging
     permissions:
       actions: read
       contents: read
+    outputs:
+      summary_sha256: ${{ steps.approval.outputs.summary_sha256 }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
         with: {persist-credentials: false}
@@ -552,21 +557,34 @@ jobs:
         run: python3 .github/scripts/workflow/release_pipeline.py assemble-evidence --candidate candidate/candidate.json --validation validation/validation.json --results candidate/results.json --output dist/release-evidence.json --public-key shared/release/candidate.pub
       - name: Verify candidate evidence
         run: python3 .github/scripts/workflow/release_publish.py verify-release --candidate candidate/candidate.json --evidence dist/release-evidence.json --public-key shared/release/candidate.pub
+      - name: Show what a stable approval accepts
+        id: approval
+        if: inputs.channel == 'stable'
+        run: python3 .github/scripts/workflow/release_publish.py approval-summary --candidate candidate/candidate.json --evidence dist/release-evidence.json --public-key shared/release/candidate.pub --output approval/approval-summary.json --policy-ref "$GITHUB_REF"
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: release-evidence
           path: dist/
           include-hidden-files: true
           if-no-files-found: error
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        if: inputs.channel == 'stable'
+        with:
+          name: stable-approval-summary
+          path: approval/
+          if-no-files-found: error
 
   release:
     name: Promote validated candidate
     needs: [quality, inputs, release-evidence]
-    if: ${{ !(github.event_name == 'workflow_dispatch' && inputs.inert_r2_probe == true) && (!inputs.security_findings_bypass && github.ref == 'refs/heads/main' && inputs.candidate_run_id != '' && inputs.validation_run_id != '') }}
+    if: ${{ !(github.event_name == 'workflow_dispatch' && inputs.inert_r2_probe == true) && (!inputs.security_findings_bypass && inputs.channel == 'testing' && github.ref == 'refs/heads/main' && inputs.candidate_run_id != '' && inputs.validation_run_id != '') }}
     runs-on: ubuntu-latest
+    # The official publishing credentials live only in this environment
+    # (main only) and in stable, never at repository level.
+    environment: testing-publish
     # This group serializes public-tag writers across workflows; the workflow group does not.
     concurrency:
-      group: image-publication-${{ github.repository }}
+      group: image-publication-${{ github.repository }}-testing
       cancel-in-progress: false
     permissions:
       actions: read
@@ -595,6 +613,68 @@ jobs:
           password: ${{ secrets.GITHUB_TOKEN }}
       - name: Verify and promote immutable images
         env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          COSIGN_PRIVATE_KEY: ${{ secrets.COSIGN_PRIVATE_KEY }}
+          COSIGN_PASSWORD: ${{ secrets.COSIGN_PASSWORD }}
+          CHANNEL: ${{ inputs.channel }}
+        run: python3 .github/scripts/workflow/release_publish.py promote --candidate candidate/candidate.json --evidence dist/release-evidence.json --public-key shared/release/candidate.pub --channel "$CHANNEL"
+      - name: Publish verified downloads and release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          AWS_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
+          AWS_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
+          AWS_REQUEST_CHECKSUM_CALCULATION: when_required
+          AWS_RESPONSE_CHECKSUM_VALIDATION: when_required
+          R2_BUCKET: luminus-downloads
+          R2_ENDPOINT: https://89e6fc75aed6d04cd84a0c7d11a5594e.r2.cloudflarestorage.com
+          SF_USER: ${{ secrets.SF_USER }}
+          SF_SSH_KEY: ${{ secrets.SF_SSH_KEY }}
+          CHANNEL: ${{ inputs.channel }}
+        run: python3 .github/scripts/workflow/release_publish.py publish --candidate candidate/candidate.json --evidence dist/release-evidence.json --public-key shared/release/candidate.pub --channel "$CHANNEL" --directory dist
+
+  release-stable:
+    name: Promote approved stable candidate
+    needs: [quality, inputs, release-evidence]
+    if: ${{ !(github.event_name == 'workflow_dispatch' && inputs.inert_r2_probe == true) && (!inputs.security_findings_bypass && inputs.channel == 'stable' && startsWith(github.ref, 'refs/heads/release/') && inputs.candidate_run_id != '' && inputs.validation_run_id != '') }}
+    runs-on: ubuntu-latest
+    # Required reviewers approve here; the job starts only after approval.
+    environment: stable
+    # This group serializes public-tag writers across workflows; the workflow group does not.
+    concurrency:
+      group: image-publication-${{ github.repository }}-stable
+      cancel-in-progress: false
+    permissions:
+      actions: read
+      contents: write
+      packages: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with: {persist-credentials: false}
+      - uses: sigstore/cosign-installer@d58896d6a1865668819e1d91763c7751a165e159
+        with: {cosign-release: v2.5.3}
+      - name: Fetch signed candidate from prior successful run
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          CANDIDATE_RUN_ID: ${{ inputs.candidate_run_id }}
+        run: python3 .github/scripts/workflow/release_pipeline.py fetch-candidate --repository "$GITHUB_REPOSITORY" --run-id "$CANDIDATE_RUN_ID" --output candidate --public-key shared/release/candidate.pub
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: release-evidence
+          path: dist/
+      - name: Recheck the summary shown before approval
+        env:
+          APPROVED_SUMMARY: ${{ needs.release-evidence.outputs.summary_sha256 }}
+        run: python3 .github/scripts/workflow/release_publish.py approval-summary --candidate candidate/candidate.json --evidence dist/release-evidence.json --public-key shared/release/candidate.pub --output approval/approval-summary.json --policy-ref "$GITHUB_REF" --expect-sha256 "$APPROVED_SUMMARY"
+      - name: Install promotion tools
+        run: sudo apt-get update && sudo apt-get install -y skopeo rsync
+      - uses: docker/login-action@81c6f93d4bc991e510b342a00b419b3bb4efc5c6
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - name: Verify and promote immutable images
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           COSIGN_PRIVATE_KEY: ${{ secrets.COSIGN_PRIVATE_KEY }}
           COSIGN_PASSWORD: ${{ secrets.COSIGN_PASSWORD }}
           CHANNEL: ${{ inputs.channel }}

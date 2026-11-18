@@ -31,6 +31,7 @@ def validate_candidate(
     expected_digest: str | None = None,
     expected_repository: str | None = None,
     expected_commit: str | None = None,
+    expected_ref: str | None = None,
 ) -> list[str]:
     if not isinstance(document, dict):
         return ["manifest must be a JSON object"]
@@ -52,8 +53,14 @@ def validate_candidate(
     else:
         if source.get("repository") != document.get("repository"):
             errors.append("evidence source repository mismatch")
-        if source.get("ref") != "refs/heads/main":
-            errors.append("evidence must come from refs/heads/main")
+        ref = source.get("ref")
+        if (
+            not isinstance(ref, str)
+            or not re.fullmatch(r"refs/heads/(?:main|release/[1-9][0-9]*)", ref)
+            or expected_ref is not None
+            and ref != expected_ref
+        ):
+            errors.append("evidence must come from the candidate's release line")
         if expected_commit is not None and source.get("commit") != expected_commit:
             errors.append("evidence source commit mismatch")
         if not isinstance(source.get("run_id"), int) or source["run_id"] <= 0:

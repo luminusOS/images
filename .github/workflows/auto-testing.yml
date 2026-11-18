@@ -107,9 +107,9 @@ jobs:
       detected_fedora_version: ${{ needs.check.outputs.fedora_version }}
       detected_base_digest: ${{ needs.check.outputs.fedora_bootc_digest }}
       security_findings_bypass: ${{ github.event_name == 'workflow_dispatch' && inputs.security_findings_bypass || false }}
+    # Preparation signs only with the isolated candidate key; the official
+    # publishing credentials stay out of this run.
     secrets:
-      COSIGN_PRIVATE_KEY: ${{ secrets.COSIGN_PRIVATE_KEY }}
-      COSIGN_PASSWORD: ${{ secrets.COSIGN_PASSWORD }}
       # The caller must declare environment secrets for the reusable workflow, or they
       # resolve empty; the candidate-staging jobs still take the environment's value.
       CANDIDATE_COSIGN_PRIVATE_KEY: ${{ secrets.CANDIDATE_COSIGN_PRIVATE_KEY }}
