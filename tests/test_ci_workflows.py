@@ -774,6 +774,30 @@ class CandidateSigningTests(unittest.TestCase):
                     "--scan-exclusion shared/release/flatpak-scan-risk.json" in line,
                     excluded,
                 )
+        stable = next(
+            step["run"] for step in job["steps"] if step.get("id") == "inspect-stable"
+        )
+        for edition, scope, excluded in (
+            ("core", "core_payload", False),
+            ("workstation", "workstation_payload", True),
+            ("workstation", "installer_live", True),
+        ):
+            name = f"{edition}-{scope}-stable-45.json"
+            digest = hashlib.sha256((policies / name).read_bytes()).hexdigest()
+            line = next(
+                item
+                for item in stable.splitlines()
+                if f"--component-scope {scope}" in item
+            )
+            with self.subTest(channel="stable", scope=scope):
+                self.assertIn(f"--exceptions shared/release/exceptions/{name}", line)
+                self.assertIn(f"--policy-sha256 {digest}", line)
+                self.assertIn("--channel stable", line)
+                self.assertEqual(
+                    "--scan-exclusion shared/release/flatpak-scan-risk-stable.json"
+                    in line,
+                    excluded,
+                )
         upload = next(
             step
             for step in job["steps"]

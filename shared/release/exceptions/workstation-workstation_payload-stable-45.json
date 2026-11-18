@@ -1,6 +1,2909 @@
 {
   "evidence_class": "runtime",
-  "exceptions": [],
+  "exceptions": [
+    {
+      "advisory": "CVE-2016-3699",
+      "binary": {
+        "ostree_object": "/sysroot/ostree/repo/objects/8d/29ca75583bc864f1877bcf99e31f12c56583f022b7e675eceb5c1d47ffb26a.file",
+        "path": "/usr/lib/modules/7.3.4-300.fc45.x86_64/vmlinuz",
+        "rpm_nevra": "kernel-core-7.3.4-300.fc45.x86_64",
+        "sha256": "c0d49448e85a403b1763967a186e54ccc91dc9cda1e04efb9dcbb9a14dce251f"
+      },
+      "channel": "stable",
+      "classification": "accepted_risk",
+      "component_scope": "workstation_payload",
+      "component_type": "linux_kernel",
+      "edition": "workstation",
+      "evidence": [
+        {
+          "path": "stable-45.triage.md",
+          "sha256": "9e1d5a1d33d4b490c43c090de957ddad493db589fe23c2d89a6bae2967013c92",
+          "size_bytes": 30007
+        }
+      ],
+      "expires_at": "2026-12-18T00:00:00Z",
+      "fedora": "45",
+      "issued_at": "2026-11-18T00:00:00Z",
+      "owner": "leandromqrs",
+      "package": "linux-kernel",
+      "package_version": "7.3.4-300.fc45.x86_64",
+      "reason": "Kernel 7.3.4-300.fc45.x86_64: Lockdown-dependent; no record links a fix commit to this CVE. Owner accepted the risk on 2026-11-17. Stable channel only."
+    },
+    {
+      "advisory": "CVE-2017-6264",
+      "binary": {
+        "ostree_object": "/sysroot/ostree/repo/objects/8d/29ca75583bc864f1877bcf99e31f12c56583f022b7e675eceb5c1d47ffb26a.file",
+        "path": "/usr/lib/modules/7.3.4-300.fc45.x86_64/vmlinuz",
+        "rpm_nevra": "kernel-core-7.3.4-300.fc45.x86_64",
+        "sha256": "c0d49448e85a403b1763967a186e54ccc91dc9cda1e04efb9dcbb9a14dce251f"
+      },
+      "channel": "stable",
+      "classification": "accepted_risk",
+      "component_scope": "workstation_payload",
+      "component_type": "linux_kernel",
+      "edition": "workstation",
+      "evidence": [
+        {
+          "path": "stable-45.triage.md",
+          "sha256": "9e1d5a1d33d4b490c43c090de957ddad493db589fe23c2d89a6bae2967013c92",
+          "size_bytes": 30007
+        }
+      ],
+      "expires_at": "2026-12-18T00:00:00Z",
+      "fedora": "45",
+      "issued_at": "2026-11-18T00:00:00Z",
+      "owner": "leandromqrs",
+      "package": "linux-kernel",
+      "package_version": "7.3.4-300.fc45.x86_64",
+      "reason": "Kernel 7.3.4-300.fc45.x86_64: no upstream fix commit or applicability record could be identified. Owner accepted the risk for 30 days on 2026-11-17. Stable channel only."
+    },
+    {
+      "advisory": "CVE-2018-10902",
+      "binary": {
+        "ostree_object": "/sysroot/ostree/repo/objects/8d/29ca75583bc864f1877bcf99e31f12c56583f022b7e675eceb5c1d47ffb26a.file",
+        "path": "/usr/lib/modules/7.3.4-300.fc45.x86_64/vmlinuz",
+        "rpm_nevra": "kernel-core-7.3.4-300.fc45.x86_64",
+        "sha256": "c0d49448e85a403b1763967a186e54ccc91dc9cda1e04efb9dcbb9a14dce251f"
+      },
+      "channel": "stable",
+      "classification": "proven_false_positive",
+      "component_scope": "workstation_payload",
+      "component_type": "linux_kernel",
+      "edition": "workstation",
+      "evidence": [
+        {
+          "path": "stable-45.triage.md",
+          "sha256": "9e1d5a1d33d4b490c43c090de957ddad493db589fe23c2d89a6bae2967013c92",
+          "size_bytes": 30007
+        }
+      ],
+      "expires_at": "2026-12-18T00:00:00Z",
+      "fedora": "45",
+      "issued_at": "2026-11-18T00:00:00Z",
+      "owner": "leandromqrs",
+      "package": "linux-kernel",
+      "package_version": "7.3.4-300.fc45.x86_64",
+      "reason": "Fixed upstream by commit 39675f7a7c7e, first contained in v4.18; the shipped kernel 7.3.4-300.fc45.x86_64 is a 7.3 kernel that contains it. Verified with the GitHub commit and compare APIs on 2026-11-17."
+    },
+    {
+      "advisory": "CVE-2018-14625",
+      "binary": {
+        "ostree_object": "/sysroot/ostree/repo/objects/8d/29ca75583bc864f1877bcf99e31f12c56583f022b7e675eceb5c1d47ffb26a.file",
+        "path": "/usr/lib/modules/7.3.4-300.fc45.x86_64/vmlinuz",
+        "rpm_nevra": "kernel-core-7.3.4-300.fc45.x86_64",
+        "sha256": "c0d49448e85a403b1763967a186e54ccc91dc9cda1e04efb9dcbb9a14dce251f"
+      },
+      "channel": "stable",
+      "classification": "proven_false_positive",
+      "component_scope": "workstation_payload",
+      "component_type": "linux_kernel",
+      "edition": "workstation",
+      "evidence": [
+        {
+          "path": "stable-45.triage.md",
+          "sha256": "9e1d5a1d33d4b490c43c090de957ddad493db589fe23c2d89a6bae2967013c92",
+          "size_bytes": 30007
+        }
+      ],
+      "expires_at": "2026-12-18T00:00:00Z",
+      "fedora": "45",
+      "issued_at": "2026-11-18T00:00:00Z",
+      "owner": "leandromqrs",
+      "package": "linux-kernel",
+      "package_version": "7.3.4-300.fc45.x86_64",
+      "reason": "Fixed upstream by commit 834e772c8db0, first contained in v4.20; the shipped kernel 7.3.4-300.fc45.x86_64 is a 7.3 kernel that contains it. Verified with the GitHub commit and compare APIs on 2026-11-17."
+    },
+    {
+      "advisory": "CVE-2019-14899",
+      "binary": {
+        "ostree_object": "/sysroot/ostree/repo/objects/8d/29ca75583bc864f1877bcf99e31f12c56583f022b7e675eceb5c1d47ffb26a.file",
+        "path": "/usr/lib/modules/7.3.4-300.fc45.x86_64/vmlinuz",
+        "rpm_nevra": "kernel-core-7.3.4-300.fc45.x86_64",
+        "sha256": "c0d49448e85a403b1763967a186e54ccc91dc9cda1e04efb9dcbb9a14dce251f"
+      },
+      "channel": "stable",
+      "classification": "accepted_risk",
+      "component_scope": "workstation_payload",
+      "component_type": "linux_kernel",
+      "edition": "workstation",
+      "evidence": [
+        {
+          "path": "stable-45.triage.md",
+          "sha256": "9e1d5a1d33d4b490c43c090de957ddad493db589fe23c2d89a6bae2967013c92",
+          "size_bytes": 30007
+        }
+      ],
+      "expires_at": "2026-12-18T00:00:00Z",
+      "fedora": "45",
+      "issued_at": "2026-11-18T00:00:00Z",
+      "owner": "leandromqrs",
+      "package": "linux-kernel",
+      "package_version": "7.3.4-300.fc45.x86_64",
+      "reason": "Kernel 7.3.4-300.fc45.x86_64: No upstream fix exists. Owner accepted the risk on 2026-11-17. Stable channel only."
+    },
+    {
+      "advisory": "CVE-2020-16119",
+      "binary": {
+        "ostree_object": "/sysroot/ostree/repo/objects/8d/29ca75583bc864f1877bcf99e31f12c56583f022b7e675eceb5c1d47ffb26a.file",
+        "path": "/usr/lib/modules/7.3.4-300.fc45.x86_64/vmlinuz",
+        "rpm_nevra": "kernel-core-7.3.4-300.fc45.x86_64",
+        "sha256": "c0d49448e85a403b1763967a186e54ccc91dc9cda1e04efb9dcbb9a14dce251f"
+      },
+      "channel": "stable",
+      "classification": "accepted_risk",
+      "component_scope": "workstation_payload",
+      "component_type": "linux_kernel",
+      "edition": "workstation",
+      "evidence": [
+        {
+          "path": "stable-45.triage.md",
+          "sha256": "9e1d5a1d33d4b490c43c090de957ddad493db589fe23c2d89a6bae2967013c92",
+          "size_bytes": 30007
+        }
+      ],
+      "expires_at": "2026-12-18T00:00:00Z",
+      "fedora": "45",
+      "issued_at": "2026-11-18T00:00:00Z",
+      "owner": "leandromqrs",
+      "package": "linux-kernel",
+      "package_version": "7.3.4-300.fc45.x86_64",
+      "reason": "Kernel 7.3.4-300.fc45.x86_64: no upstream fix commit or applicability record could be identified. Owner accepted the risk for 30 days on 2026-11-17. Stable channel only."
+    },
+    {
+      "advisory": "CVE-2020-1749",
+      "binary": {
+        "ostree_object": "/sysroot/ostree/repo/objects/8d/29ca75583bc864f1877bcf99e31f12c56583f022b7e675eceb5c1d47ffb26a.file",
+        "path": "/usr/lib/modules/7.3.4-300.fc45.x86_64/vmlinuz",
+        "rpm_nevra": "kernel-core-7.3.4-300.fc45.x86_64",
+        "sha256": "c0d49448e85a403b1763967a186e54ccc91dc9cda1e04efb9dcbb9a14dce251f"
+      },
+      "channel": "stable",
+      "classification": "accepted_risk",
+      "component_scope": "workstation_payload",
+      "component_type": "linux_kernel",
+      "edition": "workstation",
+      "evidence": [
+        {
+          "path": "stable-45.triage.md",
+          "sha256": "9e1d5a1d33d4b490c43c090de957ddad493db589fe23c2d89a6bae2967013c92",
+          "size_bytes": 30007
+        }
+      ],
+      "expires_at": "2026-12-18T00:00:00Z",
+      "fedora": "45",
+      "issued_at": "2026-11-18T00:00:00Z",
+      "owner": "leandromqrs",
+      "package": "linux-kernel",
+      "package_version": "7.3.4-300.fc45.x86_64",
+      "reason": "Kernel 7.3.4-300.fc45.x86_64: no upstream fix commit or applicability record could be identified. Owner accepted the risk for 30 days on 2026-11-17. Stable channel only."
+    },
+    {
+      "advisory": "CVE-2020-27815",
+      "binary": {
+        "ostree_object": "/sysroot/ostree/repo/objects/8d/29ca75583bc864f1877bcf99e31f12c56583f022b7e675eceb5c1d47ffb26a.file",
+        "path": "/usr/lib/modules/7.3.4-300.fc45.x86_64/vmlinuz",
+        "rpm_nevra": "kernel-core-7.3.4-300.fc45.x86_64",
+        "sha256": "c0d49448e85a403b1763967a186e54ccc91dc9cda1e04efb9dcbb9a14dce251f"
+      },
+      "channel": "stable",
+      "classification": "proven_false_positive",
+      "component_scope": "workstation_payload",
+      "component_type": "linux_kernel",
+      "edition": "workstation",
+      "evidence": [
+        {
+          "path": "stable-45.triage.md",
+          "sha256": "9e1d5a1d33d4b490c43c090de957ddad493db589fe23c2d89a6bae2967013c92",
+          "size_bytes": 30007
+        }
+      ],
+      "expires_at": "2026-12-18T00:00:00Z",
+      "fedora": "45",
+      "issued_at": "2026-11-18T00:00:00Z",
+      "owner": "leandromqrs",
+      "package": "linux-kernel",
+      "package_version": "7.3.4-300.fc45.x86_64",
+      "reason": "Fixed upstream by commit c61b3e483900, first contained in v5.11; the shipped kernel 7.3.4-300.fc45.x86_64 is a 7.3 kernel that contains it. Verified with the GitHub commit and compare APIs on 2026-11-17."
+    },
+    {
+      "advisory": "CVE-2021-20194",
+      "binary": {
+        "ostree_object": "/sysroot/ostree/repo/objects/8d/29ca75583bc864f1877bcf99e31f12c56583f022b7e675eceb5c1d47ffb26a.file",
+        "path": "/usr/lib/modules/7.3.4-300.fc45.x86_64/vmlinuz",
+        "rpm_nevra": "kernel-core-7.3.4-300.fc45.x86_64",
+        "sha256": "c0d49448e85a403b1763967a186e54ccc91dc9cda1e04efb9dcbb9a14dce251f"
+      },
+      "channel": "stable",
+      "classification": "accepted_risk",
+      "component_scope": "workstation_payload",
+      "component_type": "linux_kernel",
+      "edition": "workstation",
+      "evidence": [
+        {
+          "path": "stable-45.triage.md",
+          "sha256": "9e1d5a1d33d4b490c43c090de957ddad493db589fe23c2d89a6bae2967013c92",
+          "size_bytes": 30007
+        }
+      ],
+      "expires_at": "2026-12-18T00:00:00Z",
+      "fedora": "45",
+      "issued_at": "2026-11-18T00:00:00Z",
+      "owner": "leandromqrs",
+      "package": "linux-kernel",
+      "package_version": "7.3.4-300.fc45.x86_64",
+      "reason": "Kernel 7.3.4-300.fc45.x86_64: no upstream fix commit or applicability record could be identified. Owner accepted the risk for 30 days on 2026-11-17. Stable channel only."
+    },
+    {
+      "advisory": "CVE-2021-3864",
+      "binary": {
+        "ostree_object": "/sysroot/ostree/repo/objects/8d/29ca75583bc864f1877bcf99e31f12c56583f022b7e675eceb5c1d47ffb26a.file",
+        "path": "/usr/lib/modules/7.3.4-300.fc45.x86_64/vmlinuz",
+        "rpm_nevra": "kernel-core-7.3.4-300.fc45.x86_64",
+        "sha256": "c0d49448e85a403b1763967a186e54ccc91dc9cda1e04efb9dcbb9a14dce251f"
+      },
+      "channel": "stable",
+      "classification": "accepted_risk",
+      "component_scope": "workstation_payload",
+      "component_type": "linux_kernel",
+      "edition": "workstation",
+      "evidence": [
+        {
+          "path": "stable-45.triage.md",
+          "sha256": "9e1d5a1d33d4b490c43c090de957ddad493db589fe23c2d89a6bae2967013c92",
+          "size_bytes": 30007
+        }
+      ],
+      "expires_at": "2026-12-18T00:00:00Z",
+      "fedora": "45",
+      "issued_at": "2026-11-18T00:00:00Z",
+      "owner": "leandromqrs",
+      "package": "linux-kernel",
+      "package_version": "7.3.4-300.fc45.x86_64",
+      "reason": "Kernel 7.3.4-300.fc45.x86_64: no upstream fix commit or applicability record could be identified. Owner accepted the risk for 30 days on 2026-11-17. Stable channel only."
+    },
+    {
+      "advisory": "CVE-2022-0400",
+      "binary": {
+        "ostree_object": "/sysroot/ostree/repo/objects/8d/29ca75583bc864f1877bcf99e31f12c56583f022b7e675eceb5c1d47ffb26a.file",
+        "path": "/usr/lib/modules/7.3.4-300.fc45.x86_64/vmlinuz",
+        "rpm_nevra": "kernel-core-7.3.4-300.fc45.x86_64",
+        "sha256": "c0d49448e85a403b1763967a186e54ccc91dc9cda1e04efb9dcbb9a14dce251f"
+      },
+      "channel": "stable",
+      "classification": "accepted_risk",
+      "component_scope": "workstation_payload",
+      "component_type": "linux_kernel",
+      "edition": "workstation",
+      "evidence": [
+        {
+          "path": "stable-45.triage.md",
+          "sha256": "9e1d5a1d33d4b490c43c090de957ddad493db589fe23c2d89a6bae2967013c92",
+          "size_bytes": 30007
+        }
+      ],
+      "expires_at": "2026-12-18T00:00:00Z",
+      "fedora": "45",
+      "issued_at": "2026-11-18T00:00:00Z",
+      "owner": "leandromqrs",
+      "package": "linux-kernel",
+      "package_version": "7.3.4-300.fc45.x86_64",
+      "reason": "Kernel 7.3.4-300.fc45.x86_64: no upstream fix commit or applicability record could be identified. Owner accepted the risk for 30 days on 2026-11-17. Stable channel only."
+    },
+    {
+      "advisory": "CVE-2022-1247",
+      "binary": {
+        "ostree_object": "/sysroot/ostree/repo/objects/8d/29ca75583bc864f1877bcf99e31f12c56583f022b7e675eceb5c1d47ffb26a.file",
+        "path": "/usr/lib/modules/7.3.4-300.fc45.x86_64/vmlinuz",
+        "rpm_nevra": "kernel-core-7.3.4-300.fc45.x86_64",
+        "sha256": "c0d49448e85a403b1763967a186e54ccc91dc9cda1e04efb9dcbb9a14dce251f"
+      },
+      "channel": "stable",
+      "classification": "accepted_risk",
+      "component_scope": "workstation_payload",
+      "component_type": "linux_kernel",
+      "edition": "workstation",
+      "evidence": [
+        {
+          "path": "stable-45.triage.md",
+          "sha256": "9e1d5a1d33d4b490c43c090de957ddad493db589fe23c2d89a6bae2967013c92",
+          "size_bytes": 30007
+        }
+      ],
+      "expires_at": "2026-12-18T00:00:00Z",
+      "fedora": "45",
+      "issued_at": "2026-11-18T00:00:00Z",
+      "owner": "leandromqrs",
+      "package": "linux-kernel",
+      "package_version": "7.3.4-300.fc45.x86_64",
+      "reason": "Kernel 7.3.4-300.fc45.x86_64: no upstream fix commit or applicability record could be identified. Owner accepted the risk for 30 days on 2026-11-17. Stable channel only."
+    },
+    {
+      "advisory": "CVE-2022-3636",
+      "binary": {
+        "ostree_object": "/sysroot/ostree/repo/objects/8d/29ca75583bc864f1877bcf99e31f12c56583f022b7e675eceb5c1d47ffb26a.file",
+        "path": "/usr/lib/modules/7.3.4-300.fc45.x86_64/vmlinuz",
+        "rpm_nevra": "kernel-core-7.3.4-300.fc45.x86_64",
+        "sha256": "c0d49448e85a403b1763967a186e54ccc91dc9cda1e04efb9dcbb9a14dce251f"
+      },
+      "channel": "stable",
+      "classification": "proven_false_positive",
+      "component_scope": "workstation_payload",
+      "component_type": "linux_kernel",
+      "edition": "workstation",
+      "evidence": [
+        {
+          "path": "stable-45.triage.md",
+          "sha256": "9e1d5a1d33d4b490c43c090de957ddad493db589fe23c2d89a6bae2967013c92",
+          "size_bytes": 30007
+        }
+      ],
+      "expires_at": "2026-12-18T00:00:00Z",
+      "fedora": "45",
+      "issued_at": "2026-11-18T00:00:00Z",
+      "owner": "leandromqrs",
+      "package": "linux-kernel",
+      "package_version": "7.3.4-300.fc45.x86_64",
+      "reason": "Fixed upstream by commit 17a5f6a78dc7, first contained in v5.19; the shipped kernel 7.3.4-300.fc45.x86_64 is a 7.3 kernel that contains it. Verified with the GitHub commit and compare APIs on 2026-11-17."
+    },
+    {
+      "advisory": "CVE-2023-3640",
+      "binary": {
+        "ostree_object": "/sysroot/ostree/repo/objects/8d/29ca75583bc864f1877bcf99e31f12c56583f022b7e675eceb5c1d47ffb26a.file",
+        "path": "/usr/lib/modules/7.3.4-300.fc45.x86_64/vmlinuz",
+        "rpm_nevra": "kernel-core-7.3.4-300.fc45.x86_64",
+        "sha256": "c0d49448e85a403b1763967a186e54ccc91dc9cda1e04efb9dcbb9a14dce251f"
+      },
+      "channel": "stable",
+      "classification": "accepted_risk",
+      "component_scope": "workstation_payload",
+      "component_type": "linux_kernel",
+      "edition": "workstation",
+      "evidence": [
+        {
+          "path": "stable-45.triage.md",
+          "sha256": "9e1d5a1d33d4b490c43c090de957ddad493db589fe23c2d89a6bae2967013c92",
+          "size_bytes": 30007
+        }
+      ],
+      "expires_at": "2026-12-18T00:00:00Z",
+      "fedora": "45",
+      "issued_at": "2026-11-18T00:00:00Z",
+      "owner": "leandromqrs",
+      "package": "linux-kernel",
+      "package_version": "7.3.4-300.fc45.x86_64",
+      "reason": "Kernel 7.3.4-300.fc45.x86_64: no upstream fix commit or applicability record could be identified. Owner accepted the risk for 30 days on 2026-11-17. Stable channel only."
+    },
+    {
+      "advisory": "CVE-2023-39179",
+      "binary": {
+        "ostree_object": "/sysroot/ostree/repo/objects/8d/29ca75583bc864f1877bcf99e31f12c56583f022b7e675eceb5c1d47ffb26a.file",
+        "path": "/usr/lib/modules/7.3.4-300.fc45.x86_64/vmlinuz",
+        "rpm_nevra": "kernel-core-7.3.4-300.fc45.x86_64",
+        "sha256": "c0d49448e85a403b1763967a186e54ccc91dc9cda1e04efb9dcbb9a14dce251f"
+      },
+      "channel": "stable",
+      "classification": "proven_false_positive",
+      "component_scope": "workstation_payload",
+      "component_type": "linux_kernel",
+      "edition": "workstation",
+      "evidence": [
+        {
+          "path": "stable-45.triage.md",
+          "sha256": "9e1d5a1d33d4b490c43c090de957ddad493db589fe23c2d89a6bae2967013c92",
+          "size_bytes": 30007
+        }
+      ],
+      "expires_at": "2026-12-18T00:00:00Z",
+      "fedora": "45",
+      "issued_at": "2026-11-18T00:00:00Z",
+      "owner": "leandromqrs",
+      "package": "linux-kernel",
+      "package_version": "7.3.4-300.fc45.x86_64",
+      "reason": "The flaw is in ksmbd, the in-kernel SMB server. Fedora builds 7.3.4-300.fc45.x86_64 with '# CONFIG_SMB_SERVER is not set', and no kernel subpackage of that build ships a ksmbd module."
+    },
+    {
+      "advisory": "CVE-2023-39180",
+      "binary": {
+        "ostree_object": "/sysroot/ostree/repo/objects/8d/29ca75583bc864f1877bcf99e31f12c56583f022b7e675eceb5c1d47ffb26a.file",
+        "path": "/usr/lib/modules/7.3.4-300.fc45.x86_64/vmlinuz",
+        "rpm_nevra": "kernel-core-7.3.4-300.fc45.x86_64",
+        "sha256": "c0d49448e85a403b1763967a186e54ccc91dc9cda1e04efb9dcbb9a14dce251f"
+      },
+      "channel": "stable",
+      "classification": "proven_false_positive",
+      "component_scope": "workstation_payload",
+      "component_type": "linux_kernel",
+      "edition": "workstation",
+      "evidence": [
+        {
+          "path": "stable-45.triage.md",
+          "sha256": "9e1d5a1d33d4b490c43c090de957ddad493db589fe23c2d89a6bae2967013c92",
+          "size_bytes": 30007
+        }
+      ],
+      "expires_at": "2026-12-18T00:00:00Z",
+      "fedora": "45",
+      "issued_at": "2026-11-18T00:00:00Z",
+      "owner": "leandromqrs",
+      "package": "linux-kernel",
+      "package_version": "7.3.4-300.fc45.x86_64",
+      "reason": "The flaw is in ksmbd, the in-kernel SMB server. Fedora builds 7.3.4-300.fc45.x86_64 with '# CONFIG_SMB_SERVER is not set', and no kernel subpackage of that build ships a ksmbd module."
+    },
+    {
+      "advisory": "CVE-2023-6535",
+      "binary": {
+        "ostree_object": "/sysroot/ostree/repo/objects/8d/29ca75583bc864f1877bcf99e31f12c56583f022b7e675eceb5c1d47ffb26a.file",
+        "path": "/usr/lib/modules/7.3.4-300.fc45.x86_64/vmlinuz",
+        "rpm_nevra": "kernel-core-7.3.4-300.fc45.x86_64",
+        "sha256": "c0d49448e85a403b1763967a186e54ccc91dc9cda1e04efb9dcbb9a14dce251f"
+      },
+      "channel": "stable",
+      "classification": "accepted_risk",
+      "component_scope": "workstation_payload",
+      "component_type": "linux_kernel",
+      "edition": "workstation",
+      "evidence": [
+        {
+          "path": "stable-45.triage.md",
+          "sha256": "9e1d5a1d33d4b490c43c090de957ddad493db589fe23c2d89a6bae2967013c92",
+          "size_bytes": 30007
+        }
+      ],
+      "expires_at": "2026-12-18T00:00:00Z",
+      "fedora": "45",
+      "issued_at": "2026-11-18T00:00:00Z",
+      "owner": "leandromqrs",
+      "package": "linux-kernel",
+      "package_version": "7.3.4-300.fc45.x86_64",
+      "reason": "Kernel 7.3.4-300.fc45.x86_64: no upstream fix commit or applicability record could be identified. Owner accepted the risk for 30 days on 2026-11-17. Stable channel only."
+    },
+    {
+      "advisory": "CVE-2023-6610",
+      "binary": {
+        "ostree_object": "/sysroot/ostree/repo/objects/8d/29ca75583bc864f1877bcf99e31f12c56583f022b7e675eceb5c1d47ffb26a.file",
+        "path": "/usr/lib/modules/7.3.4-300.fc45.x86_64/vmlinuz",
+        "rpm_nevra": "kernel-core-7.3.4-300.fc45.x86_64",
+        "sha256": "c0d49448e85a403b1763967a186e54ccc91dc9cda1e04efb9dcbb9a14dce251f"
+      },
+      "channel": "stable",
+      "classification": "proven_false_positive",
+      "component_scope": "workstation_payload",
+      "component_type": "linux_kernel",
+      "edition": "workstation",
+      "evidence": [
+        {
+          "path": "stable-45.triage.md",
+          "sha256": "9e1d5a1d33d4b490c43c090de957ddad493db589fe23c2d89a6bae2967013c92",
+          "size_bytes": 30007
+        }
+      ],
+      "expires_at": "2026-12-18T00:00:00Z",
+      "fedora": "45",
+      "issued_at": "2026-11-18T00:00:00Z",
+      "owner": "leandromqrs",
+      "package": "linux-kernel",
+      "package_version": "7.3.4-300.fc45.x86_64",
+      "reason": "Fixed upstream by commit 567320c46a60, first contained in v6.7; the shipped kernel 7.3.4-300.fc45.x86_64 is a 7.3 kernel that contains it. Verified with the GitHub commit and compare APIs on 2026-11-17."
+    },
+    {
+      "advisory": "CVE-2026-56866",
+      "binary": {
+        "ostree_object": "/sysroot/ostree/repo/objects/2e/a8825505d254bd3966b6e98429884c7dab053debc646862a09ace80f9bc57c.file",
+        "path": "/usr/bin/toolbox",
+        "rpm_nevra": "toolbox-0.3-7.fc45.x86_64",
+        "sha256": "daa0a9b94c96ff8ae594723536ab2503818d0854b97fd2ebf0d61154de5a1bd7"
+      },
+      "channel": "stable",
+      "classification": "accepted_risk",
+      "component_scope": "workstation_payload",
+      "component_type": "embedded_go",
+      "edition": "workstation",
+      "evidence": [
+        {
+          "path": "stable-45.triage.md",
+          "sha256": "9e1d5a1d33d4b490c43c090de957ddad493db589fe23c2d89a6bae2967013c92",
+          "size_bytes": 30007
+        }
+      ],
+      "expires_at": "2026-12-18T00:00:00Z",
+      "fedora": "45",
+      "issued_at": "2026-11-18T00:00:00Z",
+      "owner": "leandromqrs",
+      "package": "stdlib",
+      "package_version": "go1.27rc2-X:nodwarf5",
+      "reason": "stdlib go1.27rc2-X:nodwarf5 embedded in Fedora-built /usr/bin/toolbox from toolbox-0.3-7.fc45.x86_64; grype reports a fix in 1.26.9, 1.27.2. Owner accepted the risk for the stable channel on 2026-11-17 (decision table stable-risk/2026-11-17-decisions.md)."
+    },
+    {
+      "advisory": "CVE-2026-56866",
+      "binary": {
+        "path": "/usr/bin/kl2tpd",
+        "rpm_nevra": "go-l2tp-0.1.8-5.fc45.x86_64",
+        "sha256": "4c74f29bdafc256a8ac2cac124a9b49ff229296baef69a0deb2dcddc92ddabe2"
+      },
+      "channel": "stable",
+      "classification": "accepted_risk",
+      "component_scope": "workstation_payload",
+      "component_type": "embedded_go",
+      "edition": "workstation",
+      "evidence": [
+        {
+          "path": "stable-45.triage.md",
+          "sha256": "9e1d5a1d33d4b490c43c090de957ddad493db589fe23c2d89a6bae2967013c92",
+          "size_bytes": 30007
+        }
+      ],
+      "expires_at": "2026-12-18T00:00:00Z",
+      "fedora": "45",
+      "issued_at": "2026-11-18T00:00:00Z",
+      "owner": "leandromqrs",
+      "package": "stdlib",
+      "package_version": "go1.27rc2-X:nodwarf5",
+      "reason": "stdlib go1.27rc2-X:nodwarf5 embedded in Fedora-built /usr/bin/kl2tpd from go-l2tp-0.1.8-5.fc45.x86_64; grype reports a fix in 1.26.9, 1.27.2. Owner accepted the risk for the stable channel on 2026-11-17 (decision table stable-risk/2026-11-17-decisions.md)."
+    },
+    {
+      "advisory": "CVE-2026-56866",
+      "binary": {
+        "path": "/usr/bin/kpppoed",
+        "rpm_nevra": "go-l2tp-0.1.8-5.fc45.x86_64",
+        "sha256": "52cc6bc81a7a8d6dc1c03a6bd296af1f7c50d58618ad5bbb14e468a0bb7e4776"
+      },
+      "channel": "stable",
+      "classification": "accepted_risk",
+      "component_scope": "workstation_payload",
+      "component_type": "embedded_go",
+      "edition": "workstation",
+      "evidence": [
+        {
+          "path": "stable-45.triage.md",
+          "sha256": "9e1d5a1d33d4b490c43c090de957ddad493db589fe23c2d89a6bae2967013c92",
+          "size_bytes": 30007
+        }
+      ],
+      "expires_at": "2026-12-18T00:00:00Z",
+      "fedora": "45",
+      "issued_at": "2026-11-18T00:00:00Z",
+      "owner": "leandromqrs",
+      "package": "stdlib",
+      "package_version": "go1.27rc2-X:nodwarf5",
+      "reason": "stdlib go1.27rc2-X:nodwarf5 embedded in Fedora-built /usr/bin/kpppoed from go-l2tp-0.1.8-5.fc45.x86_64; grype reports a fix in 1.26.9, 1.27.2. Owner accepted the risk for the stable channel on 2026-11-17 (decision table stable-risk/2026-11-17-decisions.md)."
+    },
+    {
+      "advisory": "CVE-2026-56866",
+      "binary": {
+        "path": "/usr/bin/ql2tpd",
+        "rpm_nevra": "go-l2tp-0.1.8-5.fc45.x86_64",
+        "sha256": "e0c0ddbd63bfe1ce3a8a331343027b52c4c093c43ca75e11ce364c45e97c30b2"
+      },
+      "channel": "stable",
+      "classification": "accepted_risk",
+      "component_scope": "workstation_payload",
+      "component_type": "embedded_go",
+      "edition": "workstation",
+      "evidence": [
+        {
+          "path": "stable-45.triage.md",
+          "sha256": "9e1d5a1d33d4b490c43c090de957ddad493db589fe23c2d89a6bae2967013c92",
+          "size_bytes": 30007
+        }
+      ],
+      "expires_at": "2026-12-18T00:00:00Z",
+      "fedora": "45",
+      "issued_at": "2026-11-18T00:00:00Z",
+      "owner": "leandromqrs",
+      "package": "stdlib",
+      "package_version": "go1.27rc2-X:nodwarf5",
+      "reason": "stdlib go1.27rc2-X:nodwarf5 embedded in Fedora-built /usr/bin/ql2tpd from go-l2tp-0.1.8-5.fc45.x86_64; grype reports a fix in 1.26.9, 1.27.2. Owner accepted the risk for the stable channel on 2026-11-17 (decision table stable-risk/2026-11-17-decisions.md)."
+    },
+    {
+      "advisory": "CVE-2026-78659",
+      "binary": {
+        "ostree_object": "/sysroot/ostree/repo/objects/2e/a8825505d254bd3966b6e98429884c7dab053debc646862a09ace80f9bc57c.file",
+        "path": "/usr/bin/toolbox",
+        "rpm_nevra": "toolbox-0.3-7.fc45.x86_64",
+        "sha256": "daa0a9b94c96ff8ae594723536ab2503818d0854b97fd2ebf0d61154de5a1bd7"
+      },
+      "channel": "stable",
+      "classification": "accepted_risk",
+      "component_scope": "workstation_payload",
+      "component_type": "embedded_go",
+      "edition": "workstation",
+      "evidence": [
+        {
+          "path": "stable-45.triage.md",
+          "sha256": "9e1d5a1d33d4b490c43c090de957ddad493db589fe23c2d89a6bae2967013c92",
+          "size_bytes": 30007
+        }
+      ],
+      "expires_at": "2026-12-18T00:00:00Z",
+      "fedora": "45",
+      "issued_at": "2026-11-18T00:00:00Z",
+      "owner": "leandromqrs",
+      "package": "stdlib",
+      "package_version": "go1.27rc2-X:nodwarf5",
+      "reason": "stdlib go1.27rc2-X:nodwarf5 embedded in Fedora-built /usr/bin/toolbox from toolbox-0.3-7.fc45.x86_64; grype reports a fix in 1.26.9, 1.27.2. Owner accepted the risk for the stable channel on 2026-11-17 (decision table stable-risk/2026-11-17-decisions.md)."
+    },
+    {
+      "advisory": "CVE-2026-78659",
+      "binary": {
+        "path": "/usr/bin/kl2tpd",
+        "rpm_nevra": "go-l2tp-0.1.8-5.fc45.x86_64",
+        "sha256": "4c74f29bdafc256a8ac2cac124a9b49ff229296baef69a0deb2dcddc92ddabe2"
+      },
+      "channel": "stable",
+      "classification": "accepted_risk",
+      "component_scope": "workstation_payload",
+      "component_type": "embedded_go",
+      "edition": "workstation",
+      "evidence": [
+        {
+          "path": "stable-45.triage.md",
+          "sha256": "9e1d5a1d33d4b490c43c090de957ddad493db589fe23c2d89a6bae2967013c92",
+          "size_bytes": 30007
+        }
+      ],
+      "expires_at": "2026-12-18T00:00:00Z",
+      "fedora": "45",
+      "issued_at": "2026-11-18T00:00:00Z",
+      "owner": "leandromqrs",
+      "package": "stdlib",
+      "package_version": "go1.27rc2-X:nodwarf5",
+      "reason": "stdlib go1.27rc2-X:nodwarf5 embedded in Fedora-built /usr/bin/kl2tpd from go-l2tp-0.1.8-5.fc45.x86_64; grype reports a fix in 1.26.9, 1.27.2. Owner accepted the risk for the stable channel on 2026-11-17 (decision table stable-risk/2026-11-17-decisions.md)."
+    },
+    {
+      "advisory": "CVE-2026-78659",
+      "binary": {
+        "path": "/usr/bin/kpppoed",
+        "rpm_nevra": "go-l2tp-0.1.8-5.fc45.x86_64",
+        "sha256": "52cc6bc81a7a8d6dc1c03a6bd296af1f7c50d58618ad5bbb14e468a0bb7e4776"
+      },
+      "channel": "stable",
+      "classification": "accepted_risk",
+      "component_scope": "workstation_payload",
+      "component_type": "embedded_go",
+      "edition": "workstation",
+      "evidence": [
+        {
+          "path": "stable-45.triage.md",
+          "sha256": "9e1d5a1d33d4b490c43c090de957ddad493db589fe23c2d89a6bae2967013c92",
+          "size_bytes": 30007
+        }
+      ],
+      "expires_at": "2026-12-18T00:00:00Z",
+      "fedora": "45",
+      "issued_at": "2026-11-18T00:00:00Z",
+      "owner": "leandromqrs",
+      "package": "stdlib",
+      "package_version": "go1.27rc2-X:nodwarf5",
+      "reason": "stdlib go1.27rc2-X:nodwarf5 embedded in Fedora-built /usr/bin/kpppoed from go-l2tp-0.1.8-5.fc45.x86_64; grype reports a fix in 1.26.9, 1.27.2. Owner accepted the risk for the stable channel on 2026-11-17 (decision table stable-risk/2026-11-17-decisions.md)."
+    },
+    {
+      "advisory": "CVE-2026-78659",
+      "binary": {
+        "path": "/usr/bin/ql2tpd",
+        "rpm_nevra": "go-l2tp-0.1.8-5.fc45.x86_64",
+        "sha256": "e0c0ddbd63bfe1ce3a8a331343027b52c4c093c43ca75e11ce364c45e97c30b2"
+      },
+      "channel": "stable",
+      "classification": "accepted_risk",
+      "component_scope": "workstation_payload",
+      "component_type": "embedded_go",
+      "edition": "workstation",
+      "evidence": [
+        {
+          "path": "stable-45.triage.md",
+          "sha256": "9e1d5a1d33d4b490c43c090de957ddad493db589fe23c2d89a6bae2967013c92",
+          "size_bytes": 30007
+        }
+      ],
+      "expires_at": "2026-12-18T00:00:00Z",
+      "fedora": "45",
+      "issued_at": "2026-11-18T00:00:00Z",
+      "owner": "leandromqrs",
+      "package": "stdlib",
+      "package_version": "go1.27rc2-X:nodwarf5",
+      "reason": "stdlib go1.27rc2-X:nodwarf5 embedded in Fedora-built /usr/bin/ql2tpd from go-l2tp-0.1.8-5.fc45.x86_64; grype reports a fix in 1.26.9, 1.27.2. Owner accepted the risk for the stable channel on 2026-11-17 (decision table stable-risk/2026-11-17-decisions.md)."
+    },
+    {
+      "advisory": "CVE-2026-78660",
+      "binary": {
+        "ostree_object": "/sysroot/ostree/repo/objects/2e/a8825505d254bd3966b6e98429884c7dab053debc646862a09ace80f9bc57c.file",
+        "path": "/usr/bin/toolbox",
+        "rpm_nevra": "toolbox-0.3-7.fc45.x86_64",
+        "sha256": "daa0a9b94c96ff8ae594723536ab2503818d0854b97fd2ebf0d61154de5a1bd7"
+      },
+      "channel": "stable",
+      "classification": "accepted_risk",
+      "component_scope": "workstation_payload",
+      "component_type": "embedded_go",
+      "edition": "workstation",
+      "evidence": [
+        {
+          "path": "stable-45.triage.md",
+          "sha256": "9e1d5a1d33d4b490c43c090de957ddad493db589fe23c2d89a6bae2967013c92",
+          "size_bytes": 30007
+        }
+      ],
+      "expires_at": "2026-12-18T00:00:00Z",
+      "fedora": "45",
+      "issued_at": "2026-11-18T00:00:00Z",
+      "owner": "leandromqrs",
+      "package": "stdlib",
+      "package_version": "go1.27rc2-X:nodwarf5",
+      "reason": "stdlib go1.27rc2-X:nodwarf5 embedded in Fedora-built /usr/bin/toolbox from toolbox-0.3-7.fc45.x86_64; grype reports a fix in 1.26.9, 1.27.2. Owner accepted the risk for the stable channel on 2026-11-17 (decision table stable-risk/2026-11-17-decisions.md)."
+    },
+    {
+      "advisory": "CVE-2026-78660",
+      "binary": {
+        "path": "/usr/bin/kl2tpd",
+        "rpm_nevra": "go-l2tp-0.1.8-5.fc45.x86_64",
+        "sha256": "4c74f29bdafc256a8ac2cac124a9b49ff229296baef69a0deb2dcddc92ddabe2"
+      },
+      "channel": "stable",
+      "classification": "accepted_risk",
+      "component_scope": "workstation_payload",
+      "component_type": "embedded_go",
+      "edition": "workstation",
+      "evidence": [
+        {
+          "path": "stable-45.triage.md",
+          "sha256": "9e1d5a1d33d4b490c43c090de957ddad493db589fe23c2d89a6bae2967013c92",
+          "size_bytes": 30007
+        }
+      ],
+      "expires_at": "2026-12-18T00:00:00Z",
+      "fedora": "45",
+      "issued_at": "2026-11-18T00:00:00Z",
+      "owner": "leandromqrs",
+      "package": "stdlib",
+      "package_version": "go1.27rc2-X:nodwarf5",
+      "reason": "stdlib go1.27rc2-X:nodwarf5 embedded in Fedora-built /usr/bin/kl2tpd from go-l2tp-0.1.8-5.fc45.x86_64; grype reports a fix in 1.26.9, 1.27.2. Owner accepted the risk for the stable channel on 2026-11-17 (decision table stable-risk/2026-11-17-decisions.md)."
+    },
+    {
+      "advisory": "CVE-2026-78660",
+      "binary": {
+        "path": "/usr/bin/kpppoed",
+        "rpm_nevra": "go-l2tp-0.1.8-5.fc45.x86_64",
+        "sha256": "52cc6bc81a7a8d6dc1c03a6bd296af1f7c50d58618ad5bbb14e468a0bb7e4776"
+      },
+      "channel": "stable",
+      "classification": "accepted_risk",
+      "component_scope": "workstation_payload",
+      "component_type": "embedded_go",
+      "edition": "workstation",
+      "evidence": [
+        {
+          "path": "stable-45.triage.md",
+          "sha256": "9e1d5a1d33d4b490c43c090de957ddad493db589fe23c2d89a6bae2967013c92",
+          "size_bytes": 30007
+        }
+      ],
+      "expires_at": "2026-12-18T00:00:00Z",
+      "fedora": "45",
+      "issued_at": "2026-11-18T00:00:00Z",
+      "owner": "leandromqrs",
+      "package": "stdlib",
+      "package_version": "go1.27rc2-X:nodwarf5",
+      "reason": "stdlib go1.27rc2-X:nodwarf5 embedded in Fedora-built /usr/bin/kpppoed from go-l2tp-0.1.8-5.fc45.x86_64; grype reports a fix in 1.26.9, 1.27.2. Owner accepted the risk for the stable channel on 2026-11-17 (decision table stable-risk/2026-11-17-decisions.md)."
+    },
+    {
+      "advisory": "CVE-2026-78660",
+      "binary": {
+        "path": "/usr/bin/ql2tpd",
+        "rpm_nevra": "go-l2tp-0.1.8-5.fc45.x86_64",
+        "sha256": "e0c0ddbd63bfe1ce3a8a331343027b52c4c093c43ca75e11ce364c45e97c30b2"
+      },
+      "channel": "stable",
+      "classification": "accepted_risk",
+      "component_scope": "workstation_payload",
+      "component_type": "embedded_go",
+      "edition": "workstation",
+      "evidence": [
+        {
+          "path": "stable-45.triage.md",
+          "sha256": "9e1d5a1d33d4b490c43c090de957ddad493db589fe23c2d89a6bae2967013c92",
+          "size_bytes": 30007
+        }
+      ],
+      "expires_at": "2026-12-18T00:00:00Z",
+      "fedora": "45",
+      "issued_at": "2026-11-18T00:00:00Z",
+      "owner": "leandromqrs",
+      "package": "stdlib",
+      "package_version": "go1.27rc2-X:nodwarf5",
+      "reason": "stdlib go1.27rc2-X:nodwarf5 embedded in Fedora-built /usr/bin/ql2tpd from go-l2tp-0.1.8-5.fc45.x86_64; grype reports a fix in 1.26.9, 1.27.2. Owner accepted the risk for the stable channel on 2026-11-17 (decision table stable-risk/2026-11-17-decisions.md)."
+    },
+    {
+      "advisory": "CVE-2026-78663",
+      "binary": {
+        "ostree_object": "/sysroot/ostree/repo/objects/2e/a8825505d254bd3966b6e98429884c7dab053debc646862a09ace80f9bc57c.file",
+        "path": "/usr/bin/toolbox",
+        "rpm_nevra": "toolbox-0.3-7.fc45.x86_64",
+        "sha256": "daa0a9b94c96ff8ae594723536ab2503818d0854b97fd2ebf0d61154de5a1bd7"
+      },
+      "channel": "stable",
+      "classification": "accepted_risk",
+      "component_scope": "workstation_payload",
+      "component_type": "embedded_go",
+      "edition": "workstation",
+      "evidence": [
+        {
+          "path": "stable-45.triage.md",
+          "sha256": "9e1d5a1d33d4b490c43c090de957ddad493db589fe23c2d89a6bae2967013c92",
+          "size_bytes": 30007
+        }
+      ],
+      "expires_at": "2026-12-18T00:00:00Z",
+      "fedora": "45",
+      "issued_at": "2026-11-18T00:00:00Z",
+      "owner": "leandromqrs",
+      "package": "stdlib",
+      "package_version": "go1.27rc2-X:nodwarf5",
+      "reason": "stdlib go1.27rc2-X:nodwarf5 embedded in Fedora-built /usr/bin/toolbox from toolbox-0.3-7.fc45.x86_64; grype reports a fix in 1.26.9, 1.27.2. Owner accepted the risk for the stable channel on 2026-11-17 (decision table stable-risk/2026-11-17-decisions.md)."
+    },
+    {
+      "advisory": "CVE-2026-78663",
+      "binary": {
+        "path": "/usr/bin/kl2tpd",
+        "rpm_nevra": "go-l2tp-0.1.8-5.fc45.x86_64",
+        "sha256": "4c74f29bdafc256a8ac2cac124a9b49ff229296baef69a0deb2dcddc92ddabe2"
+      },
+      "channel": "stable",
+      "classification": "accepted_risk",
+      "component_scope": "workstation_payload",
+      "component_type": "embedded_go",
+      "edition": "workstation",
+      "evidence": [
+        {
+          "path": "stable-45.triage.md",
+          "sha256": "9e1d5a1d33d4b490c43c090de957ddad493db589fe23c2d89a6bae2967013c92",
+          "size_bytes": 30007
+        }
+      ],
+      "expires_at": "2026-12-18T00:00:00Z",
+      "fedora": "45",
+      "issued_at": "2026-11-18T00:00:00Z",
+      "owner": "leandromqrs",
+      "package": "stdlib",
+      "package_version": "go1.27rc2-X:nodwarf5",
+      "reason": "stdlib go1.27rc2-X:nodwarf5 embedded in Fedora-built /usr/bin/kl2tpd from go-l2tp-0.1.8-5.fc45.x86_64; grype reports a fix in 1.26.9, 1.27.2. Owner accepted the risk for the stable channel on 2026-11-17 (decision table stable-risk/2026-11-17-decisions.md)."
+    },
+    {
+      "advisory": "CVE-2026-78663",
+      "binary": {
+        "path": "/usr/bin/kpppoed",
+        "rpm_nevra": "go-l2tp-0.1.8-5.fc45.x86_64",
+        "sha256": "52cc6bc81a7a8d6dc1c03a6bd296af1f7c50d58618ad5bbb14e468a0bb7e4776"
+      },
+      "channel": "stable",
+      "classification": "accepted_risk",
+      "component_scope": "workstation_payload",
+      "component_type": "embedded_go",
+      "edition": "workstation",
+      "evidence": [
+        {
+          "path": "stable-45.triage.md",
+          "sha256": "9e1d5a1d33d4b490c43c090de957ddad493db589fe23c2d89a6bae2967013c92",
+          "size_bytes": 30007
+        }
+      ],
+      "expires_at": "2026-12-18T00:00:00Z",
+      "fedora": "45",
+      "issued_at": "2026-11-18T00:00:00Z",
+      "owner": "leandromqrs",
+      "package": "stdlib",
+      "package_version": "go1.27rc2-X:nodwarf5",
+      "reason": "stdlib go1.27rc2-X:nodwarf5 embedded in Fedora-built /usr/bin/kpppoed from go-l2tp-0.1.8-5.fc45.x86_64; grype reports a fix in 1.26.9, 1.27.2. Owner accepted the risk for the stable channel on 2026-11-17 (decision table stable-risk/2026-11-17-decisions.md)."
+    },
+    {
+      "advisory": "CVE-2026-78663",
+      "binary": {
+        "path": "/usr/bin/ql2tpd",
+        "rpm_nevra": "go-l2tp-0.1.8-5.fc45.x86_64",
+        "sha256": "e0c0ddbd63bfe1ce3a8a331343027b52c4c093c43ca75e11ce364c45e97c30b2"
+      },
+      "channel": "stable",
+      "classification": "accepted_risk",
+      "component_scope": "workstation_payload",
+      "component_type": "embedded_go",
+      "edition": "workstation",
+      "evidence": [
+        {
+          "path": "stable-45.triage.md",
+          "sha256": "9e1d5a1d33d4b490c43c090de957ddad493db589fe23c2d89a6bae2967013c92",
+          "size_bytes": 30007
+        }
+      ],
+      "expires_at": "2026-12-18T00:00:00Z",
+      "fedora": "45",
+      "issued_at": "2026-11-18T00:00:00Z",
+      "owner": "leandromqrs",
+      "package": "stdlib",
+      "package_version": "go1.27rc2-X:nodwarf5",
+      "reason": "stdlib go1.27rc2-X:nodwarf5 embedded in Fedora-built /usr/bin/ql2tpd from go-l2tp-0.1.8-5.fc45.x86_64; grype reports a fix in 1.26.9, 1.27.2. Owner accepted the risk for the stable channel on 2026-11-17 (decision table stable-risk/2026-11-17-decisions.md)."
+    },
+    {
+      "advisory": "CVE-2026-78667",
+      "binary": {
+        "ostree_object": "/sysroot/ostree/repo/objects/2e/a8825505d254bd3966b6e98429884c7dab053debc646862a09ace80f9bc57c.file",
+        "path": "/usr/bin/toolbox",
+        "rpm_nevra": "toolbox-0.3-7.fc45.x86_64",
+        "sha256": "daa0a9b94c96ff8ae594723536ab2503818d0854b97fd2ebf0d61154de5a1bd7"
+      },
+      "channel": "stable",
+      "classification": "accepted_risk",
+      "component_scope": "workstation_payload",
+      "component_type": "embedded_go",
+      "edition": "workstation",
+      "evidence": [
+        {
+          "path": "stable-45.triage.md",
+          "sha256": "9e1d5a1d33d4b490c43c090de957ddad493db589fe23c2d89a6bae2967013c92",
+          "size_bytes": 30007
+        }
+      ],
+      "expires_at": "2026-12-18T00:00:00Z",
+      "fedora": "45",
+      "issued_at": "2026-11-18T00:00:00Z",
+      "owner": "leandromqrs",
+      "package": "stdlib",
+      "package_version": "go1.27rc2-X:nodwarf5",
+      "reason": "stdlib go1.27rc2-X:nodwarf5 embedded in Fedora-built /usr/bin/toolbox from toolbox-0.3-7.fc45.x86_64; grype reports a fix in 1.26.9, 1.27.2. Owner accepted the risk for the stable channel on 2026-11-17 (decision table stable-risk/2026-11-17-decisions.md)."
+    },
+    {
+      "advisory": "CVE-2026-78667",
+      "binary": {
+        "path": "/usr/bin/kl2tpd",
+        "rpm_nevra": "go-l2tp-0.1.8-5.fc45.x86_64",
+        "sha256": "4c74f29bdafc256a8ac2cac124a9b49ff229296baef69a0deb2dcddc92ddabe2"
+      },
+      "channel": "stable",
+      "classification": "accepted_risk",
+      "component_scope": "workstation_payload",
+      "component_type": "embedded_go",
+      "edition": "workstation",
+      "evidence": [
+        {
+          "path": "stable-45.triage.md",
+          "sha256": "9e1d5a1d33d4b490c43c090de957ddad493db589fe23c2d89a6bae2967013c92",
+          "size_bytes": 30007
+        }
+      ],
+      "expires_at": "2026-12-18T00:00:00Z",
+      "fedora": "45",
+      "issued_at": "2026-11-18T00:00:00Z",
+      "owner": "leandromqrs",
+      "package": "stdlib",
+      "package_version": "go1.27rc2-X:nodwarf5",
+      "reason": "stdlib go1.27rc2-X:nodwarf5 embedded in Fedora-built /usr/bin/kl2tpd from go-l2tp-0.1.8-5.fc45.x86_64; grype reports a fix in 1.26.9, 1.27.2. Owner accepted the risk for the stable channel on 2026-11-17 (decision table stable-risk/2026-11-17-decisions.md)."
+    },
+    {
+      "advisory": "CVE-2026-78667",
+      "binary": {
+        "path": "/usr/bin/kpppoed",
+        "rpm_nevra": "go-l2tp-0.1.8-5.fc45.x86_64",
+        "sha256": "52cc6bc81a7a8d6dc1c03a6bd296af1f7c50d58618ad5bbb14e468a0bb7e4776"
+      },
+      "channel": "stable",
+      "classification": "accepted_risk",
+      "component_scope": "workstation_payload",
+      "component_type": "embedded_go",
+      "edition": "workstation",
+      "evidence": [
+        {
+          "path": "stable-45.triage.md",
+          "sha256": "9e1d5a1d33d4b490c43c090de957ddad493db589fe23c2d89a6bae2967013c92",
+          "size_bytes": 30007
+        }
+      ],
+      "expires_at": "2026-12-18T00:00:00Z",
+      "fedora": "45",
+      "issued_at": "2026-11-18T00:00:00Z",
+      "owner": "leandromqrs",
+      "package": "stdlib",
+      "package_version": "go1.27rc2-X:nodwarf5",
+      "reason": "stdlib go1.27rc2-X:nodwarf5 embedded in Fedora-built /usr/bin/kpppoed from go-l2tp-0.1.8-5.fc45.x86_64; grype reports a fix in 1.26.9, 1.27.2. Owner accepted the risk for the stable channel on 2026-11-17 (decision table stable-risk/2026-11-17-decisions.md)."
+    },
+    {
+      "advisory": "CVE-2026-78667",
+      "binary": {
+        "path": "/usr/bin/ql2tpd",
+        "rpm_nevra": "go-l2tp-0.1.8-5.fc45.x86_64",
+        "sha256": "e0c0ddbd63bfe1ce3a8a331343027b52c4c093c43ca75e11ce364c45e97c30b2"
+      },
+      "channel": "stable",
+      "classification": "accepted_risk",
+      "component_scope": "workstation_payload",
+      "component_type": "embedded_go",
+      "edition": "workstation",
+      "evidence": [
+        {
+          "path": "stable-45.triage.md",
+          "sha256": "9e1d5a1d33d4b490c43c090de957ddad493db589fe23c2d89a6bae2967013c92",
+          "size_bytes": 30007
+        }
+      ],
+      "expires_at": "2026-12-18T00:00:00Z",
+      "fedora": "45",
+      "issued_at": "2026-11-18T00:00:00Z",
+      "owner": "leandromqrs",
+      "package": "stdlib",
+      "package_version": "go1.27rc2-X:nodwarf5",
+      "reason": "stdlib go1.27rc2-X:nodwarf5 embedded in Fedora-built /usr/bin/ql2tpd from go-l2tp-0.1.8-5.fc45.x86_64; grype reports a fix in 1.26.9, 1.27.2. Owner accepted the risk for the stable channel on 2026-11-17 (decision table stable-risk/2026-11-17-decisions.md)."
+    },
+    {
+      "advisory": "CVE-2026-78669",
+      "binary": {
+        "ostree_object": "/sysroot/ostree/repo/objects/2e/a8825505d254bd3966b6e98429884c7dab053debc646862a09ace80f9bc57c.file",
+        "path": "/usr/bin/toolbox",
+        "rpm_nevra": "toolbox-0.3-7.fc45.x86_64",
+        "sha256": "daa0a9b94c96ff8ae594723536ab2503818d0854b97fd2ebf0d61154de5a1bd7"
+      },
+      "channel": "stable",
+      "classification": "accepted_risk",
+      "component_scope": "workstation_payload",
+      "component_type": "embedded_go",
+      "edition": "workstation",
+      "evidence": [
+        {
+          "path": "stable-45.triage.md",
+          "sha256": "9e1d5a1d33d4b490c43c090de957ddad493db589fe23c2d89a6bae2967013c92",
+          "size_bytes": 30007
+        }
+      ],
+      "expires_at": "2026-12-18T00:00:00Z",
+      "fedora": "45",
+      "issued_at": "2026-11-18T00:00:00Z",
+      "owner": "leandromqrs",
+      "package": "stdlib",
+      "package_version": "go1.27rc2-X:nodwarf5",
+      "reason": "stdlib go1.27rc2-X:nodwarf5 embedded in Fedora-built /usr/bin/toolbox from toolbox-0.3-7.fc45.x86_64; grype reports a fix in 1.26.9, 1.27.2. Owner accepted the risk for the stable channel on 2026-11-17 (decision table stable-risk/2026-11-17-decisions.md)."
+    },
+    {
+      "advisory": "CVE-2026-78669",
+      "binary": {
+        "path": "/usr/bin/kl2tpd",
+        "rpm_nevra": "go-l2tp-0.1.8-5.fc45.x86_64",
+        "sha256": "4c74f29bdafc256a8ac2cac124a9b49ff229296baef69a0deb2dcddc92ddabe2"
+      },
+      "channel": "stable",
+      "classification": "accepted_risk",
+      "component_scope": "workstation_payload",
+      "component_type": "embedded_go",
+      "edition": "workstation",
+      "evidence": [
+        {
+          "path": "stable-45.triage.md",
+          "sha256": "9e1d5a1d33d4b490c43c090de957ddad493db589fe23c2d89a6bae2967013c92",
+          "size_bytes": 30007
+        }
+      ],
+      "expires_at": "2026-12-18T00:00:00Z",
+      "fedora": "45",
+      "issued_at": "2026-11-18T00:00:00Z",
+      "owner": "leandromqrs",
+      "package": "stdlib",
+      "package_version": "go1.27rc2-X:nodwarf5",
+      "reason": "stdlib go1.27rc2-X:nodwarf5 embedded in Fedora-built /usr/bin/kl2tpd from go-l2tp-0.1.8-5.fc45.x86_64; grype reports a fix in 1.26.9, 1.27.2. Owner accepted the risk for the stable channel on 2026-11-17 (decision table stable-risk/2026-11-17-decisions.md)."
+    },
+    {
+      "advisory": "CVE-2026-78669",
+      "binary": {
+        "path": "/usr/bin/kpppoed",
+        "rpm_nevra": "go-l2tp-0.1.8-5.fc45.x86_64",
+        "sha256": "52cc6bc81a7a8d6dc1c03a6bd296af1f7c50d58618ad5bbb14e468a0bb7e4776"
+      },
+      "channel": "stable",
+      "classification": "accepted_risk",
+      "component_scope": "workstation_payload",
+      "component_type": "embedded_go",
+      "edition": "workstation",
+      "evidence": [
+        {
+          "path": "stable-45.triage.md",
+          "sha256": "9e1d5a1d33d4b490c43c090de957ddad493db589fe23c2d89a6bae2967013c92",
+          "size_bytes": 30007
+        }
+      ],
+      "expires_at": "2026-12-18T00:00:00Z",
+      "fedora": "45",
+      "issued_at": "2026-11-18T00:00:00Z",
+      "owner": "leandromqrs",
+      "package": "stdlib",
+      "package_version": "go1.27rc2-X:nodwarf5",
+      "reason": "stdlib go1.27rc2-X:nodwarf5 embedded in Fedora-built /usr/bin/kpppoed from go-l2tp-0.1.8-5.fc45.x86_64; grype reports a fix in 1.26.9, 1.27.2. Owner accepted the risk for the stable channel on 2026-11-17 (decision table stable-risk/2026-11-17-decisions.md)."
+    },
+    {
+      "advisory": "CVE-2026-78669",
+      "binary": {
+        "path": "/usr/bin/ql2tpd",
+        "rpm_nevra": "go-l2tp-0.1.8-5.fc45.x86_64",
+        "sha256": "e0c0ddbd63bfe1ce3a8a331343027b52c4c093c43ca75e11ce364c45e97c30b2"
+      },
+      "channel": "stable",
+      "classification": "accepted_risk",
+      "component_scope": "workstation_payload",
+      "component_type": "embedded_go",
+      "edition": "workstation",
+      "evidence": [
+        {
+          "path": "stable-45.triage.md",
+          "sha256": "9e1d5a1d33d4b490c43c090de957ddad493db589fe23c2d89a6bae2967013c92",
+          "size_bytes": 30007
+        }
+      ],
+      "expires_at": "2026-12-18T00:00:00Z",
+      "fedora": "45",
+      "issued_at": "2026-11-18T00:00:00Z",
+      "owner": "leandromqrs",
+      "package": "stdlib",
+      "package_version": "go1.27rc2-X:nodwarf5",
+      "reason": "stdlib go1.27rc2-X:nodwarf5 embedded in Fedora-built /usr/bin/ql2tpd from go-l2tp-0.1.8-5.fc45.x86_64; grype reports a fix in 1.26.9, 1.27.2. Owner accepted the risk for the stable channel on 2026-11-17 (decision table stable-risk/2026-11-17-decisions.md)."
+    },
+    {
+      "advisory": "CVE-2026-94439",
+      "binary": {
+        "ostree_object": "/sysroot/ostree/repo/objects/2e/a8825505d254bd3966b6e98429884c7dab053debc646862a09ace80f9bc57c.file",
+        "path": "/usr/bin/toolbox",
+        "rpm_nevra": "toolbox-0.3-7.fc45.x86_64",
+        "sha256": "daa0a9b94c96ff8ae594723536ab2503818d0854b97fd2ebf0d61154de5a1bd7"
+      },
+      "channel": "stable",
+      "classification": "accepted_risk",
+      "component_scope": "workstation_payload",
+      "component_type": "embedded_go",
+      "edition": "workstation",
+      "evidence": [
+        {
+          "path": "stable-45.triage.md",
+          "sha256": "9e1d5a1d33d4b490c43c090de957ddad493db589fe23c2d89a6bae2967013c92",
+          "size_bytes": 30007
+        }
+      ],
+      "expires_at": "2026-12-18T00:00:00Z",
+      "fedora": "45",
+      "issued_at": "2026-11-18T00:00:00Z",
+      "owner": "leandromqrs",
+      "package": "stdlib",
+      "package_version": "go1.27rc2-X:nodwarf5",
+      "reason": "stdlib go1.27rc2-X:nodwarf5 embedded in Fedora-built /usr/bin/toolbox from toolbox-0.3-7.fc45.x86_64; grype reports a fix in 1.26.9, 1.27.2. Owner accepted the risk for the stable channel on 2026-11-17 (decision table stable-risk/2026-11-17-decisions.md)."
+    },
+    {
+      "advisory": "CVE-2026-94439",
+      "binary": {
+        "path": "/usr/bin/kl2tpd",
+        "rpm_nevra": "go-l2tp-0.1.8-5.fc45.x86_64",
+        "sha256": "4c74f29bdafc256a8ac2cac124a9b49ff229296baef69a0deb2dcddc92ddabe2"
+      },
+      "channel": "stable",
+      "classification": "accepted_risk",
+      "component_scope": "workstation_payload",
+      "component_type": "embedded_go",
+      "edition": "workstation",
+      "evidence": [
+        {
+          "path": "stable-45.triage.md",
+          "sha256": "9e1d5a1d33d4b490c43c090de957ddad493db589fe23c2d89a6bae2967013c92",
+          "size_bytes": 30007
+        }
+      ],
+      "expires_at": "2026-12-18T00:00:00Z",
+      "fedora": "45",
+      "issued_at": "2026-11-18T00:00:00Z",
+      "owner": "leandromqrs",
+      "package": "stdlib",
+      "package_version": "go1.27rc2-X:nodwarf5",
+      "reason": "stdlib go1.27rc2-X:nodwarf5 embedded in Fedora-built /usr/bin/kl2tpd from go-l2tp-0.1.8-5.fc45.x86_64; grype reports a fix in 1.26.9, 1.27.2. Owner accepted the risk for the stable channel on 2026-11-17 (decision table stable-risk/2026-11-17-decisions.md)."
+    },
+    {
+      "advisory": "CVE-2026-94439",
+      "binary": {
+        "path": "/usr/bin/kpppoed",
+        "rpm_nevra": "go-l2tp-0.1.8-5.fc45.x86_64",
+        "sha256": "52cc6bc81a7a8d6dc1c03a6bd296af1f7c50d58618ad5bbb14e468a0bb7e4776"
+      },
+      "channel": "stable",
+      "classification": "accepted_risk",
+      "component_scope": "workstation_payload",
+      "component_type": "embedded_go",
+      "edition": "workstation",
+      "evidence": [
+        {
+          "path": "stable-45.triage.md",
+          "sha256": "9e1d5a1d33d4b490c43c090de957ddad493db589fe23c2d89a6bae2967013c92",
+          "size_bytes": 30007
+        }
+      ],
+      "expires_at": "2026-12-18T00:00:00Z",
+      "fedora": "45",
+      "issued_at": "2026-11-18T00:00:00Z",
+      "owner": "leandromqrs",
+      "package": "stdlib",
+      "package_version": "go1.27rc2-X:nodwarf5",
+      "reason": "stdlib go1.27rc2-X:nodwarf5 embedded in Fedora-built /usr/bin/kpppoed from go-l2tp-0.1.8-5.fc45.x86_64; grype reports a fix in 1.26.9, 1.27.2. Owner accepted the risk for the stable channel on 2026-11-17 (decision table stable-risk/2026-11-17-decisions.md)."
+    },
+    {
+      "advisory": "CVE-2026-94439",
+      "binary": {
+        "path": "/usr/bin/ql2tpd",
+        "rpm_nevra": "go-l2tp-0.1.8-5.fc45.x86_64",
+        "sha256": "e0c0ddbd63bfe1ce3a8a331343027b52c4c093c43ca75e11ce364c45e97c30b2"
+      },
+      "channel": "stable",
+      "classification": "accepted_risk",
+      "component_scope": "workstation_payload",
+      "component_type": "embedded_go",
+      "edition": "workstation",
+      "evidence": [
+        {
+          "path": "stable-45.triage.md",
+          "sha256": "9e1d5a1d33d4b490c43c090de957ddad493db589fe23c2d89a6bae2967013c92",
+          "size_bytes": 30007
+        }
+      ],
+      "expires_at": "2026-12-18T00:00:00Z",
+      "fedora": "45",
+      "issued_at": "2026-11-18T00:00:00Z",
+      "owner": "leandromqrs",
+      "package": "stdlib",
+      "package_version": "go1.27rc2-X:nodwarf5",
+      "reason": "stdlib go1.27rc2-X:nodwarf5 embedded in Fedora-built /usr/bin/ql2tpd from go-l2tp-0.1.8-5.fc45.x86_64; grype reports a fix in 1.26.9, 1.27.2. Owner accepted the risk for the stable channel on 2026-11-17 (decision table stable-risk/2026-11-17-decisions.md)."
+    },
+    {
+      "advisory": "CVE-2026-94440",
+      "binary": {
+        "ostree_object": "/sysroot/ostree/repo/objects/2e/a8825505d254bd3966b6e98429884c7dab053debc646862a09ace80f9bc57c.file",
+        "path": "/usr/bin/toolbox",
+        "rpm_nevra": "toolbox-0.3-7.fc45.x86_64",
+        "sha256": "daa0a9b94c96ff8ae594723536ab2503818d0854b97fd2ebf0d61154de5a1bd7"
+      },
+      "channel": "stable",
+      "classification": "accepted_risk",
+      "component_scope": "workstation_payload",
+      "component_type": "embedded_go",
+      "edition": "workstation",
+      "evidence": [
+        {
+          "path": "stable-45.triage.md",
+          "sha256": "9e1d5a1d33d4b490c43c090de957ddad493db589fe23c2d89a6bae2967013c92",
+          "size_bytes": 30007
+        }
+      ],
+      "expires_at": "2026-12-18T00:00:00Z",
+      "fedora": "45",
+      "issued_at": "2026-11-18T00:00:00Z",
+      "owner": "leandromqrs",
+      "package": "stdlib",
+      "package_version": "go1.27rc2-X:nodwarf5",
+      "reason": "stdlib go1.27rc2-X:nodwarf5 embedded in Fedora-built /usr/bin/toolbox from toolbox-0.3-7.fc45.x86_64; grype reports a fix in 1.26.9, 1.27.2. Owner accepted the risk for the stable channel on 2026-11-17 (decision table stable-risk/2026-11-17-decisions.md)."
+    },
+    {
+      "advisory": "CVE-2026-94440",
+      "binary": {
+        "path": "/usr/bin/kl2tpd",
+        "rpm_nevra": "go-l2tp-0.1.8-5.fc45.x86_64",
+        "sha256": "4c74f29bdafc256a8ac2cac124a9b49ff229296baef69a0deb2dcddc92ddabe2"
+      },
+      "channel": "stable",
+      "classification": "accepted_risk",
+      "component_scope": "workstation_payload",
+      "component_type": "embedded_go",
+      "edition": "workstation",
+      "evidence": [
+        {
+          "path": "stable-45.triage.md",
+          "sha256": "9e1d5a1d33d4b490c43c090de957ddad493db589fe23c2d89a6bae2967013c92",
+          "size_bytes": 30007
+        }
+      ],
+      "expires_at": "2026-12-18T00:00:00Z",
+      "fedora": "45",
+      "issued_at": "2026-11-18T00:00:00Z",
+      "owner": "leandromqrs",
+      "package": "stdlib",
+      "package_version": "go1.27rc2-X:nodwarf5",
+      "reason": "stdlib go1.27rc2-X:nodwarf5 embedded in Fedora-built /usr/bin/kl2tpd from go-l2tp-0.1.8-5.fc45.x86_64; grype reports a fix in 1.26.9, 1.27.2. Owner accepted the risk for the stable channel on 2026-11-17 (decision table stable-risk/2026-11-17-decisions.md)."
+    },
+    {
+      "advisory": "CVE-2026-94440",
+      "binary": {
+        "path": "/usr/bin/kpppoed",
+        "rpm_nevra": "go-l2tp-0.1.8-5.fc45.x86_64",
+        "sha256": "52cc6bc81a7a8d6dc1c03a6bd296af1f7c50d58618ad5bbb14e468a0bb7e4776"
+      },
+      "channel": "stable",
+      "classification": "accepted_risk",
+      "component_scope": "workstation_payload",
+      "component_type": "embedded_go",
+      "edition": "workstation",
+      "evidence": [
+        {
+          "path": "stable-45.triage.md",
+          "sha256": "9e1d5a1d33d4b490c43c090de957ddad493db589fe23c2d89a6bae2967013c92",
+          "size_bytes": 30007
+        }
+      ],
+      "expires_at": "2026-12-18T00:00:00Z",
+      "fedora": "45",
+      "issued_at": "2026-11-18T00:00:00Z",
+      "owner": "leandromqrs",
+      "package": "stdlib",
+      "package_version": "go1.27rc2-X:nodwarf5",
+      "reason": "stdlib go1.27rc2-X:nodwarf5 embedded in Fedora-built /usr/bin/kpppoed from go-l2tp-0.1.8-5.fc45.x86_64; grype reports a fix in 1.26.9, 1.27.2. Owner accepted the risk for the stable channel on 2026-11-17 (decision table stable-risk/2026-11-17-decisions.md)."
+    },
+    {
+      "advisory": "CVE-2026-94440",
+      "binary": {
+        "path": "/usr/bin/ql2tpd",
+        "rpm_nevra": "go-l2tp-0.1.8-5.fc45.x86_64",
+        "sha256": "e0c0ddbd63bfe1ce3a8a331343027b52c4c093c43ca75e11ce364c45e97c30b2"
+      },
+      "channel": "stable",
+      "classification": "accepted_risk",
+      "component_scope": "workstation_payload",
+      "component_type": "embedded_go",
+      "edition": "workstation",
+      "evidence": [
+        {
+          "path": "stable-45.triage.md",
+          "sha256": "9e1d5a1d33d4b490c43c090de957ddad493db589fe23c2d89a6bae2967013c92",
+          "size_bytes": 30007
+        }
+      ],
+      "expires_at": "2026-12-18T00:00:00Z",
+      "fedora": "45",
+      "issued_at": "2026-11-18T00:00:00Z",
+      "owner": "leandromqrs",
+      "package": "stdlib",
+      "package_version": "go1.27rc2-X:nodwarf5",
+      "reason": "stdlib go1.27rc2-X:nodwarf5 embedded in Fedora-built /usr/bin/ql2tpd from go-l2tp-0.1.8-5.fc45.x86_64; grype reports a fix in 1.26.9, 1.27.2. Owner accepted the risk for the stable channel on 2026-11-17 (decision table stable-risk/2026-11-17-decisions.md)."
+    },
+    {
+      "advisory": "CVE-2026-94444",
+      "binary": {
+        "ostree_object": "/sysroot/ostree/repo/objects/2e/a8825505d254bd3966b6e98429884c7dab053debc646862a09ace80f9bc57c.file",
+        "path": "/usr/bin/toolbox",
+        "rpm_nevra": "toolbox-0.3-7.fc45.x86_64",
+        "sha256": "daa0a9b94c96ff8ae594723536ab2503818d0854b97fd2ebf0d61154de5a1bd7"
+      },
+      "channel": "stable",
+      "classification": "accepted_risk",
+      "component_scope": "workstation_payload",
+      "component_type": "embedded_go",
+      "edition": "workstation",
+      "evidence": [
+        {
+          "path": "stable-45.triage.md",
+          "sha256": "9e1d5a1d33d4b490c43c090de957ddad493db589fe23c2d89a6bae2967013c92",
+          "size_bytes": 30007
+        }
+      ],
+      "expires_at": "2026-12-18T00:00:00Z",
+      "fedora": "45",
+      "issued_at": "2026-11-18T00:00:00Z",
+      "owner": "leandromqrs",
+      "package": "stdlib",
+      "package_version": "go1.27rc2-X:nodwarf5",
+      "reason": "stdlib go1.27rc2-X:nodwarf5 embedded in Fedora-built /usr/bin/toolbox from toolbox-0.3-7.fc45.x86_64; grype reports a fix in 1.26.9, 1.27.2. Owner accepted the risk for the stable channel on 2026-11-17 (decision table stable-risk/2026-11-17-decisions.md)."
+    },
+    {
+      "advisory": "CVE-2026-94444",
+      "binary": {
+        "path": "/usr/bin/kl2tpd",
+        "rpm_nevra": "go-l2tp-0.1.8-5.fc45.x86_64",
+        "sha256": "4c74f29bdafc256a8ac2cac124a9b49ff229296baef69a0deb2dcddc92ddabe2"
+      },
+      "channel": "stable",
+      "classification": "accepted_risk",
+      "component_scope": "workstation_payload",
+      "component_type": "embedded_go",
+      "edition": "workstation",
+      "evidence": [
+        {
+          "path": "stable-45.triage.md",
+          "sha256": "9e1d5a1d33d4b490c43c090de957ddad493db589fe23c2d89a6bae2967013c92",
+          "size_bytes": 30007
+        }
+      ],
+      "expires_at": "2026-12-18T00:00:00Z",
+      "fedora": "45",
+      "issued_at": "2026-11-18T00:00:00Z",
+      "owner": "leandromqrs",
+      "package": "stdlib",
+      "package_version": "go1.27rc2-X:nodwarf5",
+      "reason": "stdlib go1.27rc2-X:nodwarf5 embedded in Fedora-built /usr/bin/kl2tpd from go-l2tp-0.1.8-5.fc45.x86_64; grype reports a fix in 1.26.9, 1.27.2. Owner accepted the risk for the stable channel on 2026-11-17 (decision table stable-risk/2026-11-17-decisions.md)."
+    },
+    {
+      "advisory": "CVE-2026-94444",
+      "binary": {
+        "path": "/usr/bin/kpppoed",
+        "rpm_nevra": "go-l2tp-0.1.8-5.fc45.x86_64",
+        "sha256": "52cc6bc81a7a8d6dc1c03a6bd296af1f7c50d58618ad5bbb14e468a0bb7e4776"
+      },
+      "channel": "stable",
+      "classification": "accepted_risk",
+      "component_scope": "workstation_payload",
+      "component_type": "embedded_go",
+      "edition": "workstation",
+      "evidence": [
+        {
+          "path": "stable-45.triage.md",
+          "sha256": "9e1d5a1d33d4b490c43c090de957ddad493db589fe23c2d89a6bae2967013c92",
+          "size_bytes": 30007
+        }
+      ],
+      "expires_at": "2026-12-18T00:00:00Z",
+      "fedora": "45",
+      "issued_at": "2026-11-18T00:00:00Z",
+      "owner": "leandromqrs",
+      "package": "stdlib",
+      "package_version": "go1.27rc2-X:nodwarf5",
+      "reason": "stdlib go1.27rc2-X:nodwarf5 embedded in Fedora-built /usr/bin/kpppoed from go-l2tp-0.1.8-5.fc45.x86_64; grype reports a fix in 1.26.9, 1.27.2. Owner accepted the risk for the stable channel on 2026-11-17 (decision table stable-risk/2026-11-17-decisions.md)."
+    },
+    {
+      "advisory": "CVE-2026-94444",
+      "binary": {
+        "path": "/usr/bin/ql2tpd",
+        "rpm_nevra": "go-l2tp-0.1.8-5.fc45.x86_64",
+        "sha256": "e0c0ddbd63bfe1ce3a8a331343027b52c4c093c43ca75e11ce364c45e97c30b2"
+      },
+      "channel": "stable",
+      "classification": "accepted_risk",
+      "component_scope": "workstation_payload",
+      "component_type": "embedded_go",
+      "edition": "workstation",
+      "evidence": [
+        {
+          "path": "stable-45.triage.md",
+          "sha256": "9e1d5a1d33d4b490c43c090de957ddad493db589fe23c2d89a6bae2967013c92",
+          "size_bytes": 30007
+        }
+      ],
+      "expires_at": "2026-12-18T00:00:00Z",
+      "fedora": "45",
+      "issued_at": "2026-11-18T00:00:00Z",
+      "owner": "leandromqrs",
+      "package": "stdlib",
+      "package_version": "go1.27rc2-X:nodwarf5",
+      "reason": "stdlib go1.27rc2-X:nodwarf5 embedded in Fedora-built /usr/bin/ql2tpd from go-l2tp-0.1.8-5.fc45.x86_64; grype reports a fix in 1.26.9, 1.27.2. Owner accepted the risk for the stable channel on 2026-11-17 (decision table stable-risk/2026-11-17-decisions.md)."
+    },
+    {
+      "advisory": "CVE-2026-94447",
+      "binary": {
+        "ostree_object": "/sysroot/ostree/repo/objects/2e/a8825505d254bd3966b6e98429884c7dab053debc646862a09ace80f9bc57c.file",
+        "path": "/usr/bin/toolbox",
+        "rpm_nevra": "toolbox-0.3-7.fc45.x86_64",
+        "sha256": "daa0a9b94c96ff8ae594723536ab2503818d0854b97fd2ebf0d61154de5a1bd7"
+      },
+      "channel": "stable",
+      "classification": "accepted_risk",
+      "component_scope": "workstation_payload",
+      "component_type": "embedded_go",
+      "edition": "workstation",
+      "evidence": [
+        {
+          "path": "stable-45.triage.md",
+          "sha256": "9e1d5a1d33d4b490c43c090de957ddad493db589fe23c2d89a6bae2967013c92",
+          "size_bytes": 30007
+        }
+      ],
+      "expires_at": "2026-12-18T00:00:00Z",
+      "fedora": "45",
+      "issued_at": "2026-11-18T00:00:00Z",
+      "owner": "leandromqrs",
+      "package": "stdlib",
+      "package_version": "go1.27rc2-X:nodwarf5",
+      "reason": "stdlib go1.27rc2-X:nodwarf5 embedded in Fedora-built /usr/bin/toolbox from toolbox-0.3-7.fc45.x86_64; grype reports a fix in 1.26.9, 1.27.2. Owner accepted the risk for the stable channel on 2026-11-17 (decision table stable-risk/2026-11-17-decisions.md)."
+    },
+    {
+      "advisory": "CVE-2026-94447",
+      "binary": {
+        "path": "/usr/bin/kl2tpd",
+        "rpm_nevra": "go-l2tp-0.1.8-5.fc45.x86_64",
+        "sha256": "4c74f29bdafc256a8ac2cac124a9b49ff229296baef69a0deb2dcddc92ddabe2"
+      },
+      "channel": "stable",
+      "classification": "accepted_risk",
+      "component_scope": "workstation_payload",
+      "component_type": "embedded_go",
+      "edition": "workstation",
+      "evidence": [
+        {
+          "path": "stable-45.triage.md",
+          "sha256": "9e1d5a1d33d4b490c43c090de957ddad493db589fe23c2d89a6bae2967013c92",
+          "size_bytes": 30007
+        }
+      ],
+      "expires_at": "2026-12-18T00:00:00Z",
+      "fedora": "45",
+      "issued_at": "2026-11-18T00:00:00Z",
+      "owner": "leandromqrs",
+      "package": "stdlib",
+      "package_version": "go1.27rc2-X:nodwarf5",
+      "reason": "stdlib go1.27rc2-X:nodwarf5 embedded in Fedora-built /usr/bin/kl2tpd from go-l2tp-0.1.8-5.fc45.x86_64; grype reports a fix in 1.26.9, 1.27.2. Owner accepted the risk for the stable channel on 2026-11-17 (decision table stable-risk/2026-11-17-decisions.md)."
+    },
+    {
+      "advisory": "CVE-2026-94447",
+      "binary": {
+        "path": "/usr/bin/kpppoed",
+        "rpm_nevra": "go-l2tp-0.1.8-5.fc45.x86_64",
+        "sha256": "52cc6bc81a7a8d6dc1c03a6bd296af1f7c50d58618ad5bbb14e468a0bb7e4776"
+      },
+      "channel": "stable",
+      "classification": "accepted_risk",
+      "component_scope": "workstation_payload",
+      "component_type": "embedded_go",
+      "edition": "workstation",
+      "evidence": [
+        {
+          "path": "stable-45.triage.md",
+          "sha256": "9e1d5a1d33d4b490c43c090de957ddad493db589fe23c2d89a6bae2967013c92",
+          "size_bytes": 30007
+        }
+      ],
+      "expires_at": "2026-12-18T00:00:00Z",
+      "fedora": "45",
+      "issued_at": "2026-11-18T00:00:00Z",
+      "owner": "leandromqrs",
+      "package": "stdlib",
+      "package_version": "go1.27rc2-X:nodwarf5",
+      "reason": "stdlib go1.27rc2-X:nodwarf5 embedded in Fedora-built /usr/bin/kpppoed from go-l2tp-0.1.8-5.fc45.x86_64; grype reports a fix in 1.26.9, 1.27.2. Owner accepted the risk for the stable channel on 2026-11-17 (decision table stable-risk/2026-11-17-decisions.md)."
+    },
+    {
+      "advisory": "CVE-2026-94447",
+      "binary": {
+        "path": "/usr/bin/ql2tpd",
+        "rpm_nevra": "go-l2tp-0.1.8-5.fc45.x86_64",
+        "sha256": "e0c0ddbd63bfe1ce3a8a331343027b52c4c093c43ca75e11ce364c45e97c30b2"
+      },
+      "channel": "stable",
+      "classification": "accepted_risk",
+      "component_scope": "workstation_payload",
+      "component_type": "embedded_go",
+      "edition": "workstation",
+      "evidence": [
+        {
+          "path": "stable-45.triage.md",
+          "sha256": "9e1d5a1d33d4b490c43c090de957ddad493db589fe23c2d89a6bae2967013c92",
+          "size_bytes": 30007
+        }
+      ],
+      "expires_at": "2026-12-18T00:00:00Z",
+      "fedora": "45",
+      "issued_at": "2026-11-18T00:00:00Z",
+      "owner": "leandromqrs",
+      "package": "stdlib",
+      "package_version": "go1.27rc2-X:nodwarf5",
+      "reason": "stdlib go1.27rc2-X:nodwarf5 embedded in Fedora-built /usr/bin/ql2tpd from go-l2tp-0.1.8-5.fc45.x86_64; grype reports a fix in 1.26.9, 1.27.2. Owner accepted the risk for the stable channel on 2026-11-17 (decision table stable-risk/2026-11-17-decisions.md)."
+    },
+    {
+      "advisory": "CVE-2026-97031",
+      "binary": {
+        "ostree_object": "/sysroot/ostree/repo/objects/2e/a8825505d254bd3966b6e98429884c7dab053debc646862a09ace80f9bc57c.file",
+        "path": "/usr/bin/toolbox",
+        "rpm_nevra": "toolbox-0.3-7.fc45.x86_64",
+        "sha256": "daa0a9b94c96ff8ae594723536ab2503818d0854b97fd2ebf0d61154de5a1bd7"
+      },
+      "channel": "stable",
+      "classification": "accepted_risk",
+      "component_scope": "workstation_payload",
+      "component_type": "embedded_go",
+      "edition": "workstation",
+      "evidence": [
+        {
+          "path": "stable-45.triage.md",
+          "sha256": "9e1d5a1d33d4b490c43c090de957ddad493db589fe23c2d89a6bae2967013c92",
+          "size_bytes": 30007
+        }
+      ],
+      "expires_at": "2026-12-18T00:00:00Z",
+      "fedora": "45",
+      "issued_at": "2026-11-18T00:00:00Z",
+      "owner": "leandromqrs",
+      "package": "stdlib",
+      "package_version": "go1.27rc2-X:nodwarf5",
+      "reason": "stdlib go1.27rc2-X:nodwarf5 embedded in Fedora-built /usr/bin/toolbox from toolbox-0.3-7.fc45.x86_64; grype reports a fix in 1.26.9, 1.27.2. Owner accepted the risk for the stable channel on 2026-11-17 (decision table stable-risk/2026-11-17-decisions.md)."
+    },
+    {
+      "advisory": "CVE-2026-97031",
+      "binary": {
+        "path": "/usr/bin/kl2tpd",
+        "rpm_nevra": "go-l2tp-0.1.8-5.fc45.x86_64",
+        "sha256": "4c74f29bdafc256a8ac2cac124a9b49ff229296baef69a0deb2dcddc92ddabe2"
+      },
+      "channel": "stable",
+      "classification": "accepted_risk",
+      "component_scope": "workstation_payload",
+      "component_type": "embedded_go",
+      "edition": "workstation",
+      "evidence": [
+        {
+          "path": "stable-45.triage.md",
+          "sha256": "9e1d5a1d33d4b490c43c090de957ddad493db589fe23c2d89a6bae2967013c92",
+          "size_bytes": 30007
+        }
+      ],
+      "expires_at": "2026-12-18T00:00:00Z",
+      "fedora": "45",
+      "issued_at": "2026-11-18T00:00:00Z",
+      "owner": "leandromqrs",
+      "package": "stdlib",
+      "package_version": "go1.27rc2-X:nodwarf5",
+      "reason": "stdlib go1.27rc2-X:nodwarf5 embedded in Fedora-built /usr/bin/kl2tpd from go-l2tp-0.1.8-5.fc45.x86_64; grype reports a fix in 1.26.9, 1.27.2. Owner accepted the risk for the stable channel on 2026-11-17 (decision table stable-risk/2026-11-17-decisions.md)."
+    },
+    {
+      "advisory": "CVE-2026-97031",
+      "binary": {
+        "path": "/usr/bin/kpppoed",
+        "rpm_nevra": "go-l2tp-0.1.8-5.fc45.x86_64",
+        "sha256": "52cc6bc81a7a8d6dc1c03a6bd296af1f7c50d58618ad5bbb14e468a0bb7e4776"
+      },
+      "channel": "stable",
+      "classification": "accepted_risk",
+      "component_scope": "workstation_payload",
+      "component_type": "embedded_go",
+      "edition": "workstation",
+      "evidence": [
+        {
+          "path": "stable-45.triage.md",
+          "sha256": "9e1d5a1d33d4b490c43c090de957ddad493db589fe23c2d89a6bae2967013c92",
+          "size_bytes": 30007
+        }
+      ],
+      "expires_at": "2026-12-18T00:00:00Z",
+      "fedora": "45",
+      "issued_at": "2026-11-18T00:00:00Z",
+      "owner": "leandromqrs",
+      "package": "stdlib",
+      "package_version": "go1.27rc2-X:nodwarf5",
+      "reason": "stdlib go1.27rc2-X:nodwarf5 embedded in Fedora-built /usr/bin/kpppoed from go-l2tp-0.1.8-5.fc45.x86_64; grype reports a fix in 1.26.9, 1.27.2. Owner accepted the risk for the stable channel on 2026-11-17 (decision table stable-risk/2026-11-17-decisions.md)."
+    },
+    {
+      "advisory": "CVE-2026-97031",
+      "binary": {
+        "path": "/usr/bin/ql2tpd",
+        "rpm_nevra": "go-l2tp-0.1.8-5.fc45.x86_64",
+        "sha256": "e0c0ddbd63bfe1ce3a8a331343027b52c4c093c43ca75e11ce364c45e97c30b2"
+      },
+      "channel": "stable",
+      "classification": "accepted_risk",
+      "component_scope": "workstation_payload",
+      "component_type": "embedded_go",
+      "edition": "workstation",
+      "evidence": [
+        {
+          "path": "stable-45.triage.md",
+          "sha256": "9e1d5a1d33d4b490c43c090de957ddad493db589fe23c2d89a6bae2967013c92",
+          "size_bytes": 30007
+        }
+      ],
+      "expires_at": "2026-12-18T00:00:00Z",
+      "fedora": "45",
+      "issued_at": "2026-11-18T00:00:00Z",
+      "owner": "leandromqrs",
+      "package": "stdlib",
+      "package_version": "go1.27rc2-X:nodwarf5",
+      "reason": "stdlib go1.27rc2-X:nodwarf5 embedded in Fedora-built /usr/bin/ql2tpd from go-l2tp-0.1.8-5.fc45.x86_64; grype reports a fix in 1.26.9, 1.27.2. Owner accepted the risk for the stable channel on 2026-11-17 (decision table stable-risk/2026-11-17-decisions.md)."
+    },
+    {
+      "advisory": "CVE-2026-97032",
+      "binary": {
+        "ostree_object": "/sysroot/ostree/repo/objects/2e/a8825505d254bd3966b6e98429884c7dab053debc646862a09ace80f9bc57c.file",
+        "path": "/usr/bin/toolbox",
+        "rpm_nevra": "toolbox-0.3-7.fc45.x86_64",
+        "sha256": "daa0a9b94c96ff8ae594723536ab2503818d0854b97fd2ebf0d61154de5a1bd7"
+      },
+      "channel": "stable",
+      "classification": "accepted_risk",
+      "component_scope": "workstation_payload",
+      "component_type": "embedded_go",
+      "edition": "workstation",
+      "evidence": [
+        {
+          "path": "stable-45.triage.md",
+          "sha256": "9e1d5a1d33d4b490c43c090de957ddad493db589fe23c2d89a6bae2967013c92",
+          "size_bytes": 30007
+        }
+      ],
+      "expires_at": "2026-12-18T00:00:00Z",
+      "fedora": "45",
+      "issued_at": "2026-11-18T00:00:00Z",
+      "owner": "leandromqrs",
+      "package": "stdlib",
+      "package_version": "go1.27rc2-X:nodwarf5",
+      "reason": "stdlib go1.27rc2-X:nodwarf5 embedded in Fedora-built /usr/bin/toolbox from toolbox-0.3-7.fc45.x86_64; grype reports a fix in 1.26.9, 1.27.2. Owner accepted the risk for the stable channel on 2026-11-17 (decision table stable-risk/2026-11-17-decisions.md)."
+    },
+    {
+      "advisory": "CVE-2026-97032",
+      "binary": {
+        "path": "/usr/bin/kl2tpd",
+        "rpm_nevra": "go-l2tp-0.1.8-5.fc45.x86_64",
+        "sha256": "4c74f29bdafc256a8ac2cac124a9b49ff229296baef69a0deb2dcddc92ddabe2"
+      },
+      "channel": "stable",
+      "classification": "accepted_risk",
+      "component_scope": "workstation_payload",
+      "component_type": "embedded_go",
+      "edition": "workstation",
+      "evidence": [
+        {
+          "path": "stable-45.triage.md",
+          "sha256": "9e1d5a1d33d4b490c43c090de957ddad493db589fe23c2d89a6bae2967013c92",
+          "size_bytes": 30007
+        }
+      ],
+      "expires_at": "2026-12-18T00:00:00Z",
+      "fedora": "45",
+      "issued_at": "2026-11-18T00:00:00Z",
+      "owner": "leandromqrs",
+      "package": "stdlib",
+      "package_version": "go1.27rc2-X:nodwarf5",
+      "reason": "stdlib go1.27rc2-X:nodwarf5 embedded in Fedora-built /usr/bin/kl2tpd from go-l2tp-0.1.8-5.fc45.x86_64; grype reports a fix in 1.26.9, 1.27.2. Owner accepted the risk for the stable channel on 2026-11-17 (decision table stable-risk/2026-11-17-decisions.md)."
+    },
+    {
+      "advisory": "CVE-2026-97032",
+      "binary": {
+        "path": "/usr/bin/kpppoed",
+        "rpm_nevra": "go-l2tp-0.1.8-5.fc45.x86_64",
+        "sha256": "52cc6bc81a7a8d6dc1c03a6bd296af1f7c50d58618ad5bbb14e468a0bb7e4776"
+      },
+      "channel": "stable",
+      "classification": "accepted_risk",
+      "component_scope": "workstation_payload",
+      "component_type": "embedded_go",
+      "edition": "workstation",
+      "evidence": [
+        {
+          "path": "stable-45.triage.md",
+          "sha256": "9e1d5a1d33d4b490c43c090de957ddad493db589fe23c2d89a6bae2967013c92",
+          "size_bytes": 30007
+        }
+      ],
+      "expires_at": "2026-12-18T00:00:00Z",
+      "fedora": "45",
+      "issued_at": "2026-11-18T00:00:00Z",
+      "owner": "leandromqrs",
+      "package": "stdlib",
+      "package_version": "go1.27rc2-X:nodwarf5",
+      "reason": "stdlib go1.27rc2-X:nodwarf5 embedded in Fedora-built /usr/bin/kpppoed from go-l2tp-0.1.8-5.fc45.x86_64; grype reports a fix in 1.26.9, 1.27.2. Owner accepted the risk for the stable channel on 2026-11-17 (decision table stable-risk/2026-11-17-decisions.md)."
+    },
+    {
+      "advisory": "CVE-2026-97032",
+      "binary": {
+        "path": "/usr/bin/ql2tpd",
+        "rpm_nevra": "go-l2tp-0.1.8-5.fc45.x86_64",
+        "sha256": "e0c0ddbd63bfe1ce3a8a331343027b52c4c093c43ca75e11ce364c45e97c30b2"
+      },
+      "channel": "stable",
+      "classification": "accepted_risk",
+      "component_scope": "workstation_payload",
+      "component_type": "embedded_go",
+      "edition": "workstation",
+      "evidence": [
+        {
+          "path": "stable-45.triage.md",
+          "sha256": "9e1d5a1d33d4b490c43c090de957ddad493db589fe23c2d89a6bae2967013c92",
+          "size_bytes": 30007
+        }
+      ],
+      "expires_at": "2026-12-18T00:00:00Z",
+      "fedora": "45",
+      "issued_at": "2026-11-18T00:00:00Z",
+      "owner": "leandromqrs",
+      "package": "stdlib",
+      "package_version": "go1.27rc2-X:nodwarf5",
+      "reason": "stdlib go1.27rc2-X:nodwarf5 embedded in Fedora-built /usr/bin/ql2tpd from go-l2tp-0.1.8-5.fc45.x86_64; grype reports a fix in 1.26.9, 1.27.2. Owner accepted the risk for the stable channel on 2026-11-17 (decision table stable-risk/2026-11-17-decisions.md)."
+    },
+    {
+      "advisory": "GHSA-4374-p667-p6c8",
+      "binary": {
+        "path": "/usr/bin/kl2tpd",
+        "rpm_nevra": "go-l2tp-0.1.8-5.fc45.x86_64",
+        "sha256": "4c74f29bdafc256a8ac2cac124a9b49ff229296baef69a0deb2dcddc92ddabe2"
+      },
+      "channel": "stable",
+      "classification": "accepted_risk",
+      "component_scope": "workstation_payload",
+      "component_type": "embedded_go",
+      "edition": "workstation",
+      "evidence": [
+        {
+          "path": "stable-45.triage.md",
+          "sha256": "9e1d5a1d33d4b490c43c090de957ddad493db589fe23c2d89a6bae2967013c92",
+          "size_bytes": 30007
+        }
+      ],
+      "expires_at": "2026-12-18T00:00:00Z",
+      "fedora": "45",
+      "issued_at": "2026-11-18T00:00:00Z",
+      "owner": "leandromqrs",
+      "package": "golang.org/x/net",
+      "package_version": "v0.15.0",
+      "reason": "golang.org/x/net v0.15.0 embedded in Fedora-built /usr/bin/kl2tpd from go-l2tp-0.1.8-5.fc45.x86_64; grype reports a fix in 0.17.0. Owner accepted the risk for the stable channel on 2026-11-17 (decision table stable-risk/2026-11-17-decisions.md)."
+    },
+    {
+      "advisory": "GHSA-4374-p667-p6c8",
+      "binary": {
+        "path": "/usr/bin/kpppoed",
+        "rpm_nevra": "go-l2tp-0.1.8-5.fc45.x86_64",
+        "sha256": "52cc6bc81a7a8d6dc1c03a6bd296af1f7c50d58618ad5bbb14e468a0bb7e4776"
+      },
+      "channel": "stable",
+      "classification": "accepted_risk",
+      "component_scope": "workstation_payload",
+      "component_type": "embedded_go",
+      "edition": "workstation",
+      "evidence": [
+        {
+          "path": "stable-45.triage.md",
+          "sha256": "9e1d5a1d33d4b490c43c090de957ddad493db589fe23c2d89a6bae2967013c92",
+          "size_bytes": 30007
+        }
+      ],
+      "expires_at": "2026-12-18T00:00:00Z",
+      "fedora": "45",
+      "issued_at": "2026-11-18T00:00:00Z",
+      "owner": "leandromqrs",
+      "package": "golang.org/x/net",
+      "package_version": "v0.15.0",
+      "reason": "golang.org/x/net v0.15.0 embedded in Fedora-built /usr/bin/kpppoed from go-l2tp-0.1.8-5.fc45.x86_64; grype reports a fix in 0.17.0. Owner accepted the risk for the stable channel on 2026-11-17 (decision table stable-risk/2026-11-17-decisions.md)."
+    },
+    {
+      "advisory": "GHSA-4374-p667-p6c8",
+      "binary": {
+        "path": "/usr/bin/ql2tpd",
+        "rpm_nevra": "go-l2tp-0.1.8-5.fc45.x86_64",
+        "sha256": "e0c0ddbd63bfe1ce3a8a331343027b52c4c093c43ca75e11ce364c45e97c30b2"
+      },
+      "channel": "stable",
+      "classification": "accepted_risk",
+      "component_scope": "workstation_payload",
+      "component_type": "embedded_go",
+      "edition": "workstation",
+      "evidence": [
+        {
+          "path": "stable-45.triage.md",
+          "sha256": "9e1d5a1d33d4b490c43c090de957ddad493db589fe23c2d89a6bae2967013c92",
+          "size_bytes": 30007
+        }
+      ],
+      "expires_at": "2026-12-18T00:00:00Z",
+      "fedora": "45",
+      "issued_at": "2026-11-18T00:00:00Z",
+      "owner": "leandromqrs",
+      "package": "golang.org/x/net",
+      "package_version": "v0.15.0",
+      "reason": "golang.org/x/net v0.15.0 embedded in Fedora-built /usr/bin/ql2tpd from go-l2tp-0.1.8-5.fc45.x86_64; grype reports a fix in 0.17.0. Owner accepted the risk for the stable channel on 2026-11-17 (decision table stable-risk/2026-11-17-decisions.md)."
+    },
+    {
+      "advisory": "GHSA-mgcc-cww5-fp2q",
+      "binary": {
+        "ostree_object": "/sysroot/ostree/repo/objects/2b/9e05183517660c9d28a9d875e6db695708f3a91fb75e7b7bd4b88fcb29c29f.file",
+        "path": "/usr/bin/skopeo",
+        "rpm_nevra": "skopeo-1:1.24.1-1.fc45.x86_64",
+        "sha256": "effe157831c2d72c21885b4cf97f021a3ff6957b6b6bc3715f57b95a926944b9"
+      },
+      "channel": "stable",
+      "classification": "accepted_risk",
+      "component_scope": "workstation_payload",
+      "component_type": "embedded_go",
+      "edition": "workstation",
+      "evidence": [
+        {
+          "path": "stable-45.triage.md",
+          "sha256": "9e1d5a1d33d4b490c43c090de957ddad493db589fe23c2d89a6bae2967013c92",
+          "size_bytes": 30007
+        }
+      ],
+      "expires_at": "2026-12-18T00:00:00Z",
+      "fedora": "45",
+      "issued_at": "2026-11-18T00:00:00Z",
+      "owner": "leandromqrs",
+      "package": "github.com/go-jose/go-jose/v4",
+      "package_version": "v4.1.4",
+      "reason": "github.com/go-jose/go-jose/v4 v4.1.4 embedded in Fedora-built /usr/bin/skopeo from skopeo-1:1.24.1-1.fc45.x86_64; grype reports a fix in 4.1.6. Owner accepted the risk for the stable channel on 2026-11-17 (decision table stable-risk/2026-11-17-decisions.md)."
+    },
+    {
+      "advisory": "GHSA-mgcc-cww5-fp2q",
+      "binary": {
+        "ostree_object": "/sysroot/ostree/repo/objects/90/51a1cb1dfada1c2a0dbae6257990b03537238eaaa112a9f9c398384de6e855.file",
+        "path": "/usr/bin/podman",
+        "rpm_nevra": "podman-5:6.1.3-1.fc45.x86_64",
+        "sha256": "246b121ff1063dc42de1b2d9c0db4be61dde67106b99abd0934aafb865a74bb1"
+      },
+      "channel": "stable",
+      "classification": "accepted_risk",
+      "component_scope": "workstation_payload",
+      "component_type": "embedded_go",
+      "edition": "workstation",
+      "evidence": [
+        {
+          "path": "stable-45.triage.md",
+          "sha256": "9e1d5a1d33d4b490c43c090de957ddad493db589fe23c2d89a6bae2967013c92",
+          "size_bytes": 30007
+        }
+      ],
+      "expires_at": "2026-12-18T00:00:00Z",
+      "fedora": "45",
+      "issued_at": "2026-11-18T00:00:00Z",
+      "owner": "leandromqrs",
+      "package": "github.com/go-jose/go-jose/v4",
+      "package_version": "v4.1.4",
+      "reason": "github.com/go-jose/go-jose/v4 v4.1.4 embedded in Fedora-built /usr/bin/podman from podman-5:6.1.3-1.fc45.x86_64; grype reports a fix in 4.1.6. Owner accepted the risk for the stable channel on 2026-11-17 (decision table stable-risk/2026-11-17-decisions.md)."
+    },
+    {
+      "advisory": "GO-2026-4918",
+      "binary": {
+        "path": "/usr/bin/kl2tpd",
+        "rpm_nevra": "go-l2tp-0.1.8-5.fc45.x86_64",
+        "sha256": "4c74f29bdafc256a8ac2cac124a9b49ff229296baef69a0deb2dcddc92ddabe2"
+      },
+      "channel": "stable",
+      "classification": "accepted_risk",
+      "component_scope": "workstation_payload",
+      "component_type": "embedded_go",
+      "edition": "workstation",
+      "evidence": [
+        {
+          "path": "stable-45.triage.md",
+          "sha256": "9e1d5a1d33d4b490c43c090de957ddad493db589fe23c2d89a6bae2967013c92",
+          "size_bytes": 30007
+        }
+      ],
+      "expires_at": "2026-12-18T00:00:00Z",
+      "fedora": "45",
+      "issued_at": "2026-11-18T00:00:00Z",
+      "owner": "leandromqrs",
+      "package": "golang.org/x/net",
+      "package_version": "v0.15.0",
+      "reason": "golang.org/x/net v0.15.0 embedded in Fedora-built /usr/bin/kl2tpd from go-l2tp-0.1.8-5.fc45.x86_64; grype reports a fix in 0.53.0. Owner accepted the risk for the stable channel on 2026-11-17 (decision table stable-risk/2026-11-17-decisions.md)."
+    },
+    {
+      "advisory": "GO-2026-4918",
+      "binary": {
+        "path": "/usr/bin/kpppoed",
+        "rpm_nevra": "go-l2tp-0.1.8-5.fc45.x86_64",
+        "sha256": "52cc6bc81a7a8d6dc1c03a6bd296af1f7c50d58618ad5bbb14e468a0bb7e4776"
+      },
+      "channel": "stable",
+      "classification": "accepted_risk",
+      "component_scope": "workstation_payload",
+      "component_type": "embedded_go",
+      "edition": "workstation",
+      "evidence": [
+        {
+          "path": "stable-45.triage.md",
+          "sha256": "9e1d5a1d33d4b490c43c090de957ddad493db589fe23c2d89a6bae2967013c92",
+          "size_bytes": 30007
+        }
+      ],
+      "expires_at": "2026-12-18T00:00:00Z",
+      "fedora": "45",
+      "issued_at": "2026-11-18T00:00:00Z",
+      "owner": "leandromqrs",
+      "package": "golang.org/x/net",
+      "package_version": "v0.15.0",
+      "reason": "golang.org/x/net v0.15.0 embedded in Fedora-built /usr/bin/kpppoed from go-l2tp-0.1.8-5.fc45.x86_64; grype reports a fix in 0.53.0. Owner accepted the risk for the stable channel on 2026-11-17 (decision table stable-risk/2026-11-17-decisions.md)."
+    },
+    {
+      "advisory": "GO-2026-4918",
+      "binary": {
+        "path": "/usr/bin/ql2tpd",
+        "rpm_nevra": "go-l2tp-0.1.8-5.fc45.x86_64",
+        "sha256": "e0c0ddbd63bfe1ce3a8a331343027b52c4c093c43ca75e11ce364c45e97c30b2"
+      },
+      "channel": "stable",
+      "classification": "accepted_risk",
+      "component_scope": "workstation_payload",
+      "component_type": "embedded_go",
+      "edition": "workstation",
+      "evidence": [
+        {
+          "path": "stable-45.triage.md",
+          "sha256": "9e1d5a1d33d4b490c43c090de957ddad493db589fe23c2d89a6bae2967013c92",
+          "size_bytes": 30007
+        }
+      ],
+      "expires_at": "2026-12-18T00:00:00Z",
+      "fedora": "45",
+      "issued_at": "2026-11-18T00:00:00Z",
+      "owner": "leandromqrs",
+      "package": "golang.org/x/net",
+      "package_version": "v0.15.0",
+      "reason": "golang.org/x/net v0.15.0 embedded in Fedora-built /usr/bin/ql2tpd from go-l2tp-0.1.8-5.fc45.x86_64; grype reports a fix in 0.53.0. Owner accepted the risk for the stable channel on 2026-11-17 (decision table stable-risk/2026-11-17-decisions.md)."
+    },
+    {
+      "advisory": "GO-2026-5026",
+      "binary": {
+        "path": "/usr/bin/kl2tpd",
+        "rpm_nevra": "go-l2tp-0.1.8-5.fc45.x86_64",
+        "sha256": "4c74f29bdafc256a8ac2cac124a9b49ff229296baef69a0deb2dcddc92ddabe2"
+      },
+      "channel": "stable",
+      "classification": "accepted_risk",
+      "component_scope": "workstation_payload",
+      "component_type": "embedded_go",
+      "edition": "workstation",
+      "evidence": [
+        {
+          "path": "stable-45.triage.md",
+          "sha256": "9e1d5a1d33d4b490c43c090de957ddad493db589fe23c2d89a6bae2967013c92",
+          "size_bytes": 30007
+        }
+      ],
+      "expires_at": "2026-12-18T00:00:00Z",
+      "fedora": "45",
+      "issued_at": "2026-11-18T00:00:00Z",
+      "owner": "leandromqrs",
+      "package": "golang.org/x/net",
+      "package_version": "v0.15.0",
+      "reason": "golang.org/x/net v0.15.0 embedded in Fedora-built /usr/bin/kl2tpd from go-l2tp-0.1.8-5.fc45.x86_64; grype reports a fix in 0.55.0. Owner accepted the risk for the stable channel on 2026-11-17 (decision table stable-risk/2026-11-17-decisions.md)."
+    },
+    {
+      "advisory": "GO-2026-5026",
+      "binary": {
+        "path": "/usr/bin/kpppoed",
+        "rpm_nevra": "go-l2tp-0.1.8-5.fc45.x86_64",
+        "sha256": "52cc6bc81a7a8d6dc1c03a6bd296af1f7c50d58618ad5bbb14e468a0bb7e4776"
+      },
+      "channel": "stable",
+      "classification": "accepted_risk",
+      "component_scope": "workstation_payload",
+      "component_type": "embedded_go",
+      "edition": "workstation",
+      "evidence": [
+        {
+          "path": "stable-45.triage.md",
+          "sha256": "9e1d5a1d33d4b490c43c090de957ddad493db589fe23c2d89a6bae2967013c92",
+          "size_bytes": 30007
+        }
+      ],
+      "expires_at": "2026-12-18T00:00:00Z",
+      "fedora": "45",
+      "issued_at": "2026-11-18T00:00:00Z",
+      "owner": "leandromqrs",
+      "package": "golang.org/x/net",
+      "package_version": "v0.15.0",
+      "reason": "golang.org/x/net v0.15.0 embedded in Fedora-built /usr/bin/kpppoed from go-l2tp-0.1.8-5.fc45.x86_64; grype reports a fix in 0.55.0. Owner accepted the risk for the stable channel on 2026-11-17 (decision table stable-risk/2026-11-17-decisions.md)."
+    },
+    {
+      "advisory": "GO-2026-5026",
+      "binary": {
+        "path": "/usr/bin/ql2tpd",
+        "rpm_nevra": "go-l2tp-0.1.8-5.fc45.x86_64",
+        "sha256": "e0c0ddbd63bfe1ce3a8a331343027b52c4c093c43ca75e11ce364c45e97c30b2"
+      },
+      "channel": "stable",
+      "classification": "accepted_risk",
+      "component_scope": "workstation_payload",
+      "component_type": "embedded_go",
+      "edition": "workstation",
+      "evidence": [
+        {
+          "path": "stable-45.triage.md",
+          "sha256": "9e1d5a1d33d4b490c43c090de957ddad493db589fe23c2d89a6bae2967013c92",
+          "size_bytes": 30007
+        }
+      ],
+      "expires_at": "2026-12-18T00:00:00Z",
+      "fedora": "45",
+      "issued_at": "2026-11-18T00:00:00Z",
+      "owner": "leandromqrs",
+      "package": "golang.org/x/net",
+      "package_version": "v0.15.0",
+      "reason": "golang.org/x/net v0.15.0 embedded in Fedora-built /usr/bin/ql2tpd from go-l2tp-0.1.8-5.fc45.x86_64; grype reports a fix in 0.55.0. Owner accepted the risk for the stable channel on 2026-11-17 (decision table stable-risk/2026-11-17-decisions.md)."
+    },
+    {
+      "advisory": "GO-2026-5932",
+      "binary": {
+        "ostree_object": "/sysroot/ostree/repo/objects/2b/9e05183517660c9d28a9d875e6db695708f3a91fb75e7b7bd4b88fcb29c29f.file",
+        "path": "/usr/bin/skopeo",
+        "rpm_nevra": "skopeo-1:1.24.1-1.fc45.x86_64",
+        "sha256": "effe157831c2d72c21885b4cf97f021a3ff6957b6b6bc3715f57b95a926944b9"
+      },
+      "channel": "stable",
+      "classification": "accepted_risk",
+      "component_scope": "workstation_payload",
+      "component_type": "embedded_go",
+      "edition": "workstation",
+      "evidence": [
+        {
+          "path": "stable-45.triage.md",
+          "sha256": "9e1d5a1d33d4b490c43c090de957ddad493db589fe23c2d89a6bae2967013c92",
+          "size_bytes": 30007
+        }
+      ],
+      "expires_at": "2026-12-18T00:00:00Z",
+      "fedora": "45",
+      "issued_at": "2026-11-18T00:00:00Z",
+      "owner": "leandromqrs",
+      "package": "golang.org/x/crypto",
+      "package_version": "v0.54.0",
+      "reason": "golang.org/x/crypto v0.54.0 embedded in Fedora-built /usr/bin/skopeo from skopeo-1:1.24.1-1.fc45.x86_64; grype reports a fix in 0.58.1-0.20261009181718-2f1f834330b2. Owner accepted the risk for the stable channel on 2026-11-17 (decision table stable-risk/2026-11-17-decisions.md)."
+    },
+    {
+      "advisory": "GO-2026-5932",
+      "binary": {
+        "ostree_object": "/sysroot/ostree/repo/objects/90/51a1cb1dfada1c2a0dbae6257990b03537238eaaa112a9f9c398384de6e855.file",
+        "path": "/usr/bin/podman",
+        "rpm_nevra": "podman-5:6.1.3-1.fc45.x86_64",
+        "sha256": "246b121ff1063dc42de1b2d9c0db4be61dde67106b99abd0934aafb865a74bb1"
+      },
+      "channel": "stable",
+      "classification": "accepted_risk",
+      "component_scope": "workstation_payload",
+      "component_type": "embedded_go",
+      "edition": "workstation",
+      "evidence": [
+        {
+          "path": "stable-45.triage.md",
+          "sha256": "9e1d5a1d33d4b490c43c090de957ddad493db589fe23c2d89a6bae2967013c92",
+          "size_bytes": 30007
+        }
+      ],
+      "expires_at": "2026-12-18T00:00:00Z",
+      "fedora": "45",
+      "issued_at": "2026-11-18T00:00:00Z",
+      "owner": "leandromqrs",
+      "package": "golang.org/x/crypto",
+      "package_version": "v0.56.0",
+      "reason": "golang.org/x/crypto v0.56.0 embedded in Fedora-built /usr/bin/podman from podman-5:6.1.3-1.fc45.x86_64; grype reports a fix in 0.58.1-0.20261009181718-2f1f834330b2. Owner accepted the risk for the stable channel on 2026-11-17 (decision table stable-risk/2026-11-17-decisions.md)."
+    },
+    {
+      "advisory": "GO-2026-5942",
+      "binary": {
+        "path": "/usr/bin/kl2tpd",
+        "rpm_nevra": "go-l2tp-0.1.8-5.fc45.x86_64",
+        "sha256": "4c74f29bdafc256a8ac2cac124a9b49ff229296baef69a0deb2dcddc92ddabe2"
+      },
+      "channel": "stable",
+      "classification": "accepted_risk",
+      "component_scope": "workstation_payload",
+      "component_type": "embedded_go",
+      "edition": "workstation",
+      "evidence": [
+        {
+          "path": "stable-45.triage.md",
+          "sha256": "9e1d5a1d33d4b490c43c090de957ddad493db589fe23c2d89a6bae2967013c92",
+          "size_bytes": 30007
+        }
+      ],
+      "expires_at": "2026-12-18T00:00:00Z",
+      "fedora": "45",
+      "issued_at": "2026-11-18T00:00:00Z",
+      "owner": "leandromqrs",
+      "package": "golang.org/x/net",
+      "package_version": "v0.15.0",
+      "reason": "golang.org/x/net v0.15.0 embedded in Fedora-built /usr/bin/kl2tpd from go-l2tp-0.1.8-5.fc45.x86_64; grype reports a fix in 0.56.0. Owner accepted the risk for the stable channel on 2026-11-17 (decision table stable-risk/2026-11-17-decisions.md)."
+    },
+    {
+      "advisory": "GO-2026-5942",
+      "binary": {
+        "path": "/usr/bin/kpppoed",
+        "rpm_nevra": "go-l2tp-0.1.8-5.fc45.x86_64",
+        "sha256": "52cc6bc81a7a8d6dc1c03a6bd296af1f7c50d58618ad5bbb14e468a0bb7e4776"
+      },
+      "channel": "stable",
+      "classification": "accepted_risk",
+      "component_scope": "workstation_payload",
+      "component_type": "embedded_go",
+      "edition": "workstation",
+      "evidence": [
+        {
+          "path": "stable-45.triage.md",
+          "sha256": "9e1d5a1d33d4b490c43c090de957ddad493db589fe23c2d89a6bae2967013c92",
+          "size_bytes": 30007
+        }
+      ],
+      "expires_at": "2026-12-18T00:00:00Z",
+      "fedora": "45",
+      "issued_at": "2026-11-18T00:00:00Z",
+      "owner": "leandromqrs",
+      "package": "golang.org/x/net",
+      "package_version": "v0.15.0",
+      "reason": "golang.org/x/net v0.15.0 embedded in Fedora-built /usr/bin/kpppoed from go-l2tp-0.1.8-5.fc45.x86_64; grype reports a fix in 0.56.0. Owner accepted the risk for the stable channel on 2026-11-17 (decision table stable-risk/2026-11-17-decisions.md)."
+    },
+    {
+      "advisory": "GO-2026-5942",
+      "binary": {
+        "path": "/usr/bin/ql2tpd",
+        "rpm_nevra": "go-l2tp-0.1.8-5.fc45.x86_64",
+        "sha256": "e0c0ddbd63bfe1ce3a8a331343027b52c4c093c43ca75e11ce364c45e97c30b2"
+      },
+      "channel": "stable",
+      "classification": "accepted_risk",
+      "component_scope": "workstation_payload",
+      "component_type": "embedded_go",
+      "edition": "workstation",
+      "evidence": [
+        {
+          "path": "stable-45.triage.md",
+          "sha256": "9e1d5a1d33d4b490c43c090de957ddad493db589fe23c2d89a6bae2967013c92",
+          "size_bytes": 30007
+        }
+      ],
+      "expires_at": "2026-12-18T00:00:00Z",
+      "fedora": "45",
+      "issued_at": "2026-11-18T00:00:00Z",
+      "owner": "leandromqrs",
+      "package": "golang.org/x/net",
+      "package_version": "v0.15.0",
+      "reason": "golang.org/x/net v0.15.0 embedded in Fedora-built /usr/bin/ql2tpd from go-l2tp-0.1.8-5.fc45.x86_64; grype reports a fix in 0.56.0. Owner accepted the risk for the stable channel on 2026-11-17 (decision table stable-risk/2026-11-17-decisions.md)."
+    },
+    {
+      "advisory": "GO-2026-5970",
+      "binary": {
+        "ostree_object": "/sysroot/ostree/repo/objects/2e/a8825505d254bd3966b6e98429884c7dab053debc646862a09ace80f9bc57c.file",
+        "path": "/usr/bin/toolbox",
+        "rpm_nevra": "toolbox-0.3-7.fc45.x86_64",
+        "sha256": "daa0a9b94c96ff8ae594723536ab2503818d0854b97fd2ebf0d61154de5a1bd7"
+      },
+      "channel": "stable",
+      "classification": "accepted_risk",
+      "component_scope": "workstation_payload",
+      "component_type": "embedded_go",
+      "edition": "workstation",
+      "evidence": [
+        {
+          "path": "stable-45.triage.md",
+          "sha256": "9e1d5a1d33d4b490c43c090de957ddad493db589fe23c2d89a6bae2967013c92",
+          "size_bytes": 30007
+        }
+      ],
+      "expires_at": "2026-12-18T00:00:00Z",
+      "fedora": "45",
+      "issued_at": "2026-11-18T00:00:00Z",
+      "owner": "leandromqrs",
+      "package": "golang.org/x/text",
+      "package_version": "v0.21.0",
+      "reason": "golang.org/x/text v0.21.0 embedded in Fedora-built /usr/bin/toolbox from toolbox-0.3-7.fc45.x86_64; grype reports a fix in 0.39.0. Owner accepted the risk for the stable channel on 2026-11-17 (decision table stable-risk/2026-11-17-decisions.md)."
+    },
+    {
+      "advisory": "GO-2026-6179",
+      "binary": {
+        "ostree_object": "/sysroot/ostree/repo/objects/2e/a8825505d254bd3966b6e98429884c7dab053debc646862a09ace80f9bc57c.file",
+        "path": "/usr/bin/toolbox",
+        "rpm_nevra": "toolbox-0.3-7.fc45.x86_64",
+        "sha256": "daa0a9b94c96ff8ae594723536ab2503818d0854b97fd2ebf0d61154de5a1bd7"
+      },
+      "channel": "stable",
+      "classification": "accepted_risk",
+      "component_scope": "workstation_payload",
+      "component_type": "embedded_go",
+      "edition": "workstation",
+      "evidence": [
+        {
+          "path": "stable-45.triage.md",
+          "sha256": "9e1d5a1d33d4b490c43c090de957ddad493db589fe23c2d89a6bae2967013c92",
+          "size_bytes": 30007
+        }
+      ],
+      "expires_at": "2026-12-18T00:00:00Z",
+      "fedora": "45",
+      "issued_at": "2026-11-18T00:00:00Z",
+      "owner": "leandromqrs",
+      "package": "golang.org/x/mod",
+      "package_version": "v0.20.0",
+      "reason": "golang.org/x/mod v0.20.0 embedded in Fedora-built /usr/bin/toolbox from toolbox-0.3-7.fc45.x86_64; grype reports a fix in 0.40.0. Owner accepted the risk for the stable channel on 2026-11-17 (decision table stable-risk/2026-11-17-decisions.md)."
+    },
+    {
+      "advisory": "GO-2026-6180",
+      "binary": {
+        "ostree_object": "/sysroot/ostree/repo/objects/2e/a8825505d254bd3966b6e98429884c7dab053debc646862a09ace80f9bc57c.file",
+        "path": "/usr/bin/toolbox",
+        "rpm_nevra": "toolbox-0.3-7.fc45.x86_64",
+        "sha256": "daa0a9b94c96ff8ae594723536ab2503818d0854b97fd2ebf0d61154de5a1bd7"
+      },
+      "channel": "stable",
+      "classification": "accepted_risk",
+      "component_scope": "workstation_payload",
+      "component_type": "embedded_go",
+      "edition": "workstation",
+      "evidence": [
+        {
+          "path": "stable-45.triage.md",
+          "sha256": "9e1d5a1d33d4b490c43c090de957ddad493db589fe23c2d89a6bae2967013c92",
+          "size_bytes": 30007
+        }
+      ],
+      "expires_at": "2026-12-18T00:00:00Z",
+      "fedora": "45",
+      "issued_at": "2026-11-18T00:00:00Z",
+      "owner": "leandromqrs",
+      "package": "golang.org/x/mod",
+      "package_version": "v0.20.0",
+      "reason": "golang.org/x/mod v0.20.0 embedded in Fedora-built /usr/bin/toolbox from toolbox-0.3-7.fc45.x86_64; grype reports a fix in 0.40.0. Owner accepted the risk for the stable channel on 2026-11-17 (decision table stable-risk/2026-11-17-decisions.md)."
+    },
+    {
+      "advisory": "GO-2026-6603",
+      "binary": {
+        "path": "/usr/bin/kl2tpd",
+        "rpm_nevra": "go-l2tp-0.1.8-5.fc45.x86_64",
+        "sha256": "4c74f29bdafc256a8ac2cac124a9b49ff229296baef69a0deb2dcddc92ddabe2"
+      },
+      "channel": "stable",
+      "classification": "accepted_risk",
+      "component_scope": "workstation_payload",
+      "component_type": "embedded_go",
+      "edition": "workstation",
+      "evidence": [
+        {
+          "path": "stable-45.triage.md",
+          "sha256": "9e1d5a1d33d4b490c43c090de957ddad493db589fe23c2d89a6bae2967013c92",
+          "size_bytes": 30007
+        }
+      ],
+      "expires_at": "2026-12-18T00:00:00Z",
+      "fedora": "45",
+      "issued_at": "2026-11-18T00:00:00Z",
+      "owner": "leandromqrs",
+      "package": "golang.org/x/net",
+      "package_version": "v0.15.0",
+      "reason": "golang.org/x/net v0.15.0 embedded in Fedora-built /usr/bin/kl2tpd from go-l2tp-0.1.8-5.fc45.x86_64; grype reports a fix in 0.60.0. Owner accepted the risk for the stable channel on 2026-11-17 (decision table stable-risk/2026-11-17-decisions.md)."
+    },
+    {
+      "advisory": "GO-2026-6603",
+      "binary": {
+        "path": "/usr/bin/kpppoed",
+        "rpm_nevra": "go-l2tp-0.1.8-5.fc45.x86_64",
+        "sha256": "52cc6bc81a7a8d6dc1c03a6bd296af1f7c50d58618ad5bbb14e468a0bb7e4776"
+      },
+      "channel": "stable",
+      "classification": "accepted_risk",
+      "component_scope": "workstation_payload",
+      "component_type": "embedded_go",
+      "edition": "workstation",
+      "evidence": [
+        {
+          "path": "stable-45.triage.md",
+          "sha256": "9e1d5a1d33d4b490c43c090de957ddad493db589fe23c2d89a6bae2967013c92",
+          "size_bytes": 30007
+        }
+      ],
+      "expires_at": "2026-12-18T00:00:00Z",
+      "fedora": "45",
+      "issued_at": "2026-11-18T00:00:00Z",
+      "owner": "leandromqrs",
+      "package": "golang.org/x/net",
+      "package_version": "v0.15.0",
+      "reason": "golang.org/x/net v0.15.0 embedded in Fedora-built /usr/bin/kpppoed from go-l2tp-0.1.8-5.fc45.x86_64; grype reports a fix in 0.60.0. Owner accepted the risk for the stable channel on 2026-11-17 (decision table stable-risk/2026-11-17-decisions.md)."
+    },
+    {
+      "advisory": "GO-2026-6603",
+      "binary": {
+        "path": "/usr/bin/ql2tpd",
+        "rpm_nevra": "go-l2tp-0.1.8-5.fc45.x86_64",
+        "sha256": "e0c0ddbd63bfe1ce3a8a331343027b52c4c093c43ca75e11ce364c45e97c30b2"
+      },
+      "channel": "stable",
+      "classification": "accepted_risk",
+      "component_scope": "workstation_payload",
+      "component_type": "embedded_go",
+      "edition": "workstation",
+      "evidence": [
+        {
+          "path": "stable-45.triage.md",
+          "sha256": "9e1d5a1d33d4b490c43c090de957ddad493db589fe23c2d89a6bae2967013c92",
+          "size_bytes": 30007
+        }
+      ],
+      "expires_at": "2026-12-18T00:00:00Z",
+      "fedora": "45",
+      "issued_at": "2026-11-18T00:00:00Z",
+      "owner": "leandromqrs",
+      "package": "golang.org/x/net",
+      "package_version": "v0.15.0",
+      "reason": "golang.org/x/net v0.15.0 embedded in Fedora-built /usr/bin/ql2tpd from go-l2tp-0.1.8-5.fc45.x86_64; grype reports a fix in 0.60.0. Owner accepted the risk for the stable channel on 2026-11-17 (decision table stable-risk/2026-11-17-decisions.md)."
+    },
+    {
+      "advisory": "GO-2026-6610",
+      "binary": {
+        "path": "/usr/bin/kl2tpd",
+        "rpm_nevra": "go-l2tp-0.1.8-5.fc45.x86_64",
+        "sha256": "4c74f29bdafc256a8ac2cac124a9b49ff229296baef69a0deb2dcddc92ddabe2"
+      },
+      "channel": "stable",
+      "classification": "accepted_risk",
+      "component_scope": "workstation_payload",
+      "component_type": "embedded_go",
+      "edition": "workstation",
+      "evidence": [
+        {
+          "path": "stable-45.triage.md",
+          "sha256": "9e1d5a1d33d4b490c43c090de957ddad493db589fe23c2d89a6bae2967013c92",
+          "size_bytes": 30007
+        }
+      ],
+      "expires_at": "2026-12-18T00:00:00Z",
+      "fedora": "45",
+      "issued_at": "2026-11-18T00:00:00Z",
+      "owner": "leandromqrs",
+      "package": "golang.org/x/net",
+      "package_version": "v0.15.0",
+      "reason": "golang.org/x/net v0.15.0 embedded in Fedora-built /usr/bin/kl2tpd from go-l2tp-0.1.8-5.fc45.x86_64; grype reports a fix in 0.60.0. Owner accepted the risk for the stable channel on 2026-11-17 (decision table stable-risk/2026-11-17-decisions.md)."
+    },
+    {
+      "advisory": "GO-2026-6610",
+      "binary": {
+        "path": "/usr/bin/kpppoed",
+        "rpm_nevra": "go-l2tp-0.1.8-5.fc45.x86_64",
+        "sha256": "52cc6bc81a7a8d6dc1c03a6bd296af1f7c50d58618ad5bbb14e468a0bb7e4776"
+      },
+      "channel": "stable",
+      "classification": "accepted_risk",
+      "component_scope": "workstation_payload",
+      "component_type": "embedded_go",
+      "edition": "workstation",
+      "evidence": [
+        {
+          "path": "stable-45.triage.md",
+          "sha256": "9e1d5a1d33d4b490c43c090de957ddad493db589fe23c2d89a6bae2967013c92",
+          "size_bytes": 30007
+        }
+      ],
+      "expires_at": "2026-12-18T00:00:00Z",
+      "fedora": "45",
+      "issued_at": "2026-11-18T00:00:00Z",
+      "owner": "leandromqrs",
+      "package": "golang.org/x/net",
+      "package_version": "v0.15.0",
+      "reason": "golang.org/x/net v0.15.0 embedded in Fedora-built /usr/bin/kpppoed from go-l2tp-0.1.8-5.fc45.x86_64; grype reports a fix in 0.60.0. Owner accepted the risk for the stable channel on 2026-11-17 (decision table stable-risk/2026-11-17-decisions.md)."
+    },
+    {
+      "advisory": "GO-2026-6610",
+      "binary": {
+        "path": "/usr/bin/ql2tpd",
+        "rpm_nevra": "go-l2tp-0.1.8-5.fc45.x86_64",
+        "sha256": "e0c0ddbd63bfe1ce3a8a331343027b52c4c093c43ca75e11ce364c45e97c30b2"
+      },
+      "channel": "stable",
+      "classification": "accepted_risk",
+      "component_scope": "workstation_payload",
+      "component_type": "embedded_go",
+      "edition": "workstation",
+      "evidence": [
+        {
+          "path": "stable-45.triage.md",
+          "sha256": "9e1d5a1d33d4b490c43c090de957ddad493db589fe23c2d89a6bae2967013c92",
+          "size_bytes": 30007
+        }
+      ],
+      "expires_at": "2026-12-18T00:00:00Z",
+      "fedora": "45",
+      "issued_at": "2026-11-18T00:00:00Z",
+      "owner": "leandromqrs",
+      "package": "golang.org/x/net",
+      "package_version": "v0.15.0",
+      "reason": "golang.org/x/net v0.15.0 embedded in Fedora-built /usr/bin/ql2tpd from go-l2tp-0.1.8-5.fc45.x86_64; grype reports a fix in 0.60.0. Owner accepted the risk for the stable channel on 2026-11-17 (decision table stable-risk/2026-11-17-decisions.md)."
+    },
+    {
+      "advisory": "GO-2026-6611",
+      "binary": {
+        "path": "/usr/bin/kl2tpd",
+        "rpm_nevra": "go-l2tp-0.1.8-5.fc45.x86_64",
+        "sha256": "4c74f29bdafc256a8ac2cac124a9b49ff229296baef69a0deb2dcddc92ddabe2"
+      },
+      "channel": "stable",
+      "classification": "accepted_risk",
+      "component_scope": "workstation_payload",
+      "component_type": "embedded_go",
+      "edition": "workstation",
+      "evidence": [
+        {
+          "path": "stable-45.triage.md",
+          "sha256": "9e1d5a1d33d4b490c43c090de957ddad493db589fe23c2d89a6bae2967013c92",
+          "size_bytes": 30007
+        }
+      ],
+      "expires_at": "2026-12-18T00:00:00Z",
+      "fedora": "45",
+      "issued_at": "2026-11-18T00:00:00Z",
+      "owner": "leandromqrs",
+      "package": "golang.org/x/net",
+      "package_version": "v0.15.0",
+      "reason": "golang.org/x/net v0.15.0 embedded in Fedora-built /usr/bin/kl2tpd from go-l2tp-0.1.8-5.fc45.x86_64; grype reports a fix in 0.60.0. Owner accepted the risk for the stable channel on 2026-11-17 (decision table stable-risk/2026-11-17-decisions.md)."
+    },
+    {
+      "advisory": "GO-2026-6611",
+      "binary": {
+        "path": "/usr/bin/kpppoed",
+        "rpm_nevra": "go-l2tp-0.1.8-5.fc45.x86_64",
+        "sha256": "52cc6bc81a7a8d6dc1c03a6bd296af1f7c50d58618ad5bbb14e468a0bb7e4776"
+      },
+      "channel": "stable",
+      "classification": "accepted_risk",
+      "component_scope": "workstation_payload",
+      "component_type": "embedded_go",
+      "edition": "workstation",
+      "evidence": [
+        {
+          "path": "stable-45.triage.md",
+          "sha256": "9e1d5a1d33d4b490c43c090de957ddad493db589fe23c2d89a6bae2967013c92",
+          "size_bytes": 30007
+        }
+      ],
+      "expires_at": "2026-12-18T00:00:00Z",
+      "fedora": "45",
+      "issued_at": "2026-11-18T00:00:00Z",
+      "owner": "leandromqrs",
+      "package": "golang.org/x/net",
+      "package_version": "v0.15.0",
+      "reason": "golang.org/x/net v0.15.0 embedded in Fedora-built /usr/bin/kpppoed from go-l2tp-0.1.8-5.fc45.x86_64; grype reports a fix in 0.60.0. Owner accepted the risk for the stable channel on 2026-11-17 (decision table stable-risk/2026-11-17-decisions.md)."
+    },
+    {
+      "advisory": "GO-2026-6611",
+      "binary": {
+        "path": "/usr/bin/ql2tpd",
+        "rpm_nevra": "go-l2tp-0.1.8-5.fc45.x86_64",
+        "sha256": "e0c0ddbd63bfe1ce3a8a331343027b52c4c093c43ca75e11ce364c45e97c30b2"
+      },
+      "channel": "stable",
+      "classification": "accepted_risk",
+      "component_scope": "workstation_payload",
+      "component_type": "embedded_go",
+      "edition": "workstation",
+      "evidence": [
+        {
+          "path": "stable-45.triage.md",
+          "sha256": "9e1d5a1d33d4b490c43c090de957ddad493db589fe23c2d89a6bae2967013c92",
+          "size_bytes": 30007
+        }
+      ],
+      "expires_at": "2026-12-18T00:00:00Z",
+      "fedora": "45",
+      "issued_at": "2026-11-18T00:00:00Z",
+      "owner": "leandromqrs",
+      "package": "golang.org/x/net",
+      "package_version": "v0.15.0",
+      "reason": "golang.org/x/net v0.15.0 embedded in Fedora-built /usr/bin/ql2tpd from go-l2tp-0.1.8-5.fc45.x86_64; grype reports a fix in 0.60.0. Owner accepted the risk for the stable channel on 2026-11-17 (decision table stable-risk/2026-11-17-decisions.md)."
+    },
+    {
+      "advisory": "GO-2026-6612",
+      "binary": {
+        "path": "/usr/bin/kl2tpd",
+        "rpm_nevra": "go-l2tp-0.1.8-5.fc45.x86_64",
+        "sha256": "4c74f29bdafc256a8ac2cac124a9b49ff229296baef69a0deb2dcddc92ddabe2"
+      },
+      "channel": "stable",
+      "classification": "accepted_risk",
+      "component_scope": "workstation_payload",
+      "component_type": "embedded_go",
+      "edition": "workstation",
+      "evidence": [
+        {
+          "path": "stable-45.triage.md",
+          "sha256": "9e1d5a1d33d4b490c43c090de957ddad493db589fe23c2d89a6bae2967013c92",
+          "size_bytes": 30007
+        }
+      ],
+      "expires_at": "2026-12-18T00:00:00Z",
+      "fedora": "45",
+      "issued_at": "2026-11-18T00:00:00Z",
+      "owner": "leandromqrs",
+      "package": "golang.org/x/net",
+      "package_version": "v0.15.0",
+      "reason": "golang.org/x/net v0.15.0 embedded in Fedora-built /usr/bin/kl2tpd from go-l2tp-0.1.8-5.fc45.x86_64; grype reports a fix in 0.60.0. Owner accepted the risk for the stable channel on 2026-11-17 (decision table stable-risk/2026-11-17-decisions.md)."
+    },
+    {
+      "advisory": "GO-2026-6612",
+      "binary": {
+        "path": "/usr/bin/kpppoed",
+        "rpm_nevra": "go-l2tp-0.1.8-5.fc45.x86_64",
+        "sha256": "52cc6bc81a7a8d6dc1c03a6bd296af1f7c50d58618ad5bbb14e468a0bb7e4776"
+      },
+      "channel": "stable",
+      "classification": "accepted_risk",
+      "component_scope": "workstation_payload",
+      "component_type": "embedded_go",
+      "edition": "workstation",
+      "evidence": [
+        {
+          "path": "stable-45.triage.md",
+          "sha256": "9e1d5a1d33d4b490c43c090de957ddad493db589fe23c2d89a6bae2967013c92",
+          "size_bytes": 30007
+        }
+      ],
+      "expires_at": "2026-12-18T00:00:00Z",
+      "fedora": "45",
+      "issued_at": "2026-11-18T00:00:00Z",
+      "owner": "leandromqrs",
+      "package": "golang.org/x/net",
+      "package_version": "v0.15.0",
+      "reason": "golang.org/x/net v0.15.0 embedded in Fedora-built /usr/bin/kpppoed from go-l2tp-0.1.8-5.fc45.x86_64; grype reports a fix in 0.60.0. Owner accepted the risk for the stable channel on 2026-11-17 (decision table stable-risk/2026-11-17-decisions.md)."
+    },
+    {
+      "advisory": "GO-2026-6612",
+      "binary": {
+        "path": "/usr/bin/ql2tpd",
+        "rpm_nevra": "go-l2tp-0.1.8-5.fc45.x86_64",
+        "sha256": "e0c0ddbd63bfe1ce3a8a331343027b52c4c093c43ca75e11ce364c45e97c30b2"
+      },
+      "channel": "stable",
+      "classification": "accepted_risk",
+      "component_scope": "workstation_payload",
+      "component_type": "embedded_go",
+      "edition": "workstation",
+      "evidence": [
+        {
+          "path": "stable-45.triage.md",
+          "sha256": "9e1d5a1d33d4b490c43c090de957ddad493db589fe23c2d89a6bae2967013c92",
+          "size_bytes": 30007
+        }
+      ],
+      "expires_at": "2026-12-18T00:00:00Z",
+      "fedora": "45",
+      "issued_at": "2026-11-18T00:00:00Z",
+      "owner": "leandromqrs",
+      "package": "golang.org/x/net",
+      "package_version": "v0.15.0",
+      "reason": "golang.org/x/net v0.15.0 embedded in Fedora-built /usr/bin/ql2tpd from go-l2tp-0.1.8-5.fc45.x86_64; grype reports a fix in 0.60.0. Owner accepted the risk for the stable channel on 2026-11-17 (decision table stable-risk/2026-11-17-decisions.md)."
+    },
+    {
+      "advisory": "GO-2026-6617",
+      "binary": {
+        "path": "/usr/bin/kl2tpd",
+        "rpm_nevra": "go-l2tp-0.1.8-5.fc45.x86_64",
+        "sha256": "4c74f29bdafc256a8ac2cac124a9b49ff229296baef69a0deb2dcddc92ddabe2"
+      },
+      "channel": "stable",
+      "classification": "accepted_risk",
+      "component_scope": "workstation_payload",
+      "component_type": "embedded_go",
+      "edition": "workstation",
+      "evidence": [
+        {
+          "path": "stable-45.triage.md",
+          "sha256": "9e1d5a1d33d4b490c43c090de957ddad493db589fe23c2d89a6bae2967013c92",
+          "size_bytes": 30007
+        }
+      ],
+      "expires_at": "2026-12-18T00:00:00Z",
+      "fedora": "45",
+      "issued_at": "2026-11-18T00:00:00Z",
+      "owner": "leandromqrs",
+      "package": "golang.org/x/net",
+      "package_version": "v0.15.0",
+      "reason": "golang.org/x/net v0.15.0 embedded in Fedora-built /usr/bin/kl2tpd from go-l2tp-0.1.8-5.fc45.x86_64; grype reports a fix in 0.60.0. Owner accepted the risk for the stable channel on 2026-11-17 (decision table stable-risk/2026-11-17-decisions.md)."
+    },
+    {
+      "advisory": "GO-2026-6617",
+      "binary": {
+        "path": "/usr/bin/kpppoed",
+        "rpm_nevra": "go-l2tp-0.1.8-5.fc45.x86_64",
+        "sha256": "52cc6bc81a7a8d6dc1c03a6bd296af1f7c50d58618ad5bbb14e468a0bb7e4776"
+      },
+      "channel": "stable",
+      "classification": "accepted_risk",
+      "component_scope": "workstation_payload",
+      "component_type": "embedded_go",
+      "edition": "workstation",
+      "evidence": [
+        {
+          "path": "stable-45.triage.md",
+          "sha256": "9e1d5a1d33d4b490c43c090de957ddad493db589fe23c2d89a6bae2967013c92",
+          "size_bytes": 30007
+        }
+      ],
+      "expires_at": "2026-12-18T00:00:00Z",
+      "fedora": "45",
+      "issued_at": "2026-11-18T00:00:00Z",
+      "owner": "leandromqrs",
+      "package": "golang.org/x/net",
+      "package_version": "v0.15.0",
+      "reason": "golang.org/x/net v0.15.0 embedded in Fedora-built /usr/bin/kpppoed from go-l2tp-0.1.8-5.fc45.x86_64; grype reports a fix in 0.60.0. Owner accepted the risk for the stable channel on 2026-11-17 (decision table stable-risk/2026-11-17-decisions.md)."
+    },
+    {
+      "advisory": "GO-2026-6617",
+      "binary": {
+        "path": "/usr/bin/ql2tpd",
+        "rpm_nevra": "go-l2tp-0.1.8-5.fc45.x86_64",
+        "sha256": "e0c0ddbd63bfe1ce3a8a331343027b52c4c093c43ca75e11ce364c45e97c30b2"
+      },
+      "channel": "stable",
+      "classification": "accepted_risk",
+      "component_scope": "workstation_payload",
+      "component_type": "embedded_go",
+      "edition": "workstation",
+      "evidence": [
+        {
+          "path": "stable-45.triage.md",
+          "sha256": "9e1d5a1d33d4b490c43c090de957ddad493db589fe23c2d89a6bae2967013c92",
+          "size_bytes": 30007
+        }
+      ],
+      "expires_at": "2026-12-18T00:00:00Z",
+      "fedora": "45",
+      "issued_at": "2026-11-18T00:00:00Z",
+      "owner": "leandromqrs",
+      "package": "golang.org/x/net",
+      "package_version": "v0.15.0",
+      "reason": "golang.org/x/net v0.15.0 embedded in Fedora-built /usr/bin/ql2tpd from go-l2tp-0.1.8-5.fc45.x86_64; grype reports a fix in 0.60.0. Owner accepted the risk for the stable channel on 2026-11-17 (decision table stable-risk/2026-11-17-decisions.md)."
+    },
+    {
+      "advisory": "GO-2026-6629",
+      "binary": {
+        "ostree_object": "/sysroot/ostree/repo/objects/2e/a8825505d254bd3966b6e98429884c7dab053debc646862a09ace80f9bc57c.file",
+        "path": "/usr/bin/toolbox",
+        "rpm_nevra": "toolbox-0.3-7.fc45.x86_64",
+        "sha256": "daa0a9b94c96ff8ae594723536ab2503818d0854b97fd2ebf0d61154de5a1bd7"
+      },
+      "channel": "stable",
+      "classification": "accepted_risk",
+      "component_scope": "workstation_payload",
+      "component_type": "embedded_go",
+      "edition": "workstation",
+      "evidence": [
+        {
+          "path": "stable-45.triage.md",
+          "sha256": "9e1d5a1d33d4b490c43c090de957ddad493db589fe23c2d89a6bae2967013c92",
+          "size_bytes": 30007
+        }
+      ],
+      "expires_at": "2026-12-18T00:00:00Z",
+      "fedora": "45",
+      "issued_at": "2026-11-18T00:00:00Z",
+      "owner": "leandromqrs",
+      "package": "golang.org/x/text",
+      "package_version": "v0.21.0",
+      "reason": "golang.org/x/text v0.21.0 embedded in Fedora-built /usr/bin/toolbox from toolbox-0.3-7.fc45.x86_64; grype reports a fix in 0.41.0. Owner accepted the risk for the stable channel on 2026-11-17 (decision table stable-risk/2026-11-17-decisions.md)."
+    },
+    {
+      "advisory": "GO-2026-6860",
+      "binary": {
+        "path": "/usr/bin/kl2tpd",
+        "rpm_nevra": "go-l2tp-0.1.8-5.fc45.x86_64",
+        "sha256": "4c74f29bdafc256a8ac2cac124a9b49ff229296baef69a0deb2dcddc92ddabe2"
+      },
+      "channel": "stable",
+      "classification": "accepted_risk",
+      "component_scope": "workstation_payload",
+      "component_type": "embedded_go",
+      "edition": "workstation",
+      "evidence": [
+        {
+          "path": "stable-45.triage.md",
+          "sha256": "9e1d5a1d33d4b490c43c090de957ddad493db589fe23c2d89a6bae2967013c92",
+          "size_bytes": 30007
+        }
+      ],
+      "expires_at": "2026-12-18T00:00:00Z",
+      "fedora": "45",
+      "issued_at": "2026-11-18T00:00:00Z",
+      "owner": "leandromqrs",
+      "package": "golang.org/x/net",
+      "package_version": "v0.15.0",
+      "reason": "golang.org/x/net v0.15.0 embedded in Fedora-built /usr/bin/kl2tpd from go-l2tp-0.1.8-5.fc45.x86_64; grype reports a fix in 0.62.0. Owner accepted the risk for the stable channel on 2026-11-17 (decision table stable-risk/2026-11-17-decisions.md)."
+    },
+    {
+      "advisory": "GO-2026-6860",
+      "binary": {
+        "path": "/usr/bin/kpppoed",
+        "rpm_nevra": "go-l2tp-0.1.8-5.fc45.x86_64",
+        "sha256": "52cc6bc81a7a8d6dc1c03a6bd296af1f7c50d58618ad5bbb14e468a0bb7e4776"
+      },
+      "channel": "stable",
+      "classification": "accepted_risk",
+      "component_scope": "workstation_payload",
+      "component_type": "embedded_go",
+      "edition": "workstation",
+      "evidence": [
+        {
+          "path": "stable-45.triage.md",
+          "sha256": "9e1d5a1d33d4b490c43c090de957ddad493db589fe23c2d89a6bae2967013c92",
+          "size_bytes": 30007
+        }
+      ],
+      "expires_at": "2026-12-18T00:00:00Z",
+      "fedora": "45",
+      "issued_at": "2026-11-18T00:00:00Z",
+      "owner": "leandromqrs",
+      "package": "golang.org/x/net",
+      "package_version": "v0.15.0",
+      "reason": "golang.org/x/net v0.15.0 embedded in Fedora-built /usr/bin/kpppoed from go-l2tp-0.1.8-5.fc45.x86_64; grype reports a fix in 0.62.0. Owner accepted the risk for the stable channel on 2026-11-17 (decision table stable-risk/2026-11-17-decisions.md)."
+    },
+    {
+      "advisory": "GO-2026-6860",
+      "binary": {
+        "path": "/usr/bin/ql2tpd",
+        "rpm_nevra": "go-l2tp-0.1.8-5.fc45.x86_64",
+        "sha256": "e0c0ddbd63bfe1ce3a8a331343027b52c4c093c43ca75e11ce364c45e97c30b2"
+      },
+      "channel": "stable",
+      "classification": "accepted_risk",
+      "component_scope": "workstation_payload",
+      "component_type": "embedded_go",
+      "edition": "workstation",
+      "evidence": [
+        {
+          "path": "stable-45.triage.md",
+          "sha256": "9e1d5a1d33d4b490c43c090de957ddad493db589fe23c2d89a6bae2967013c92",
+          "size_bytes": 30007
+        }
+      ],
+      "expires_at": "2026-12-18T00:00:00Z",
+      "fedora": "45",
+      "issued_at": "2026-11-18T00:00:00Z",
+      "owner": "leandromqrs",
+      "package": "golang.org/x/net",
+      "package_version": "v0.15.0",
+      "reason": "golang.org/x/net v0.15.0 embedded in Fedora-built /usr/bin/ql2tpd from go-l2tp-0.1.8-5.fc45.x86_64; grype reports a fix in 0.62.0. Owner accepted the risk for the stable channel on 2026-11-17 (decision table stable-risk/2026-11-17-decisions.md)."
+    },
+    {
+      "advisory": "GO-2026-6860",
+      "binary": {
+        "ostree_object": "/sysroot/ostree/repo/objects/2b/9e05183517660c9d28a9d875e6db695708f3a91fb75e7b7bd4b88fcb29c29f.file",
+        "path": "/usr/bin/skopeo",
+        "rpm_nevra": "skopeo-1:1.24.1-1.fc45.x86_64",
+        "sha256": "effe157831c2d72c21885b4cf97f021a3ff6957b6b6bc3715f57b95a926944b9"
+      },
+      "channel": "stable",
+      "classification": "accepted_risk",
+      "component_scope": "workstation_payload",
+      "component_type": "embedded_go",
+      "edition": "workstation",
+      "evidence": [
+        {
+          "path": "stable-45.triage.md",
+          "sha256": "9e1d5a1d33d4b490c43c090de957ddad493db589fe23c2d89a6bae2967013c92",
+          "size_bytes": 30007
+        }
+      ],
+      "expires_at": "2026-12-18T00:00:00Z",
+      "fedora": "45",
+      "issued_at": "2026-11-18T00:00:00Z",
+      "owner": "leandromqrs",
+      "package": "golang.org/x/net",
+      "package_version": "v0.56.0",
+      "reason": "golang.org/x/net v0.56.0 embedded in Fedora-built /usr/bin/skopeo from skopeo-1:1.24.1-1.fc45.x86_64; grype reports a fix in 0.62.0. Owner accepted the risk for the stable channel on 2026-11-17 (decision table stable-risk/2026-11-17-decisions.md)."
+    },
+    {
+      "advisory": "GO-2026-6860",
+      "binary": {
+        "ostree_object": "/sysroot/ostree/repo/objects/90/51a1cb1dfada1c2a0dbae6257990b03537238eaaa112a9f9c398384de6e855.file",
+        "path": "/usr/bin/podman",
+        "rpm_nevra": "podman-5:6.1.3-1.fc45.x86_64",
+        "sha256": "246b121ff1063dc42de1b2d9c0db4be61dde67106b99abd0934aafb865a74bb1"
+      },
+      "channel": "stable",
+      "classification": "accepted_risk",
+      "component_scope": "workstation_payload",
+      "component_type": "embedded_go",
+      "edition": "workstation",
+      "evidence": [
+        {
+          "path": "stable-45.triage.md",
+          "sha256": "9e1d5a1d33d4b490c43c090de957ddad493db589fe23c2d89a6bae2967013c92",
+          "size_bytes": 30007
+        }
+      ],
+      "expires_at": "2026-12-18T00:00:00Z",
+      "fedora": "45",
+      "issued_at": "2026-11-18T00:00:00Z",
+      "owner": "leandromqrs",
+      "package": "golang.org/x/net",
+      "package_version": "v0.57.0",
+      "reason": "golang.org/x/net v0.57.0 embedded in Fedora-built /usr/bin/podman from podman-5:6.1.3-1.fc45.x86_64; grype reports a fix in 0.62.0. Owner accepted the risk for the stable channel on 2026-11-17 (decision table stable-risk/2026-11-17-decisions.md)."
+    }
+  ],
   "kind": "policy",
   "schema_version": 2
 }
