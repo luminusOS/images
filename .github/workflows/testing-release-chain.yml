@@ -19,7 +19,7 @@ jobs:
   advance:
     name: Validate and publish the testing candidate
     if: github.event.workflow_run.conclusion == 'success' && github.event.workflow_run.head_branch == 'main'
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-26.04
     timeout-minutes: 360
     permissions:
       actions: write

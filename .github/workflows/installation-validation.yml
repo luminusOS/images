@@ -19,7 +19,7 @@ concurrency:
 jobs:
   installation:
     if: (github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/heads/release/')) && github.event_name == 'workflow_dispatch'
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-26.04
     environment: candidate-staging
     timeout-minutes: 350
     permissions:

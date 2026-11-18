@@ -20,7 +20,7 @@ jobs:
   lines:
     name: List stable lines
     if: github.ref == 'refs/heads/main'
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-26.04
     permissions:
       contents: read
     outputs:
@@ -37,7 +37,7 @@ jobs:
     name: Carry release/${{ matrix.line }} to the approval gate
     needs: [lines]
     if: needs.lines.outputs.lines != '[]'
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-26.04
     # One job per line: each gets its own budget, and a failing line does not
     # stop the others.
     timeout-minutes: 360
@@ -67,7 +67,7 @@ jobs:
   check:
     name: Check Fedora base
     needs: [quality]
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-26.04
     permissions:
       actions: read
       contents: read
