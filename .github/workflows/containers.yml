@@ -51,7 +51,7 @@ on:
 jobs:
   metadata:
     name: Resolve build metadata
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-26.04
     permissions: {contents: read}
     outputs:
       fedora_version: '${{ steps.version.outputs.fedora_version }}'
@@ -87,7 +87,7 @@ jobs:
   core:
     name: Build core image
     needs: [metadata]
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-26.04
     timeout-minutes: 150
     permissions: {contents: read, packages: read}
     outputs:
@@ -100,7 +100,7 @@ jobs:
       built_oci_skopeo_version: '${{ steps.upload-core-oci.outcome == ''success'' && steps.export-core-oci.outputs.skopeo_version || '''' }}'
       built_oci_artifact_id: '${{ steps.upload-core-oci.outcome == ''success'' && steps.upload-core-oci.outputs.artifact-id || '''' }}'
     steps:
-      - uses: docker/setup-docker-action@e43656e248c0bd0647d3f5c195d116aacf6fcaf4 # v4.7.0
+      - uses: docker/setup-docker-action@3f1ab1ab0e29231562e4db4ca600c1a49653bac6 # v5.7.0
         with:
           set-host: true
           daemon-config: '{"features":{"containerd-snapshotter":true}}'
@@ -174,7 +174,7 @@ jobs:
   workstation:
     name: Build workstation image
     needs: [metadata, core]
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-26.04
     timeout-minutes: 180
     permissions: {contents: read, packages: read, actions: read}
     outputs:
@@ -186,7 +186,7 @@ jobs:
       built_oci_skopeo_version: '${{ steps.upload-workstation-oci.outcome == ''success'' && steps.export-workstation-oci.outputs.skopeo_version || '''' }}'
       built_oci_artifact_id: '${{ steps.upload-workstation-oci.outcome == ''success'' && steps.upload-workstation-oci.outputs.artifact-id || '''' }}'
     steps:
-      - uses: docker/setup-docker-action@e43656e248c0bd0647d3f5c195d116aacf6fcaf4 # v4.7.0
+      - uses: docker/setup-docker-action@3f1ab1ab0e29231562e4db4ca600c1a49653bac6 # v5.7.0
         with:
           set-host: true
           daemon-config: '{"features":{"containerd-snapshotter":true}}'

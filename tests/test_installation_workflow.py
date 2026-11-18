@@ -254,7 +254,7 @@ class WorkflowTests(unittest.TestCase):
             job["if"],
             "(github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/heads/release/')) && github.event_name == 'workflow_dispatch'",
         )
-        self.assertEqual(job["runs-on"], "ubuntu-latest")
+        self.assertEqual(job["runs-on"], "ubuntu-26.04")
         self.assertEqual(job["environment"], "candidate-staging")
         self.assertEqual(
             job["permissions"],

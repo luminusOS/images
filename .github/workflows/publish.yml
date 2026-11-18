@@ -81,7 +81,7 @@ jobs:
     name: r2-producer-probe
     if: ${{ github.event_name == 'workflow_dispatch' && inputs.inert_r2_probe == true && github.ref == 'refs/heads/main' && github.repository_id == '1118572971' }}
     environment: inert-r2-handoff
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-26.04
     timeout-minutes: 10
     permissions:
       contents: read
@@ -104,7 +104,7 @@ jobs:
 
   inputs:
     if: ${{ !(github.event_name == 'workflow_dispatch' && inputs.inert_r2_probe == true) }}
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-26.04
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
         with: {persist-credentials: false}
@@ -154,7 +154,7 @@ jobs:
     name: Publish candidate containers
     needs: [containers]
     if: ${{ !(github.event_name == 'workflow_dispatch' && inputs.inert_r2_probe == true) && !inputs.security_findings_bypass && ((inputs.channel == 'testing' && github.ref == 'refs/heads/main') || (inputs.channel == 'stable' && startsWith(github.ref, 'refs/heads/release/'))) }}
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-26.04
     environment: candidate-staging
     permissions:
       contents: read
@@ -164,7 +164,7 @@ jobs:
       workstation_candidate: ${{ steps.candidates.outputs.workstation }}
       installer_candidate: ${{ steps.candidates.outputs.installer }}
     steps:
-      - uses: docker/setup-docker-action@e43656e248c0bd0647d3f5c195d116aacf6fcaf4 # v4.7.0
+      - uses: docker/setup-docker-action@3f1ab1ab0e29231562e4db4ca600c1a49653bac6 # v5.7.0
         with:
           daemon-config: '{"features":{"containerd-snapshotter":true}}'
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -229,7 +229,7 @@ jobs:
     name: Scan staged candidates
     needs: [containers, publish-images]
     if: ${{ needs.publish-images.result == 'success' }}
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-26.04
     permissions:
       contents: read
       packages: read
@@ -396,7 +396,7 @@ jobs:
     if: ${{ !(github.event_name == 'workflow_dispatch' && inputs.inert_r2_probe == true) && !cancelled() && needs.iso.result == 'success' && needs.qcow2.result == 'success' }}
     name: Boot smoke test
     needs: [iso, qcow2]
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-26.04
     timeout-minutes: 90
     steps:
       - name: Checkout
@@ -453,7 +453,7 @@ jobs:
     name: Bind candidate artifacts
     needs: [quality, containers, publish-images, scan-candidates, iso, qcow2, boot-test]
     if: ${{ !(github.event_name == 'workflow_dispatch' && inputs.inert_r2_probe == true) && (always() && !inputs.security_findings_bypass && ((inputs.channel == 'testing' && github.ref == 'refs/heads/main') || (inputs.channel == 'stable' && startsWith(github.ref, 'refs/heads/release/'))) && inputs.candidate_run_id == '' && needs.quality.result == 'success' && needs.iso.result == 'success' && needs.qcow2.result == 'success' && needs.boot-test.result == 'success' && needs.publish-images.result == 'success' && needs.scan-candidates.result == 'success') }}
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-26.04
     environment: candidate-staging
     permissions:
       contents: read
@@ -525,7 +525,7 @@ jobs:
     name: Assemble candidate evidence
     needs: [quality, inputs]
     if: ${{ !(github.event_name == 'workflow_dispatch' && inputs.inert_r2_probe == true) && (!inputs.security_findings_bypass && ((inputs.channel == 'testing' && github.ref == 'refs/heads/main') || (inputs.channel == 'stable' && startsWith(github.ref, 'refs/heads/release/'))) && inputs.candidate_run_id != '' && inputs.validation_run_id != '') }}
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-26.04
     environment: candidate-staging
     permissions:
       actions: read
@@ -578,7 +578,7 @@ jobs:
     name: Promote validated candidate
     needs: [quality, inputs, release-evidence]
     if: ${{ !(github.event_name == 'workflow_dispatch' && inputs.inert_r2_probe == true) && (!inputs.security_findings_bypass && inputs.channel == 'testing' && github.ref == 'refs/heads/main' && inputs.candidate_run_id != '' && inputs.validation_run_id != '') }}
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-26.04
     # The official publishing credentials live only in this environment
     # (main only) and in stable, never at repository level.
     environment: testing-publish
@@ -636,7 +636,7 @@ jobs:
     name: Promote approved stable candidate
     needs: [quality, inputs, release-evidence]
     if: ${{ !(github.event_name == 'workflow_dispatch' && inputs.inert_r2_probe == true) && (!inputs.security_findings_bypass && inputs.channel == 'stable' && startsWith(github.ref, 'refs/heads/release/') && inputs.candidate_run_id != '' && inputs.validation_run_id != '') }}
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-26.04
     # Required reviewers approve here; the job starts only after approval.
     environment: stable
     # This group serializes public-tag writers across workflows; the workflow group does not.
