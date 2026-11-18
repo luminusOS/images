@@ -168,23 +168,18 @@ RUN --mount=type=cache,target=/var/cache/dnf \
       gstreamer1-plugin-libav && \
     dnf clean all
 
-# Keep the testing RPM repository out of the installed system. The GNOME
-# desktop and systemd dependencies are already installed in the layers above.
-ARG image_channel=local
+# Keep the build-only channel repositories out of the installed system.
+ARG image_channel=testing
 RUN --mount=type=cache,target=/var/cache/dnf \
-    --mount=type=bind,source=shared/rpm-keys/luminus-testing.asc,target=/run/luminus-testing.asc,ro \
-    --mount=type=bind,source=editions/workstation/luminus-testing.repo,target=/etc/yum.repos.d/luminus-testing.repo,ro \
+    --mount=type=bind,source=editions/workstation/luminus-build.repo,target=/etc/yum.repos.d/luminus-build.repo,ro \
     --mount=type=bind,from=ctx-scripts,source=/scripts,target=/scripts \
     --mount=type=bind,from=python-tools,source=/usr,target=/opt/python,ro \
-    if [ "${image_channel}" = testing ] && [ "${fedora_version}" = 45 ]; then \
-      env PYTHONHOME=/opt/python LD_LIBRARY_PATH=/opt/python/lib64 /opt/python/bin/python3 /scripts/rpmdb-repair.py && \
-      dnf -y --releasever="${fedora_version}" --repo=luminus-testing \
-        install gnome-foreground-booster && \
-      rpm -q gnome-foreground-booster && \
-      systemctl --global enable gnome-foreground-booster.service && \
-      systemctl --global is-enabled gnome-foreground-booster.service && \
-      dnf clean all; \
-    fi
+    env PYTHONHOME=/opt/python LD_LIBRARY_PATH=/opt/python/lib64 /opt/python/bin/python3 /scripts/rpmdb-repair.py && \
+    dnf -y --repo="luminus-${image_channel}" install gnome-foreground-booster && \
+    rpm -q gnome-foreground-booster && \
+    systemctl --global enable gnome-foreground-booster.service && \
+    systemctl --global is-enabled gnome-foreground-booster.service && \
+    dnf clean all
 
 # Nautilus thumbnails for AppImages, from the Luminus repository.
 RUN --mount=type=cache,target=/var/cache/dnf \
