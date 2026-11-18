@@ -957,7 +957,7 @@ class WorkflowPhasesTest(unittest.TestCase):
         self.assertIn("!inputs.security_findings_bypass", stable["if"])
         self.assertIn("release-evidence", stable["needs"])
         self.assertIn("inputs.channel == 'testing'", jobs["release"]["if"])
-        self.assertNotIn("environment", jobs["release"])
+        self.assertEqual(jobs["release"]["environment"], "testing-publish")
         official = (
             "secrets.COSIGN_PRIVATE_KEY",
             "secrets.R2_ACCESS_KEY_ID",

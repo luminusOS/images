@@ -827,6 +827,34 @@ class CandidateSigningTests(unittest.TestCase):
                         )
         self.assertGreater(callers, 0)
 
+    def test_official_credentials_are_read_only_behind_their_environment(self):
+        official = {
+            "COSIGN_PRIVATE_KEY",
+            "COSIGN_PASSWORD",
+            "R2_ACCESS_KEY_ID",
+            "R2_SECRET_ACCESS_KEY",
+            "SF_USER",
+            "SF_SSH_KEY",
+        }
+        workflows = ROOT / ".github/workflows"
+        publish = yaml.safe_load((workflows / "publish.yml").read_text())
+        expected = {"release": "testing-publish", "release-stable": "stable"}
+        readers = {}
+        for name, job in publish["jobs"].items():
+            read = set(re.findall(r"secrets\.([A-Z_]+)", str(job))) & official
+            if read:
+                readers[name] = job.get("environment")
+        self.assertEqual(readers, expected)
+        for path in workflows.glob("*.yml"):
+            if path.name == "publish.yml":
+                continue
+            with self.subTest(workflow=path.name):
+                self.assertFalse(
+                    set(re.findall(r"secrets\.([A-Z_]+)", path.read_text())) & official
+                )
+        secrets = publish.get("on", publish.get(True))["workflow_call"]["secrets"]
+        self.assertFalse(secrets["COSIGN_PRIVATE_KEY"]["required"])
+
     def test_boot_test_runs_when_packaging_succeeds_despite_skipped_stable_jobs(self):
         workflow = yaml.safe_load((ROOT / ".github/workflows/publish.yml").read_text())
         condition = workflow["jobs"]["boot-test"]["if"]

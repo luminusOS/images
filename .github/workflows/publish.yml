@@ -53,7 +53,7 @@ name: Image Publication
       CANDIDATE_COSIGN_PASSWORD:
         description: "Isolated candidate signing key; read from the candidate-staging environment"
         required: false
-      COSIGN_PRIVATE_KEY: {required: true}
+      COSIGN_PRIVATE_KEY: {required: false}
       COSIGN_PASSWORD: {required: false}
       R2_ACCESS_KEY_ID: {required: false}
       R2_SECRET_ACCESS_KEY: {required: false}
@@ -579,6 +579,9 @@ jobs:
     needs: [quality, inputs, release-evidence]
     if: ${{ !(github.event_name == 'workflow_dispatch' && inputs.inert_r2_probe == true) && (!inputs.security_findings_bypass && inputs.channel == 'testing' && github.ref == 'refs/heads/main' && inputs.candidate_run_id != '' && inputs.validation_run_id != '') }}
     runs-on: ubuntu-latest
+    # The official publishing credentials live only in this environment
+    # (main only) and in stable, never at repository level.
+    environment: testing-publish
     # This group serializes public-tag writers across workflows; the workflow group does not.
     concurrency:
       group: image-publication-${{ github.repository }}-testing
