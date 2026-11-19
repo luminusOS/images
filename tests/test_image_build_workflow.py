@@ -1,6 +1,8 @@
+import ast
 import importlib.util
 import io
 import json
+import re
 import shlex
 import subprocess
 import sys
@@ -60,6 +62,63 @@ def scan_outputs(calls):
     return [c.split("--output ")[1].split()[0] for c in calls]
 
 
+def prepare_runs(
+    kind: str, results: dict[str, str], *, cancelled: bool = False
+) -> bool:
+    job = JOBS["prepare-candidate"]
+    condition = job["if"].removeprefix("${{").removesuffix("}}").strip()
+    status = {
+        "always()": True,
+        "cancelled()": cancelled,
+        "failure()": "failure" in results.values(),
+        "success()": all(results[name] == "success" for name in job["needs"]),
+    }
+    if (
+        not any(function in condition for function in status)
+        and not status["success()"]
+    ):
+        return False
+    values = {
+        **status,
+        **{f"needs.{name}.result": results[name] for name in job["needs"]},
+        "needs.inputs.outputs.release_kind": kind,
+        "github.event_name": "workflow_dispatch",
+        "github.ref": "refs/heads/main",
+        "inputs.channel": "testing",
+        "inputs.candidate_run_id": "",
+        "inputs.inert_r2_probe": False,
+        "inputs.security_findings_bypass": False,
+        "true": True,
+    }
+    operators = {"&&": " and ", "||": " or ", "!": " not "}
+    source = re.sub(
+        r"'[^']*'|[\w.-]+(?:\(\))?|&&|\|\||!(?!=)",
+        lambda m: repr(values[m[0]]) if m[0] in values else operators.get(m[0], m[0]),
+        condition,
+    ).strip()
+
+    def evaluate(node: ast.expr) -> bool | str:
+        match node:
+            case ast.Constant(value=(bool() | str()) as value):
+                return value
+            case ast.BoolOp(op=ast.And(), values=items):
+                return all(evaluate(item) for item in items)
+            case ast.BoolOp(op=ast.Or(), values=items):
+                return any(evaluate(item) for item in items)
+            case ast.UnaryOp(op=ast.Not(), operand=item):
+                return not evaluate(item)
+            case ast.Compare(left=left, ops=[ast.Eq()], comparators=[right]):
+                return evaluate(left) == evaluate(right)
+            case ast.Call(
+                func=ast.Name(id="startsWith"), args=[left, right], keywords=[]
+            ):
+                return str(evaluate(left)).startswith(str(evaluate(right)))
+            case _:
+                raise AssertionError(f"unsupported job expression: {ast.dump(node)}")
+
+    return bool(evaluate(ast.parse(source, mode="eval").body))
+
+
 class ArtifactsInputTests(unittest.TestCase):
     def test_dispatch_and_call_defaults(self):
         dispatch = PUBLISH["on"]["workflow_dispatch"]["inputs"]["artifacts"]
@@ -67,7 +126,29 @@ class ArtifactsInputTests(unittest.TestCase):
         self.assertEqual(dispatch["options"], ["auto", "image", "full"])
         self.assertEqual(dispatch["default"], "auto")
         call = PUBLISH["on"]["workflow_call"]["inputs"]["artifacts"]
-        self.assertEqual(call, {"type": "string", "default": "full"})
+        self.assertEqual(call, {"type": "string", "default": "auto"})
+
+    def test_scheduled_callers_explicitly_build_full(self) -> None:
+        for channel in ("testing", "stable"):
+            with self.subTest(channel=channel):
+                path = ROOT / f".github/workflows/auto-{channel}.yml"
+                jobs = yaml.safe_load(path.read_text())["jobs"]
+                callers = [
+                    job["with"]["artifacts"]
+                    for job in jobs.values()
+                    if job.get("uses") == "./.github/workflows/publish.yml"
+                ]
+                self.assertEqual(callers, ["full"])
+
+    def test_omitted_reusable_artifacts_input_resumes_signed_image(self) -> None:
+        inputs = PUBLISH["on"]["workflow_call"]["inputs"]
+        supplied = {"candidate_run_id": "123"}
+        env = {
+            "ARTIFACTS": supplied.get("artifacts", inputs["artifacts"]["default"]),
+            "CANDIDATE": supplied["candidate_run_id"],
+        }
+        self.assertEqual(pipeline.requested_kind(env), "")
+        pipeline.check_kind(env | {"SIGNED": "image"})
 
     def test_inputs_job_resolves_the_kind_without_interpolating_inputs(self):
         job = JOBS["inputs"]
@@ -191,25 +272,25 @@ class ImageJobGraphTests(unittest.TestCase):
         self.assertIn("needs.iso.result == 'success'", boot["if"])
         self.assertIn("needs.qcow2.result == 'success'", boot["if"])
 
-    def test_prepare_candidate_accepts_skips_only_for_image(self):
-        condition = JOBS["prepare-candidate"]["if"]
-        self.assertIn(
-            f"(({FULL} && needs.iso.result == 'success' && "
-            "needs.qcow2.result == 'success' && "
-            "needs.boot-test.result == 'success') || "
-            f"({IMAGE} && needs.iso.result == 'skipped' && "
-            "needs.qcow2.result == 'skipped' && "
-            "needs.boot-test.result == 'skipped'))",
-            condition,
+    def test_prepare_candidate_accepts_skips_only_for_image(self) -> None:
+        required = dict.fromkeys(
+            ("inputs", "quality", "containers", "publish-images", "scan-candidates"),
+            "success",
         )
-        for required in (
-            "needs.quality.result == 'success'",
-            "needs.publish-images.result == 'success'",
-            "needs.scan-candidates.result == 'success'",
-            "inputs.candidate_run_id == ''",
-        ):
-            self.assertIn(required, condition)
-        self.assertIn("inputs", JOBS["prepare-candidate"]["needs"])
+        disk = ("iso", "qcow2", "boot-test")
+        image = required | dict.fromkeys(disk, "skipped")
+        full = required | dict.fromkeys(disk, "success")
+        self.assertCountEqual(JOBS["prepare-candidate"]["needs"], full)
+        self.assertTrue(prepare_runs("image", image))
+        self.assertTrue(prepare_runs("full", full))
+        self.assertFalse(prepare_runs("full", image))
+        for kind, good in (("image", image), ("full", full)):
+            with self.subTest(kind=kind, workflow_cancelled=True):
+                self.assertFalse(prepare_runs(kind, good, cancelled=True))
+            for job in good:
+                for bad in {"failure", "cancelled", "skipped", "success"} - {good[job]}:
+                    with self.subTest(kind=kind, job=job, result=bad):
+                        self.assertFalse(prepare_runs(kind, good | {job: bad}))
 
     def test_installer_and_disk_steps_are_full_only(self):
         downloads = {

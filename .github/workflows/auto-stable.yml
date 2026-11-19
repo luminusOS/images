@@ -100,6 +100,7 @@ jobs:
     uses: ./.github/workflows/publish.yml
     with:
       channel: stable
+      artifacts: full
       build_sequence: true
       force_core: true
       detected_fedora_version: ${{ needs.check.outputs.fedora_version }}

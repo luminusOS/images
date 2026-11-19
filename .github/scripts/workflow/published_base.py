@@ -62,10 +62,9 @@ def release_tag(channel: str, fedora: str) -> re.Pattern:
     return re.compile(rf"{fedora}\.[0-9]{{8}}\.[1-9][0-9]*\Z")
 
 
-def newest_release(releases: list, repository: str, channel: str, fedora: str):
+def newest_release(releases: list, repository: str, channel: str, fedora: str) -> dict:
     pattern = release_tag(channel, fedora)
     order = helper("release_pipeline").version_order
-    prefix = f"https://api.github.com/repos/{repository}/releases/"
     found = {}
     for release in releases:
         require(isinstance(release, dict), "invalid release metadata")
@@ -75,8 +74,6 @@ def newest_release(releases: list, repository: str, channel: str, fedora: str):
             or not pattern.fullmatch(tag)
             or release.get("draft") is not False
             or release.get("prerelease") is not (channel == "testing")
-            or (release.get("author") or {}).get("login") != RELEASE_AUTHOR
-            or not str(release.get("url", "")).lower().startswith(prefix.lower())
         ):
             continue
         key = order(tag)
@@ -85,7 +82,18 @@ def newest_release(releases: list, repository: str, channel: str, fedora: str):
     require(
         found, f"no published {channel} release of Fedora {fedora}: {FIRST_RELEASE}"
     )
-    return found[max(found)]
+    newest = found[max(found)]
+    author, url = newest.get("author"), newest.get("url")
+    prefix = f"https://api.github.com/repos/{repository}/releases/"
+    require(
+        isinstance(author, dict)
+        and author.get("login") == RELEASE_AUTHOR
+        and isinstance(url, str)
+        and re.fullmatch(re.escape(prefix) + r"[1-9][0-9]*", url, re.IGNORECASE),
+        f"newest release on line {channel}/Fedora {fedora} "
+        "was not published by the release workflow",
+    )
+    return newest
 
 
 def list_releases(repository: str) -> list:
@@ -195,13 +203,15 @@ def image_identity(repository: str, tag: str, version: str) -> dict:
     index = json.loads(index_bytes)
     require(
         isinstance(index, dict) and isinstance(index.get("manifests"), list),
-        f"{repository}:{tag} is not an image index",
+        f"{repository}:{tag} must point to an image index, not a single manifest",
     )
     platforms = [
         entry
         for entry in index["manifests"]
         if isinstance(entry, dict)
-        and entry.get("platform") == {"architecture": "amd64", "os": "linux"}
+        and isinstance(platform := entry.get("platform"), dict)
+        and platform.get("architecture") == "amd64"
+        and platform.get("os") == "linux"
     ]
     require(len(platforms) == 1, f"{repository}:{tag} needs one linux/amd64 manifest")
     manifest_digest = platforms[0].get("digest")

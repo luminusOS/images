@@ -42,8 +42,7 @@ name: Image Publication
       skip_flatpaks: {type: string, default: "0"}
       validation_run_id: {type: string, default: ""}
       candidate_run_id: {type: string, default: ""}
-      # Scheduled callers keep building full candidates until they opt in.
-      artifacts: {type: string, default: full}
+      artifacts: {type: string, default: auto}
       build_sequence: {type: boolean, default: false}
       force_core: {type: boolean, default: false}
       security_findings_bypass: {type: boolean, default: false}
@@ -489,7 +488,22 @@ jobs:
     needs: [quality, inputs, containers, publish-images, scan-candidates, iso, qcow2, boot-test]
     # Image candidates skip the installer, disk and boot jobs by design; any
     # other outcome of those jobs, or a full candidate without them, stops here.
-    if: ${{ !(github.event_name == 'workflow_dispatch' && inputs.inert_r2_probe == true) && (always() && !inputs.security_findings_bypass && ((inputs.channel == 'testing' && github.ref == 'refs/heads/main') || (inputs.channel == 'stable' && startsWith(github.ref, 'refs/heads/release/'))) && inputs.candidate_run_id == '' && needs.quality.result == 'success' && ((needs.inputs.outputs.release_kind == 'full' && needs.iso.result == 'success' && needs.qcow2.result == 'success' && needs.boot-test.result == 'success') || (needs.inputs.outputs.release_kind == 'image' && needs.iso.result == 'skipped' && needs.qcow2.result == 'skipped' && needs.boot-test.result == 'skipped')) && needs.publish-images.result == 'success' && needs.scan-candidates.result == 'success') }}
+    if: >-
+      ${{ !cancelled() &&
+      !(github.event_name == 'workflow_dispatch' && inputs.inert_r2_probe == true) &&
+      !inputs.security_findings_bypass &&
+      ((inputs.channel == 'testing' && github.ref == 'refs/heads/main') ||
+      (inputs.channel == 'stable' && startsWith(github.ref, 'refs/heads/release/'))) &&
+      inputs.candidate_run_id == '' &&
+      needs.inputs.result == 'success' &&
+      needs.quality.result == 'success' &&
+      needs.containers.result == 'success' &&
+      needs.publish-images.result == 'success' &&
+      needs.scan-candidates.result == 'success' &&
+      ((needs.inputs.outputs.release_kind == 'full' && needs.iso.result == 'success' &&
+      needs.qcow2.result == 'success' && needs.boot-test.result == 'success') ||
+      (needs.inputs.outputs.release_kind == 'image' && needs.iso.result == 'skipped' &&
+      needs.qcow2.result == 'skipped' && needs.boot-test.result == 'skipped')) }}
     runs-on: ubuntu-26.04
     environment: candidate-staging
     permissions:

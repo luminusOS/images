@@ -121,8 +121,12 @@ class WorkflowPhasesTest(unittest.TestCase):
             jobs["inputs"]["if"],
             "${{ !(github.event_name == 'workflow_dispatch' && inputs.inert_r2_probe == true) }}",
         )
-        for name in ("iso", "qcow2", "prepare-candidate"):
-            self.assertIn("always()", jobs[name]["if"])
+        for name, status_guard in (
+            ("iso", "always()"),
+            ("qcow2", "always()"),
+            ("prepare-candidate", "!cancelled()"),
+        ):
+            self.assertIn(status_guard, jobs[name]["if"])
             self.assertIn("needs.", jobs[name]["if"])
             self.assertIn(".result == 'success'", jobs[name]["if"])
 

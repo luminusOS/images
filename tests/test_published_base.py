@@ -52,7 +52,11 @@ class Registry:
                     "manifests": [
                         {
                             "digest": digest(manifest),
-                            "platform": {"architecture": "amd64", "os": "linux"},
+                            "platform": {
+                                "architecture": "amd64",
+                                "os": "linux",
+                                "variant": "v1",
+                            },
                         },
                         {
                             "digest": "sha256:" + "0" * 64,
@@ -144,12 +148,15 @@ class World:
         self.calls.append(argv)
         tool = argv[0]
         if tool == "gh" and argv[1] == "api":
+            assert "--paginate" in argv and "--slurp" in argv, argv
             data = self.assets()
             for release in self.releases:
                 for asset in release["assets"]:
                     if asset["size"] is None:
                         asset["size"] = len(data[asset["name"]])
-            return mock.Mock(stdout=json.dumps([self.releases]))
+            return mock.Mock(
+                stdout=json.dumps([self.releases[::2], self.releases[1::2]])
+            )
         if tool == "gh" and argv[1:3] == ["release", "download"]:
             self.downloaded = argv[3]
             name = argv[argv.index("--pattern") + 1]
@@ -233,9 +240,28 @@ class PublishedBaseTests(unittest.TestCase):
 
     def test_newest_release_uses_numeric_sequence_order(self):
         world = World(version="testing-45.20261118.10")
-        world.releases.append(world.release("testing-45.20261118.9"))
+        world.releases.insert(0, world.release("testing-45.20261118.9"))
         world.resolve()
         self.assertEqual(world.downloaded, "testing-45.20261118.10")
+
+    def test_untrusted_newest_release_never_falls_back(self) -> None:
+        for fields in (
+            {"author": {"login": "someone"}},
+            {"author": ["github-actions[bot]"]},
+            {"url": "https://api.github.com/repos/fork/images/releases/1"},
+        ):
+            with self.subTest(fields=fields):
+                world = World()
+                world.releases.insert(
+                    1, world.release("testing-45.20261119.1", **fields)
+                )
+                self.assert_rejected(
+                    world,
+                    "newest release on line testing/Fedora 45 was not published by the release workflow",
+                )
+                self.assertFalse(
+                    any(call[:2] == ["gh", "release"] for call in world.calls)
+                )
 
     def test_no_release_of_the_line_fails_closed(self):
         for releases in (
@@ -243,13 +269,6 @@ class PublishedBaseTests(unittest.TestCase):
             [World().release("testing-44.20261118.1")],
             [World().release("testing-45.20261118.1", draft=True)],
             [World().release("testing-45.20261118.1", prerelease=False)],
-            [World().release("testing-45.20261118.1", author={"login": "someone"})],
-            [
-                World().release(
-                    "testing-45.20261118.1",
-                    url="https://api.github.com/repos/fork/images/releases/1",
-                )
-            ],
             [World().release("testing-45.20261118.1-rc")],
         ):
             with self.subTest(releases=releases):
@@ -271,6 +290,26 @@ class PublishedBaseTests(unittest.TestCase):
         world = World("stable")
         world.evidence["source"]["ref"] = "refs/heads/main"
         self.assert_rejected(world, "stable line")
+
+    def test_single_manifest_line_tag_is_rejected(self) -> None:
+        world = World()
+        world.registry.tags["ghcr.io/luminusos/luminusos:testing-45"] = json.dumps(
+            {"schemaVersion": 2, "config": {"digest": "sha256:" + "0" * 64}}
+        ).encode()
+        self.assert_rejected(
+            world, "must point to an image index, not a single manifest"
+        )
+
+    def test_multiple_linux_amd64_descriptors_are_rejected(self) -> None:
+        world = World()
+        tag = "ghcr.io/luminusos/luminusos:testing-45"
+        index = json.loads(world.registry.tags[tag])
+        descriptor = index["manifests"][0]
+        index["manifests"].append(
+            descriptor | {"platform": descriptor["platform"] | {"variant": "v2"}}
+        )
+        world.registry.tags[tag] = json.dumps(index).encode()
+        self.assert_rejected(world, "needs one linux/amd64 manifest")
 
     def test_signature_failure_is_rejected(self):
         world = World()
