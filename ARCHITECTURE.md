@@ -638,7 +638,7 @@ Package changes must be made in the Containerfiles or build scripts and delivere
 
 Updates are downloaded automatically. `bootc-fetch-apply-updates.timer` (1 hour after boot, then every 8 hours) is enabled, and a drop-in replaces `bootc upgrade --apply` with `bootc upgrade`. The new image is staged and takes effect on the next reboot, so the desktop is never restarted by an update. The service is skipped while any NetworkManager device reports a metered connection.
 
-Installed systems track the channel named by `UPDATE_CHANNEL` in `config/versions.env`, for both local builds and the `publish` workflow. It is `testing` until a stable release exists:
+Installed systems track the channel named by `UPDATE_CHANNEL` in the build's `config/versions.env`, for both local builds and the `publish` workflow:
 
 | `UPDATE_CHANNEL` | `target_imgref` |
 | --- | --- |
@@ -653,7 +653,7 @@ Release metadata lives in `config/releases.env` on `main` and is read by every b
 
 `auto-testing` checks the Fedora base on `main`. Automatic builds are candidates, not evidence that a release has passed installation or update tests. `python3 tools/release-notes.py` compares `rpm -qa` of the previous and new image for release notes.
 
-Stable images are built on the protected `release/<fedora>` branch as their own candidates, staged privately and scanned against the `*-stable-<fedora>.json` policies. Promotion copies the validated candidate with `skopeo copy --all --preserve-digests`, never rebuilding it, so a stable tag always has the digest that passed installation validation.
+`auto-stable.yml` checks for Fedora base changes and carries candidates built on protected `release/<fedora>` branches through private staging, stable scans and installation validation. Publication stops at the `stable` GitHub Environment. The repository owner reviews the approval summary before approving; `release-stable` rechecks that summary before copying the validated digests with `skopeo copy --all --preserve-digests`. See the [stable release runbook](docs/release-strategy.md#stable-release-runbook) for approval, rejection, resumption and recovery.
 
 ### Image signatures
 

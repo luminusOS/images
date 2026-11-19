@@ -43,6 +43,10 @@ The Sirius ISO install path should use Btrfs for Linux filesystems. Keep `/usr/l
 
 Sirius is configured through `/etc/sirius/distro.toml` and `/etc/sirius/sirius.toml`, installed only into the ISO live root by `editions/workstation/Containerfile.installer`. The installed workstation payload should not ship Sirius.
 
+## Stable Releases
+
+Follow the [stable release runbook](docs/release-strategy.md#stable-release-runbook). Stable candidates come from `release/<Fedora>` and stop at the `stable` GitHub Environment. Only the repository owner approves. Agents must never approve or publish stable, accept risk exceptions, or read secret values.
+
 ## Cleanup Rules
 
 Avoid reintroducing unused placeholders, compatibility aliases, or CI workflows. If a command is replaced, update README, architecture docs, and this file in the same change.
