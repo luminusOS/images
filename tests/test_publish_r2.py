@@ -1,5 +1,6 @@
 import hashlib
 import importlib.util
+import io
 import json
 import subprocess
 import tempfile
@@ -70,6 +71,146 @@ class PublishTests(unittest.TestCase):
             calls.index(removals[0]),
             max(i for i, call in enumerate(calls) if call[0] == "curl"),
         )
+
+    def test_older_line_never_moves_channel_index_or_prunes_other_lines(self):
+        calls = []
+        version = "testing-44.20261031"
+        for fmt in ("iso", "qcow2"):
+            (self.dist / f"luminusos-workstation-{version}.{fmt}").write_bytes(
+                fmt.encode()
+            )
+
+        def fake(args, **kwargs):
+            calls.append(args)
+            if args[:3] == ["aws", "s3", "ls"]:
+                return subprocess.CompletedProcess(
+                    args,
+                    0,
+                    stdout=" PRE testing-45.20261030/\n PRE testing-44.20261001/\n",
+                )
+            return subprocess.CompletedProcess(args, 0)
+
+        def download(url):
+            return hashlib.sha256(url.rsplit(".", 1)[-1].encode()).hexdigest()
+
+        with (
+            patch.object(publish_r2.subprocess, "run", side_effect=fake),
+            patch.object(publish_r2, "download_digest", side_effect=download),
+        ):
+            publish_r2.publish(
+                "testing",
+                version,
+                self.dist,
+                "bucket",
+                "https://example.invalid",
+                latest_release="45",
+            )
+        self.assertFalse(any("latest.json" in " ".join(call) for call in calls))
+        removals = [call[3] for call in calls if call[:3] == ["aws", "s3", "rm"]]
+        self.assertEqual(removals, ["s3://bucket/testing/testing-44.20261001/"])
+
+    def test_latest_line_prunes_only_its_own_older_versions(self):
+        calls = []
+
+        def fake(args, **kwargs):
+            calls.append(args)
+            if args[:3] == ["aws", "s3", "ls"]:
+                return subprocess.CompletedProcess(
+                    args,
+                    0,
+                    stdout=" PRE testing-44.20261001/\n PRE testing-45.20261030/\n",
+                )
+            return subprocess.CompletedProcess(args, 0)
+
+        def download(url):
+            return hashlib.sha256(url.rsplit(".", 1)[-1].encode()).hexdigest()
+
+        with (
+            patch.object(publish_r2.subprocess, "run", side_effect=fake),
+            patch.object(publish_r2, "download_digest", side_effect=download),
+        ):
+            publish_r2.publish(
+                "testing",
+                self.version,
+                self.dist,
+                "bucket",
+                "https://example.invalid",
+                latest_release="45",
+            )
+        self.assertTrue(any("latest.json" in " ".join(call) for call in calls))
+        removals = [call[3] for call in calls if call[:3] == ["aws", "s3", "rm"]]
+        self.assertEqual(removals, ["s3://bucket/testing/testing-45.20261030/"])
+
+    def test_dropped_download_is_retried_from_scratch(self):
+        outcomes = iter([56, 0])
+        streams = []
+
+        class Process:
+            def __init__(self, command, **kwargs):
+                self.code = next(outcomes)
+                body = b"partial" if self.code else b"complete"
+                streams.append(command)
+                self.stdout = io.BytesIO(body)
+                self.pid = 0
+
+            def wait(self, timeout=None):
+                return self.code
+
+            def poll(self):
+                return self.code
+
+        with (
+            patch.object(publish_r2.subprocess, "Popen", Process),
+            patch.object(publish_r2.time, "sleep"),
+        ):
+            digest = publish_r2.download_digest("https://example.invalid/a.iso")
+        self.assertEqual(digest, hashlib.sha256(b"complete").hexdigest())
+        self.assertEqual(len(streams), 2)
+
+    def test_download_gives_up_after_bounded_attempts(self):
+        attempts = []
+
+        class Process:
+            def __init__(self, command, **kwargs):
+                attempts.append(command)
+                self.stdout = io.BytesIO(b"")
+                self.pid = 0
+
+            def wait(self, timeout=None):
+                return 56
+
+            def poll(self):
+                return 56
+
+        with (
+            patch.object(publish_r2.subprocess, "Popen", Process),
+            patch.object(publish_r2.time, "sleep"),
+            self.assertRaises(subprocess.CalledProcessError),
+        ):
+            publish_r2.download_digest("https://example.invalid/a.iso")
+        self.assertEqual(len(attempts), publish_r2.DOWNLOAD_ATTEMPTS)
+
+    def test_http_error_is_not_retried(self):
+        attempts = []
+
+        class Process:
+            def __init__(self, command, **kwargs):
+                attempts.append(command)
+                self.stdout = io.BytesIO(b"")
+                self.pid = 0
+
+            def wait(self, timeout=None):
+                return 22
+
+            def poll(self):
+                return 22
+
+        with (
+            patch.object(publish_r2.subprocess, "Popen", Process),
+            self.assertRaises(subprocess.CalledProcessError),
+        ):
+            publish_r2.download_digest("https://example.invalid/a.iso")
+        self.assertEqual(len(attempts), 1)
 
     def test_corrupt_download_never_updates_index_or_prunes(self):
         calls = []
