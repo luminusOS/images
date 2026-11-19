@@ -38,7 +38,7 @@ BOOT_DIAGNOSTICS = (
         ),
     ),
     ("systemd-state", "ls -laZ /var/lib/systemd"),
-    ("mounts", "findmnt -o TARGET,SOURCE,FSTYPE,OPTIONS /var /sysroot /"),
+    ("mounts", "findmnt -o TARGET,SOURCE,FSTYPE,OPTIONS"),
 )
 
 

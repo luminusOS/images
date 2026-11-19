@@ -430,18 +430,18 @@ flowchart TD
     ESP["512 MiB<br/>vfat ESP<br/>/boot/efi"]
     Boot["1–2 GiB<br/>ext4<br/>/boot"]
     Root["remaining space<br/>Btrfs"]
-    RootSubvol["root subvolume<br/>/"]
-    HomeSubvol["home subvolume<br/>/home"]
-    VarSubvol["var subvolume<br/>/var"]
+    RootSubvol["root subvolume<br/>/ (sysroot)"]
+    Var["ostree stateroot var<br/>/var, /var/home"]
 
     Disk --> BIOS
     Disk --> ESP
     Disk --> Boot
     Disk --> Root
     Root --> RootSubvol
-    Root --> HomeSubvol
-    Root --> VarSubvol
+    RootSubvol --> Var
 ```
+
+The Btrfs partition has a single `root` subvolume. `/var` (and `/var/home`, which `/home` links to) is the ostree stateroot directory inside it, bind-mounted by the boot. Like the Sirius templates, which create no subvolumes, it has no separate `var` or `home` subvolume: a new `var` subvolume mounted at `/var` starts empty with an unlabeled root and hides the `/var` bootc prepared, so first-boot services such as `systemd-random-seed` are denied by SELinux.
 
 ## Live-To-Installed Transition
 
@@ -530,7 +530,7 @@ sudo image-builder build \
   qcow2
 ```
 
-The direct qcow2 artifact uses `/usr/lib/image-builder/bootc/disk.yaml`. It keeps the root/home/var deployment on Btrfs, but `/boot` is ext4 because image-builder qcow2 generation does not support Btrfs for `/boot`.
+The direct qcow2 artifact uses `/usr/lib/image-builder/bootc/disk.yaml`. It keeps root, `/var` and home on the single Btrfs `root` subvolume, but `/boot` is ext4 because image-builder qcow2 generation does not support Btrfs for `/boot`.
 
 ```mermaid
 flowchart TD
@@ -686,7 +686,7 @@ flowchart TD
 When changing this repository, keep these points aligned:
 
 - `Justfile`, `README.md`, `ARCHITECTURE.md`, and `AGENTS.md` must agree on active commands and supported editions.
-- `disk.yaml` must keep root/home/var Btrfs with `/boot` ext4 (image-builder compatibility) and describe the same storage layout as the Sirius repart templates; image-builder takes the filesystem from `disk.yaml`, not from `--bootc-default-fs`.
+- `disk.yaml` must keep root, `/var` and home on one Btrfs `root` subvolume with `/boot` ext4 (image-builder compatibility) and describe the same storage layout as the Sirius repart templates; image-builder takes the filesystem from `disk.yaml`, not from `--bootc-default-fs`.
 - Live-only files belong under `editions/workstation/files/installer/`; the normal workstation Containerfile may consume only `files/system/` and shared branding assets.
 - Changes to `live-installer` must consider the Wayland session file, GNOME session file, GNOME Shell mode JSON, systemd user drop-in, and Aurora Shell metadata.
 - If the install flow changes, update `/etc/sirius/distro.toml` / `sirius.toml` and this document.

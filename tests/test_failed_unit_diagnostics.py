@@ -17,6 +17,8 @@ SPEC = importlib.util.spec_from_file_location(
 )
 boot = importlib.util.module_from_spec(SPEC)
 SPEC.loader.exec_module(boot)
+sys.path.insert(0, str(ROOT / "tests"))
+import test_boot_smoke as boot_fixtures
 
 LISTING = (
     "systemd-random-seed.service loaded failed failed Load/Save OS Random Seed\n"
@@ -88,7 +90,7 @@ class HelperTests(unittest.TestCase):
                 ("base-boot-systemd-state", "ls -laZ /var/lib/systemd"),
                 (
                     "base-boot-mounts",
-                    "findmnt -o TARGET,SOURCE,FSTYPE,OPTIONS /var /sysroot /",
+                    "findmnt -o TARGET,SOURCE,FSTYPE,OPTIONS",
                 ),
             ],
         )
@@ -236,24 +238,7 @@ class DriverHealthTests(unittest.TestCase):
             )
 
 
-BOOT_HEALTHY = {
-    "is-system-running": done("running\n"),
-    "failed-units": done(""),
-    "var-home-mount": done(
-        json.dumps(
-            {
-                "filesystems": [
-                    {
-                        "target": "/var/home",
-                        "fstype": "btrfs",
-                        "options": "rw,subvol=/home",
-                    }
-                ]
-            }
-        )
-    ),
-    "home-link": done("/var/home\n"),
-}
+BOOT_HEALTHY = boot_fixtures.HEALTHY
 
 
 class BootGateDiagnosticsTests(unittest.TestCase):
@@ -274,9 +259,7 @@ class BootGateDiagnosticsTests(unittest.TestCase):
     def test_healthy_disk_runs_no_diagnostics(self):
         problems, calls = self.check()
         self.assertEqual(problems, [])
-        self.assertEqual(
-            calls, ["is-system-running", "failed-units", "var-home-mount", "home-link"]
-        )
+        self.assertEqual(calls, list(BOOT_HEALTHY))
 
     def test_failed_units_are_diagnosed_and_the_gate_still_fails(self):
         problems, calls = self.check(
@@ -309,7 +292,7 @@ class BootGateDiagnosticsTests(unittest.TestCase):
         self.assertEqual(problems[0], "system is 'degraded' (1)")
         self.assertTrue(problems[1].startswith("failed units: systemd-random-seed"))
         self.assertIn("diagnostics-mounts", calls)
-        self.assertEqual(calls[-1], "home-link")
+        self.assertEqual(calls[-1], "restorecon")
 
     def test_boot_evidence_keeps_the_diagnostic_output(self):
         with tempfile.TemporaryDirectory() as tmp:
