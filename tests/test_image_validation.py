@@ -190,6 +190,7 @@ class FakeVM:
         self.accept_wrong = False
         self.broken_rollback = None
         self.tracks_manifest = False
+        self.health = done("running\n")
         self.commands = []
 
     def boot(self):
@@ -254,7 +255,9 @@ class FakeVM:
             self.deployments["staged"] = self.deployments["rollback"]
             return done()
         if command == "systemctl is-system-running --wait":
-            return done("running\n")
+            return self.health
+        if command == driver.FAILED_UNITS:
+            return done("home.mount loaded failed failed /home\n")
         if command.startswith("ostree show"):
             text = json.dumps(json.dumps({"rootfs": {"diff_ids": DIFF_IDS}}))
             return done(repr(json.loads(text)) + "\n")
@@ -491,6 +494,40 @@ class ImageDriverTests(unittest.TestCase):
                     DIFF_IDS,
                     references=allowed,
                 )
+
+    def test_a_degraded_published_base_fails_before_the_switch(self):
+        for health in (
+            done("degraded\n", 1),
+            done("running\n", 1),
+            done("starting\n", 1),
+            done("", 255, "ssh: connect failed"),
+        ):
+            self.vm = FakeVM(self.index, self.manifest)
+            self.vm.health = health
+            shutil.rmtree(self.receipts_dir)
+            self.receipts_dir.mkdir()
+            with (
+                self.subTest(health=health.stdout or health.stderr),
+                self.assertRaisesRegex(driver.CheckFailed, "home.mount"),
+            ):
+                self.run_image_flow()
+            self.assertEqual(self.written(), set())
+            self.assertIn(driver.FAILED_UNITS, self.vm.commands)
+            self.assertFalse(
+                any(c.startswith("bootc switch") for c in self.vm.commands)
+            )
+
+    def test_base_boot_receipt_records_the_health_probe(self):
+        driver.base_boot(
+            FakeGuest(self.vm),
+            driver.Receipts(self.receipts_dir, self.candidate),
+            self.candidate["published_base"]["workstation"],
+        )
+        log = (self.receipts_dir / "base_boot.log").read_text()
+        self.assertIn("systemctl is-system-running --wait", log)
+        self.assertLess(
+            log.index("is-system-running"), log.index("bootc status --json")
+        )
 
     def test_base_disk_may_track_the_pinned_index_or_manifest_only(self):
         repository = "ghcr.io/owner/luminusos-workstation"

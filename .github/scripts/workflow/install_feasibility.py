@@ -23,6 +23,7 @@ from qemu_common import resolve_ovmf
 
 GIB = 1024**3
 TARGET_DISK = "/dev/vda"
+FAILED_UNITS = "systemctl --failed --no-legend --plain --no-pager"
 
 
 class ProbeError(RuntimeError):
@@ -58,6 +59,17 @@ def install_request(target_disk: str) -> str:
     )
 
 
+def vsock_ssh_argv(vm: VM) -> list[str]:
+    return [
+        "-device",
+        f"vhost-vsock-pci,guest-cid={vm.cid}",
+        # systemd imports SMBIOS type 11 credentials; tmpfiles provisions this one
+        # as root's authorized_keys, so neither image has to change.
+        "-smbios",
+        f"type=11,value=io.systemd.credential:ssh.authorized_keys.root={vm.public_key}",
+    ]
+
+
 def qemu_argv(vm: VM, *, iso: Path | None) -> list[str]:
     argv = [
         "qemu-system-x86_64",
@@ -80,12 +92,7 @@ def qemu_argv(vm: VM, *, iso: Path | None) -> list[str]:
         f"if=pflash,format=raw,file={vm.variables}",
         "-drive",
         f"file={vm.disk},format=qcow2,if=virtio",
-        "-device",
-        f"vhost-vsock-pci,guest-cid={vm.cid}",
-        # systemd imports SMBIOS type 11 credentials; tmpfiles provisions this one
-        # as root's authorized_keys, so neither image has to change.
-        "-smbios",
-        f"type=11,value=io.systemd.credential:ssh.authorized_keys.root={vm.public_key}",
+        *vsock_ssh_argv(vm),
         "-no-reboot",
     ]
     if iso is not None:
