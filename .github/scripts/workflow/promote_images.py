@@ -12,7 +12,7 @@ import sys
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-from release_policy import REQUIRED_GATES, validate_candidate
+from release_policy import required_gates, validate_candidate
 
 DIGEST = re.compile(r"sha256:[0-9a-f]{64}\Z")
 CANDIDATE_KEY = Path(__file__).resolve().parents[3] / "shared/release/candidate.pub"
@@ -105,8 +105,10 @@ def inspect_version(reference: str) -> str | None:
     return digest
 
 
-def verify_evidence_artifacts(evidence: dict, directory: Path) -> None:
-    for name in REQUIRED_GATES:
+def verify_evidence_artifacts(
+    evidence: dict, directory: Path, release_kind: str = "full"
+) -> None:
+    for name in required_gates(release_kind):
         item = evidence["evidence"][name]
         relative = Path(item["artifact"])
         if (

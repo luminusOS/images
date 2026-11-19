@@ -269,7 +269,10 @@ class ReleasePublisherTests(unittest.TestCase):
                 (root / name).write_text(json.dumps(report), encoding="utf-8")
                 candidate["artifacts"][name] = release_publish.sha256(root / name)
             pipeline = types.SimpleNamespace(
-                candidate=lambda *_: candidate, checked_file=lambda *_: None
+                candidate=lambda *_: candidate,
+                checked_file=lambda *_: None,
+                release_kind=lambda _: "full",
+                gates=lambda _: release_publish.GATES,
             )
             with (
                 patch.object(release_publish, "load_helper", return_value=pipeline),
@@ -434,6 +437,7 @@ class ReleasePublisherTests(unittest.TestCase):
             candidate=lambda *_: candidate,
             verify=lambda *_: None,
             release_ref=lambda *_: "refs/heads/main",
+            release_kind=lambda _: "full",
         )
         promotion = types.SimpleNamespace(
             validate_candidate=lambda *_, **__: [],

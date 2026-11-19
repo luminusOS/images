@@ -17,6 +17,7 @@ REQUIRED_GATES = (
     "sbom",
     "vulnerability",
 )
+IMAGE_GATES = tuple(gate for gate in REQUIRED_GATES if gate != "boot")
 DIGEST = re.compile(r"sha256:[0-9a-f]{64}\Z")
 SHA256 = re.compile(r"[0-9a-f]{64}\Z")
 REGISTRY_REPOSITORY = re.compile(
@@ -26,12 +27,21 @@ BASE_RISK_KIND = "fedora-bootc-upstream-signature-risk"
 BASE_RISK_MAX_AGE = timedelta(days=30)
 
 
+def required_gates(release_kind: str) -> tuple[str, ...]:
+    if release_kind == "full":
+        return REQUIRED_GATES
+    if release_kind == "image":
+        return IMAGE_GATES
+    raise ValueError("invalid release kind")
+
+
 def validate_candidate(
     document: object,
     expected_digest: str | None = None,
     expected_repository: str | None = None,
     expected_commit: str | None = None,
     expected_ref: str | None = None,
+    release_kind: str = "full",
 ) -> list[str]:
     if not isinstance(document, dict):
         return ["manifest must be a JSON object"]
@@ -74,7 +84,12 @@ def validate_candidate(
     if not isinstance(evidence, dict):
         errors.append("evidence must contain artifacts for every gate")
         evidence = {}
-    for name in REQUIRED_GATES:
+    required = required_gates(release_kind)
+    if release_kind == "image" and (
+        set(gates) != set(required) or set(evidence) != set(required)
+    ):
+        errors.append("image release gates must be exactly " + ", ".join(required))
+    for name in required:
         if gates.get(name) is not True:
             errors.append(f"required gate is missing or failed: {name}")
         item = evidence.get(name)

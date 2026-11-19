@@ -40,6 +40,7 @@ class FakeGuest:
 def candidate():
     return {
         "version": 1,
+        "release_kind": "full",
         "run_id": 12,
         "repository": "Org/repo",
         "source_sha": "a" * 40,
