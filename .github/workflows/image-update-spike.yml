@@ -1,0 +1,121 @@
+name: Image Update Spike
+
+# Diagnostics only: can an image-only release be validated from a disk built
+# out of the published image? Produces no receipts and holds no signing keys.
+on:
+  workflow_dispatch:
+    inputs:
+      candidate_run_id:
+        description: Successful candidate run whose workstation image is switched to
+        type: string
+        required: true
+      base_tag:
+        description: Published workstation tag to boot first (line or version tag)
+        type: string
+        default: testing-45
+
+permissions:
+  contents: read
+
+concurrency:
+  group: image-update-spike-${{ github.repository }}
+  cancel-in-progress: false
+
+jobs:
+  spike:
+    if: github.ref == 'refs/heads/main' && github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-26.04
+    timeout-minutes: 240
+    permissions:
+      contents: read
+      actions: read
+      packages: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Free disk space
+        uses: jlumbroso/free-disk-space@ceedf095f4ec1a097402bc6bd80831f2e1a6fde6 # v2.0.0
+        with:
+          tool-cache: true
+          android: true
+          dotnet: true
+          haskell: true
+          large-packages: true
+          docker-images: true
+          swap-storage: true
+      - uses: sigstore/cosign-installer@756fe2d284c7292c4e9b62c8a28f1e5629c59532 # v4.1.3
+        with:
+          cosign-release: v2.6.5
+      - name: Fetch and verify candidate
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          CANDIDATE_RUN_ID: ${{ inputs.candidate_run_id }}
+        run: python3 .github/scripts/workflow/release_pipeline.py fetch-candidate --repository "$GITHUB_REPOSITORY" --run-id "$CANDIDATE_RUN_ID" --output candidate --public-key shared/release/candidate.pub
+      - name: Enable KVM and vhost-vsock for the runner user
+        run: |
+          printf '%s\n' \
+            'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' \
+            'KERNEL=="vhost-vsock", GROUP="kvm", MODE="0666"' \
+            | sudo tee /etc/udev/rules.d/99-luminus-vm.rules
+          sudo modprobe vhost_vsock
+          sudo udevadm control --reload-rules
+          sudo udevadm trigger --name-match=kvm
+          sudo udevadm trigger --name-match=vhost-vsock
+      - name: Install VM and fixture tooling
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends qemu-system-x86 qemu-utils ovmf socat openssh-client skopeo docker-registry podman
+          sudo systemctl disable --now docker-registry.service
+          echo '127.0.0.1 registry.validation.test' | sudo tee -a /etc/hosts
+      - name: Resolve and verify the published base
+        id: base
+        env:
+          BASE_TAG: ${{ inputs.base_tag }}
+        run: |
+          set -euo pipefail
+          [[ "$BASE_TAG" =~ ^(testing-)?[1-9][0-9](\.[0-9]{8}(\.[0-9]+)?)?$ ]] || { echo "invalid base tag" >&2; exit 1; }
+          repo="ghcr.io/${GITHUB_REPOSITORY_OWNER,,}/luminusos-workstation"
+          index="$(skopeo inspect --raw "docker://$repo:$BASE_TAG" | sha256sum | cut -d' ' -f1)"
+          cosign verify --key shared/trust/etc/pki/containers/luminusos.pub "$repo@sha256:$index" > /dev/null
+          manifest="$(skopeo inspect --raw "docker://$repo@sha256:$index" | python3 -c 'import json,sys; print(next(m["digest"] for m in json.load(sys.stdin)["manifests"] if m.get("platform",{}).get("architecture")=="amd64"))')"
+          echo "image=$repo@sha256:$index" >> "$GITHUB_OUTPUT"
+          echo "manifest=$manifest" >> "$GITHUB_OUTPUT"
+      - name: Build a disposable disk from the published base
+        env:
+          WORKSTATION_IMAGE: ${{ steps.base.outputs.image }}
+        run: |
+          set -euo pipefail
+          start=$(date +%s)
+          sudo podman run --rm --privileged \
+            --security-opt label=type:unconfined_t \
+            -v "$PWD:/work" -w /work \
+            -e WORKSTATION_IMAGE -e OUTPUT_NAME=spike-base.qcow2 \
+            quay.io/fedora/fedora:45 \
+            sh -c 'dnf -y install python3 && exec python3 .github/scripts/ci-package.py qcow2'
+          sudo chown "$(id -u):$(id -g)" spike-base.qcow2
+          sudo rm -rf .osbuild-cache
+          echo "disk build seconds: $(( $(date +%s) - start ))"
+          qemu-img info spike-base.qcow2
+          df -h "$RUNNER_TEMP" .
+      - name: Stage the candidate workstation image
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          image="$(python3 -c 'import json; print(json.load(open("candidate/candidate.json"))["images"]["workstation"])')"
+          auth="$RUNNER_TEMP/ghcr-auth.json"
+          trap 'rm -f "$auth"' EXIT
+          printf '%s' "$GH_TOKEN" | skopeo login --authfile "$auth" --username "$GITHUB_ACTOR" --password-stdin ghcr.io
+          skopeo copy --authfile "$auth" "docker://$image" "oci:$RUNNER_TEMP/candidate-layout:base"
+      - name: Boot the base, update to the candidate, check it
+        env:
+          BASE_MANIFEST: ${{ steps.base.outputs.manifest }}
+        run: python3 .github/scripts/workflow/image_update_spike.py --disk spike-base.qcow2 --base-manifest "$BASE_MANIFEST" --candidate-layout "$RUNNER_TEMP/candidate-layout" --output "$RUNNER_TEMP/image-spike"
+      - name: Upload diagnostics
+        if: ${{ always() }}
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: image-update-spike
+          path: ${{ runner.temp }}/image-spike/
+          if-no-files-found: warn
