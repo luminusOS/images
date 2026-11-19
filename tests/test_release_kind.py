@@ -595,6 +595,52 @@ class BindingTests(unittest.TestCase):
         pipeline.validate_candidate(other, self.directory)
         return other
 
+    def test_record_validation_signs_image_receipts_with_the_kind_binding(self):
+        image = self.fixture.image()
+        path = self.directory / "candidate.json"
+        path.write_text(json.dumps(image))
+        receipts = self.directory / "receipts"
+        receipts.mkdir()
+        recorder = driver.Receipts(receipts, image)
+        for name in pipeline.checks("image"):
+            recorder.write(name, ["ssh", name], driver.now(), f"observed {name}\n")
+
+        def record(names):
+            for stale in receipts.glob("*.json"):
+                if stale.stem not in names:
+                    stale.unlink()
+            output = receipts / "validation.json"
+            argv = ["release_pipeline", "record-validation", "--candidate", str(path)]
+            argv += ["--receipts", str(receipts), "--output", str(output)]
+            argv += ["--public-key", str(pipeline.CANDIDATE_PUBLIC_KEY)]
+            env = {
+                "GITHUB_REPOSITORY": "owner/repo",
+                "GITHUB_REF": "refs/heads/main",
+                "GITHUB_SHA": "b" * 40,
+                "GITHUB_RUN_ID": "77",
+            }
+            with (
+                mock.patch.dict(pipeline.os.environ, env),
+                mock.patch.object(pipeline, "verify"),
+                mock.patch.object(pipeline, "sign"),
+                mock.patch.object(pipeline.sys, "argv", argv),
+                mock.patch.object(pipeline.sys, "stdout"),
+            ):
+                return pipeline.main(), output
+
+        code, output = record(set(pipeline.checks("image")))
+        self.assertEqual(code, 0)
+        value = json.loads(output.read_text())
+        self.assertEqual(value["binding"], pipeline.binding(image))
+        self.assertEqual(value["binding"]["release_kind"], "image")
+        self.assertEqual(
+            {r["name"] for r in value["receipts"]}, set(pipeline.checks("image"))
+        )
+        output.unlink()
+        code, output = record(set(pipeline.checks("image")) - {"base_boot"})
+        self.assertEqual(code, 1)
+        self.assertFalse(output.exists())
+
     def test_full_binding_keeps_its_pre_migration_fields(self):
         full = self.fixture.full()
         legacy = {k: v for k, v in full.items() if k != "release_kind"}

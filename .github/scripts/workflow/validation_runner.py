@@ -14,6 +14,9 @@ import release_pipeline
 # recorded as runner_sha.
 DRIVER = Path(__file__).resolve().parent / "validation_driver.py"
 PUBLIC_KEY = Path("shared/release/candidate.pub")
+# Where installation-validation.yml stages an image candidate's inputs.
+BASE_DISK = Path("base-disk/published-base.qcow2")
+CANDIDATE_MIRROR = Path("candidate-mirror")
 
 
 def reject_symlink_components(path):
@@ -34,6 +37,29 @@ def owned_directory(path):
     ):
         raise ValueError(f"untrusted runner directory: {path}")
     return path
+
+
+def owned_file(path):
+    path = reject_symlink_components(path)
+    info = path.lstat()
+    if (
+        not stat.S_ISREG(info.st_mode)
+        or info.st_uid != os.geteuid()
+        or info.st_mode & 0o022
+    ):
+        raise ValueError(f"untrusted runner file: {path}")
+    return path
+
+
+def kind_inputs(candidate, runner_temp):
+    if release_pipeline.release_kind(candidate) == "full":
+        return []
+    return [
+        "--disk",
+        str(owned_file(runner_temp / BASE_DISK)),
+        "--candidate-mirror",
+        str(owned_directory(runner_temp / CANDIDATE_MIRROR)),
+    ]
 
 
 def validate_output_tree(directory):
@@ -63,6 +89,7 @@ def run_validation(candidate_dir, runner_temp, run_id, repository, fixture_base)
         candidate["channel"], candidate["fedora_version"]
     ):
         raise ValueError("validation must run on the candidate's release line")
+    extra = kind_inputs(candidate, runner_temp)
     receipts = Path(tempfile.mkdtemp(prefix="luminusos-validation-", dir=runner_temp))
     os.chmod(receipts, 0o700)
     environment = {
@@ -85,6 +112,7 @@ def run_validation(candidate_dir, runner_temp, run_id, repository, fixture_base)
             str(receipts),
             "--fixture-base",
             str(fixture_base),
+            *extra,
         ],
         check=True,
         env=environment,
