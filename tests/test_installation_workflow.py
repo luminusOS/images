@@ -488,6 +488,43 @@ class KindWorkflowTests(unittest.TestCase):
             "${{ steps.base.outputs.workstation_image }}",
         )
 
+    def test_disk_build_stops_before_packaging_without_free_space(self):
+        script = self.steps(self.disk)[
+            "Build a disposable disk from the published base"
+        ]["run"]
+        for free_kib, packaged in ((39 * 1048576, False), (40 * 1048576, True)):
+            with (
+                self.subTest(free_gib=free_kib // 1048576),
+                tempfile.TemporaryDirectory() as tmp,
+            ):
+                bin_dir = Path(tmp) / "bin"
+                bin_dir.mkdir()
+                calls = Path(tmp) / "calls"
+                for name, body in {
+                    "df": f'printf "Avail\\n{free_kib}\\n"',
+                    "sudo": f'echo "$*" >> "{calls}"',
+                    "qemu-img": "true",
+                }.items():
+                    stub = bin_dir / name
+                    stub.write_text(f"#!/bin/sh\n{body}\n")
+                    stub.chmod(0o755)
+                result = subprocess.run(
+                    ["bash", "-e", "-c", script],
+                    check=False,
+                    cwd=tmp,
+                    env={
+                        "PATH": f"{bin_dir}:{os.environ['PATH']}",
+                        "WORKSTATION_IMAGE": "ghcr.io/x/y@sha256:" + "a" * 64,
+                        "FEDORA_VERSION": "45",
+                        "DISK_NAME": "published-base.qcow2",
+                    },
+                    capture_output=True,
+                    text=True,
+                )
+                ran = calls.exists() and "podman run" in calls.read_text()
+                self.assertEqual(ran, packaged, result.stderr)
+                self.assertEqual(result.returncode == 0, packaged, result.stderr)
+
     def test_disk_artifact_is_short_lived_and_reaches_the_runner_path(self):
         upload = self.steps(self.disk)["Upload the disposable disk"]
         download = self.steps(self.installation)["Download the disposable base disk"]

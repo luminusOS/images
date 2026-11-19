@@ -72,6 +72,13 @@ jobs:
           DISK_NAME: ${{ steps.base.outputs.disk_name }}
         run: |
           set -euo pipefail
+          # The measured base build (run 44462787104) left a 3.92 GiB disk with
+          # about 90 GiB free; 40 GiB keeps several times that margin.
+          free_gib=$(( $(df --output=avail -k . | tail -1) / 1048576 ))
+          if [ "$free_gib" -lt 40 ]; then
+            echo "only ${free_gib} GiB free; the base disk build needs at least 40 GiB" >&2
+            exit 1
+          fi
           sudo podman run --rm --privileged \
             --security-opt label=type:unconfined_t \
             -v "$PWD:/work" -w /work \
