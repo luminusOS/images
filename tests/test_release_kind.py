@@ -552,16 +552,13 @@ class GateProfileTests(unittest.TestCase):
             self.assertEqual(set(quality["images"]), {"core", "workstation"})
             self.assertFalse(any("boot/" in name for name in quality["artifacts"]))
 
-    def test_image_candidates_are_refused_before_any_publication_write(self):
+    def test_full_entry_points_refuse_image_candidates_before_writes(self):
         candidate = {"release_kind": "image", "channel": "testing"}
         with tempfile.TemporaryDirectory() as temp:
             directory = Path(temp) / "publication"
             for operation in (
                 lambda: publish.promote(
                     Path("c.json"), Path("e.json"), Path("k"), directory, "testing"
-                ),
-                lambda: publish.stage(
-                    Path("c.json"), Path("e.json"), directory, Path("k")
                 ),
                 lambda: publish.publish_downloads(Path("c.json"), directory, Path("k")),
             ):
@@ -574,7 +571,7 @@ class GateProfileTests(unittest.TestCase):
                     mock.patch.object(publish, "load_helper") as helper,
                     mock.patch.object(publish, "release_preflight") as preflight,
                     mock.patch.object(publish, "github_release") as release,
-                    self.assertRaisesRegex(ValueError, "not supported yet"),
+                    self.assertRaisesRegex(ValueError, "publish-image"),
                 ):
                     operation()
                 run.assert_not_called()
