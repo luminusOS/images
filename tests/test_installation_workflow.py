@@ -23,6 +23,7 @@ SPEC.loader.exec_module(runner)
 def candidate():
     return {
         "version": 1,
+        "release_kind": "full",
         "run_id": 12,
         "repository": "org/repo",
         "channel": "testing",

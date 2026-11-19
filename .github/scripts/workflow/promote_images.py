@@ -12,7 +12,7 @@ import sys
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-from release_policy import REQUIRED_GATES, validate_candidate
+from release_policy import required_gates, validate_candidate
 
 DIGEST = re.compile(r"sha256:[0-9a-f]{64}\Z")
 CANDIDATE_KEY = Path(__file__).resolve().parents[3] / "shared/release/candidate.pub"
@@ -105,8 +105,10 @@ def inspect_version(reference: str) -> str | None:
     return digest
 
 
-def verify_evidence_artifacts(evidence: dict, directory: Path) -> None:
-    for name in REQUIRED_GATES:
+def verify_evidence_artifacts(
+    evidence: dict, directory: Path, release_kind: str = "full"
+) -> None:
+    for name in required_gates(release_kind):
         item = evidence["evidence"][name]
         relative = Path(item["artifact"])
         if (
@@ -138,6 +140,7 @@ def promote(
     expected_repository: str,
     expected_commit: str,
     role: str | None = None,
+    release_kind: str = "full",
 ) -> None:
     if not DIGEST.fullmatch(expected_digest):
         raise ValueError("expected digest must be a sha256 digest")
@@ -175,8 +178,14 @@ def promote(
         if not re.search(r"@sha256:[0-9a-f]{64}\Z", workstation):
             raise ValueError("invalid workstation binding")
         candidate_digest = workstation.split("@", 1)[1]
+    if evidence.get("release_kind", "full") != release_kind:
+        raise ValueError("release evidence kind does not match the signed candidate")
     errors = validate_candidate(
-        evidence, candidate_digest, expected_repository, expected_commit
+        evidence,
+        candidate_digest,
+        expected_repository,
+        expected_commit,
+        release_kind=release_kind,
     )
     if errors:
         raise ValueError("release evidence rejected: " + "; ".join(errors))
@@ -199,7 +208,7 @@ def promote(
         capture_output=True,
         text=True,
     )
-    verify_evidence_artifacts(evidence, evidence_path.parent)
+    verify_evidence_artifacts(evidence, evidence_path.parent, release_kind)
     source_digest = subprocess.run(
         ["skopeo", "inspect", "--format", "{{.Digest}}", f"docker://{source}"],
         check=True,
@@ -287,6 +296,7 @@ def main() -> int:
     parser.add_argument(
         "--image-kind", choices=("core", "workstation", "installer"), required=True
     )
+    parser.add_argument("--release-kind", choices=("full", "image"), default="full")
     parser.add_argument("destinations", nargs="+")
     args = parser.parse_args()
     try:
@@ -300,6 +310,7 @@ def main() -> int:
             args.repository,
             args.commit,
             args.image_kind,
+            release_kind=args.release_kind,
         )
     except (OSError, subprocess.CalledProcessError, ValueError) as exc:
         print(f"promotion refused: {exc}", file=sys.stderr)

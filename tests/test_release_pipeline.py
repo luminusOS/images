@@ -169,11 +169,14 @@ class CandidateSigningTests(unittest.TestCase):
 def sample(tmp_path):
     artifact = tmp_path / "disk.qcow2"
     artifact.write_bytes(b"disk")
+    live = tmp_path / "live.iso"
+    live.write_bytes(b"live")
     key = tmp_path / "key.pub"
     key.write_text("key")
     path = tmp_path / "candidate.json"
     document = {
         "version": 1,
+        "release_kind": "full",
         "repository": "owner/repo",
         "source_sha": "a" * 40,
         "run_id": 123,
@@ -186,7 +189,10 @@ def sample(tmp_path):
             name: "ghcr.io/owner/luminusos-candidates@sha256:" + str(index) * 64
             for index, name in enumerate(("core", "workstation", "installer"), 1)
         },
-        "artifacts": {"disk.qcow2": pipeline.digest(artifact)},
+        "artifacts": {
+            "disk.qcow2": pipeline.digest(artifact),
+            "live.iso": pipeline.digest(live),
+        },
     }
     path.write_text(json.dumps(document))
     (tmp_path / "candidate.json.sig").write_text("signature")
@@ -1605,7 +1611,12 @@ class ReleasePipelineTests(unittest.TestCase):
                 (repository, run_id, name), ("owner/repo", 123, "release-candidate")
             )
             directory.mkdir(exist_ok=True)
-            for filename in ("candidate.json", "candidate.json.sig", "disk.qcow2"):
+            for filename in (
+                "candidate.json",
+                "candidate.json.sig",
+                "disk.qcow2",
+                "live.iso",
+            ):
                 (directory / filename).write_bytes(
                     (path.parent / filename).read_bytes()
                 )
@@ -2072,6 +2083,7 @@ class ReleasePipelineTests(unittest.TestCase):
             result = pipeline.create_candidate(metadata, tmp_path, path, key)
         assert result["artifacts"] == {
             "disk.qcow2": pipeline.digest(tmp_path / "disk.qcow2"),
+            "live.iso": pipeline.digest(tmp_path / "live.iso"),
             "nested/notes.txt": pipeline.digest(nested / "notes.txt"),
             "nested/qemu.ppm": pipeline.digest(nested / "qemu.ppm"),
             "nested/qemu.png": pipeline.digest(nested / "qemu.png"),
