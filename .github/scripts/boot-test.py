@@ -195,9 +195,19 @@ def guest_checks(remote) -> list[str]:
     if link.returncode != 0 or link.stdout.strip() != "/var/home":
         problems.append(f"/home resolves to {link.stdout.strip()!r}")
     problems += unit_problems(remote("random-seed", RANDOM_SEED, 120))
-    remote("labels", LABELS, 120)
+    labels = remote("labels", LABELS, 120)
+    if (
+        labels.returncode != 0
+        or labels.stderr.strip()
+        or len(labels.stdout.splitlines()) != 3
+        or "unlabeled_t" in labels.stdout
+    ):
+        problems.append(
+            "cannot confirm SELinux labels:"
+            f" {(labels.stdout + labels.stderr).strip() or labels.returncode!r}"
+        )
     relabel = remote("restorecon", RELABEL, 300)
-    if relabel.returncode != 0 or relabel.stdout.strip():
+    if relabel.returncode != 0 or relabel.stdout.strip() or relabel.stderr.strip():
         problems.append(
             "SELinux labels differ from policy:"
             f" {(relabel.stdout + relabel.stderr).strip() or relabel.returncode!r}"

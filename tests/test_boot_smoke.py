@@ -74,7 +74,12 @@ HEALTHY = {
     "var-home-mount": mount("/var", STATEROOT_VAR),
     "home-link": done("/var/home\n"),
     "random-seed": done("Result=success\nActiveState=active\n"),
-    "labels": done("drwxr-xr-x. root root system_u:object_r:var_t:s0 /var\n"),
+    "labels": done(
+        "drwxr-xr-x. 1 root root system_u:object_r:var_t:s0 72 Nov 19 /var\n"
+        "lrwxrwxrwx. 1 root root system_u:object_r:home_root_t:s0 10 Nov 19 /var/home\n"
+        "drwxr-xr-x. 1 root root system_u:object_r:init_var_lib_t:s0 104 Nov 19"
+        " /var/lib/systemd\n"
+    ),
     "restorecon": done(""),
 }
 OLD_VAR = {
@@ -221,8 +226,22 @@ class GuestGateTests(unittest.TestCase):
             with self.subTest(result=result.stdout or result.stderr):
                 problems, _ = self.check(restorecon=result)
                 self.assertTrue(any("SELinux labels" in p for p in problems))
-        problems, _ = self.check(labels=done("", 2))
-        self.assertEqual(problems, [])
+        problems, _ = self.check(
+            restorecon=done("", 0, "restorecon: lstat(/var/home) failed")
+        )
+        self.assertTrue(any("SELinux labels" in p for p in problems))
+
+    def test_labels_must_be_readable_and_never_unlabeled(self):
+        healthy = HEALTHY["labels"].stdout
+        for result in (
+            done("", 2, "ls: cannot access '/var/lib/systemd'"),
+            done(healthy, 0, "ls: warning"),
+            done(healthy.splitlines()[0] + "\n"),
+            done(healthy.replace("var_t", "unlabeled_t", 1)),
+        ):
+            with self.subTest(result=result.stdout or result.stderr):
+                problems, _ = self.check(labels=result)
+                self.assertTrue(any("cannot confirm SELinux" in p for p in problems))
 
 
 class CheckGuestTests(unittest.TestCase):
