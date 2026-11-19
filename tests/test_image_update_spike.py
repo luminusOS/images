@@ -85,12 +85,12 @@ class ImageUpdateSpikeTests(unittest.TestCase):
         workflow = yaml.safe_load(
             (ROOT / ".github/workflows/image-update-spike.yml").read_text()
         )
-        job = workflow["jobs"]["spike"]
-        self.assertNotIn("environment", job)
-        self.assertEqual(
-            job["permissions"],
-            {"contents": "read", "actions": "read", "packages": "read"},
-        )
+        for job in workflow["jobs"].values():
+            self.assertNotIn("environment", job)
+            self.assertEqual(
+                job["permissions"],
+                {"contents": "read", "actions": "read", "packages": "read"},
+            )
         text = (ROOT / ".github/workflows/image-update-spike.yml").read_text()
         self.assertNotIn("secrets.CANDIDATE", text)
         self.assertNotIn("secrets.COSIGN", text)
@@ -98,11 +98,30 @@ class ImageUpdateSpikeTests(unittest.TestCase):
         self.assertNotIn("inputs.base_tag", text)
         self.assertIn("image_update_spike.py base-tag", text)
 
+    def test_disk_is_built_on_the_runner_that_builds_release_qcow2(self):
+        spike_jobs = yaml.safe_load(
+            (ROOT / ".github/workflows/image-update-spike.yml").read_text()
+        )["jobs"]
+        publish_jobs = yaml.safe_load(
+            (ROOT / ".github/workflows/publish.yml").read_text()
+        )["jobs"]
+        builds = [
+            job
+            for job in spike_jobs.values()
+            if any("ci-package.py qcow2" in s.get("run", "") for s in job["steps"])
+        ]
+        self.assertEqual(len(builds), 1)
+        self.assertEqual(builds[0]["runs-on"], publish_jobs["qcow2"]["runs-on"])
+        self.assertEqual(spike_jobs["spike"]["needs"], "disk")
+        self.assertIn("needs.disk.outputs.manifest", str(spike_jobs["spike"]))
+
     def test_sudo_podman_passes_environment_values_explicitly(self):
         workflow = yaml.safe_load(
             (ROOT / ".github/workflows/image-update-spike.yml").read_text()
         )
-        for step in workflow["jobs"]["spike"]["steps"]:
+        steps = [s for job in workflow["jobs"].values() for s in job["steps"]]
+        self.assertTrue(any("sudo podman run" in s.get("run", "") for s in steps))
+        for step in steps:
             script = step.get("run", "")
             if "sudo podman run" not in script:
                 continue
