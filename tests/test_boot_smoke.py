@@ -77,6 +77,8 @@ class GuestGateTests(unittest.TestCase):
 
         def remote(name, command, timeout):
             calls.append((name, command))
+            if name.startswith("diagnostics-"):
+                return done("")
             return {**HEALTHY, **overrides}[name]
 
         return boot.guest_checks(remote), calls
@@ -154,9 +156,9 @@ class CheckGuestTests(unittest.TestCase):
                     patch.object(
                         boot.vmlib,
                         "remote",
-                        side_effect=lambda vm, name, command, timeout, r=results: r[
-                            name
-                        ],
+                        side_effect=lambda vm, name, command, timeout, r=results: r.get(
+                            name, done("")
+                        ),
                     ),
                 ):
                     if passed:

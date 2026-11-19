@@ -34,7 +34,15 @@ class FakeGuest:
 
     def run(self, name, command, **_kwargs):
         self.commands[name] = command
+        if name not in self.results and diagnostic(command):
+            return ["ssh", "root@vsock", command], done("")
         return ["ssh", "root@vsock", command], self.results[name]
+
+
+def diagnostic(command):
+    return command.startswith(
+        ("systemctl status ", "journalctl ", "ls -laZ ", "findmnt -o ")
+    )
 
 
 def candidate():
