@@ -74,7 +74,7 @@ class PublicationIntegrationTests(unittest.TestCase):
             "R2_ENDPOINT": "https://example.invalid",
         }
 
-    def invoke(self, *arguments, **overrides):
+    def invoke(self, *arguments, latest=None, **overrides):
         return subprocess.run(
             [
                 sys.executable,
@@ -82,6 +82,8 @@ class PublicationIntegrationTests(unittest.TestCase):
                 "testing",
                 VERSION,
                 str(self.dist),
+                "--latest-release",
+                latest or VERSION.removeprefix("testing-").split(".")[0],
                 *arguments,
             ],
             env={**self.env, **overrides},
@@ -112,6 +114,16 @@ class PublicationIntegrationTests(unittest.TestCase):
             )
         )
         self.assertTrue(latest["assets"]["qcow2"].endswith(".qcow2"))
+
+    def test_older_line_keeps_index_and_newer_line(self):
+        newer = self.store / "testing" / "testing-46.20261101"
+        newer.mkdir()
+        (newer / "new.iso").write_bytes(b"new")
+        result = self.invoke(latest="46")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertFalse((self.store / "testing/latest.json").exists())
+        self.assertTrue((newer / "new.iso").is_file())
+        self.assertFalse((self.store / "testing" / OLD).exists())
 
     def test_failure_never_updates_latest_or_removes_old(self):
         for failure in ("FAIL_QCOW", "FAIL_DOWNLOAD", "CORRUPT_QCOW"):
