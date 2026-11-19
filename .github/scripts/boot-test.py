@@ -19,8 +19,19 @@ import install_feasibility as vmlib
 from qemu_common import resolve_ovmf
 
 HEALTH = "systemctl is-system-running --wait"
-HOME_MOUNT = "findmnt -J --mountpoint /var/home -o TARGET,SOURCE,FSTYPE,OPTIONS"
+FINDMNT = "findmnt -J -o TARGET,SOURCE,FSTYPE,OPTIONS --target"
+STORAGE = (("sysroot", "/sysroot"), ("var", "/var"), ("var-home", "/var/home"))
 HOME_LINK = "readlink -f /home"
+RANDOM_SEED = "systemctl show -p Result -p ActiveState systemd-random-seed.service"
+LABELS = "ls -ldZ /var /var/home /var/lib/systemd"
+RELABEL = "restorecon -n -v /var /var/home /var/lib/systemd"
+# findmnt shows a bind mount from a Btrfs subvolume as device[path]. /var is
+# the ostree stateroot directory inside the root subvolume; the stateroot name
+# and the root subvolume path are not pinned. The pre-fix layouts mounted
+# separate var or home subvolumes, which show as device[/var] or device[/home].
+SOURCE = re.compile(r"(?P<device>/dev/[^\[\]\s]+)(?:\[(?P<path>/[^\[\]]*)\])?\Z")
+STATEROOT_VAR = re.compile(r"(?:/[^\[\]]*)?/ostree/deploy/[^/\[\]]+/var\Z")
+OLD_SUBVOLUMES = ("/var", "/home")
 
 
 def count_colors(path):
@@ -67,24 +78,90 @@ def screendump(socket_path, image_path):
                     break
 
 
-def home_problems(findmnt_json: str) -> list[str]:
+def mount_of(result) -> tuple[dict | None, str | None]:
+    if result.returncode != 0:
+        return None, f"findmnt exited {result.returncode}"
     try:
-        mounts = json.loads(findmnt_json).get("filesystems") or []
+        mounts = json.loads(result.stdout).get("filesystems") or []
     except (json.JSONDecodeError, AttributeError):
-        return ["findmnt did not return JSON"]
+        return None, "findmnt did not return JSON"
     if len(mounts) != 1:
-        return [f"/var/home has {len(mounts)} mounts, want 1"]
-    mount = mounts[0]
-    options = str(mount.get("options", "")).split(",")
+        return None, f"findmnt returned {len(mounts)} filesystems"
+    return mounts[0], None
+
+
+def storage_problems(results: dict) -> list[str]:
+    """Check /var and /var/home come from the root filesystem, not old subvolumes.
+
+    results maps "sysroot", "var" and "var-home" to findmnt --target results.
+    """
     problems = []
-    if mount.get("target") != "/var/home":
-        problems.append(f"mount target is {mount.get('target')!r}")
-    if mount.get("fstype") != "btrfs":
-        problems.append(f"/var/home is {mount.get('fstype')!r}, want btrfs")
-    # The kernel reports subvol=/home; image-builder's units write subvol=home.
-    if not ({"subvol=/home", "subvol=home"} & set(options)):
-        problems.append(f"/var/home is not the home subvolume: {options}")
+    mounts = {}
+    for name, path in STORAGE:
+        mount, error = mount_of(results[name])
+        if error:
+            problems.append(f"{path}: {error}")
+            continue
+        source = SOURCE.fullmatch(str(mount.get("source", "")))
+        if mount.get("fstype") != "btrfs" or source is None:
+            problems.append(
+                f"{path} is on {mount.get('source')!r} ({mount.get('fstype')!r}),"
+                " want the root Btrfs filesystem"
+            )
+            continue
+        mounts[name] = (mount, source)
+    if problems:
+        return problems
+    sysroot, sysroot_source = mounts["sysroot"]
+    var, var_source = mounts["var"]
+    home, home_source = mounts["var-home"]
+    for path, source in (("/var", var_source), ("/var/home", home_source)):
+        if source["path"] in OLD_SUBVOLUMES:
+            problems.append(
+                f"{path} is the separate {source['path'][1:]} subvolume"
+                f" {source.group(0)!r}"
+            )
+    if problems:
+        return problems
+    if sysroot.get("target") != "/sysroot":
+        problems.append(f"/sysroot is not mounted: {sysroot.get('target')!r}")
+    if var.get("target") != "/var":
+        problems.append(f"/var is not a mount point: {var.get('target')!r}")
+    if var_source["device"] != sysroot_source["device"]:
+        problems.append(
+            f"/var is on {var_source['device']}, the root filesystem is"
+            f" {sysroot_source['device']}"
+        )
+    prefix = sysroot_source["path"] or ""
+    path = var_source["path"] or ""
+    if not (
+        path.startswith(prefix + "/")
+        and STATEROOT_VAR.fullmatch(path.removeprefix(prefix))
+    ):
+        problems.append(f"/var is {var_source.group(0)!r}, not the ostree stateroot")
+    if (home.get("target"), home_source.group(0)) != ("/var", var_source.group(0)):
+        problems.append(
+            f"/var/home is a separate mount {home.get('target')!r}"
+            f" from {home_source.group(0)!r}"
+        )
     return problems
+
+
+def unit_problems(result) -> list[str]:
+    properties = dict(
+        line.split("=", 1) for line in result.stdout.splitlines() if "=" in line
+    )
+    if result.returncode != 0 or (
+        properties.get("Result"),
+        properties.get("ActiveState"),
+    ) != ("success", "active"):
+        return [
+            (
+                "systemd-random-seed.service did not succeed in this boot:"
+                f" {result.stdout.strip() or result.returncode!r}"
+            )
+        ]
+    return []
 
 
 def guest_checks(remote) -> list[str]:
@@ -108,15 +185,33 @@ def guest_checks(remote) -> list[str]:
         )
         if excerpt:
             problems.append(f"failed unit journals:\n{excerpt}")
-    home = remote("var-home-mount", HOME_MOUNT, 120)
-    problems += (
-        home_problems(home.stdout)
-        if home.returncode == 0
-        else ["/var/home is not a mount point"]
+    problems += storage_problems(
+        {
+            name: remote(f"{name}-mount", f"{FINDMNT} {path}", 120)
+            for name, path in STORAGE
+        }
     )
     link = remote("home-link", HOME_LINK, 120)
     if link.returncode != 0 or link.stdout.strip() != "/var/home":
         problems.append(f"/home resolves to {link.stdout.strip()!r}")
+    problems += unit_problems(remote("random-seed", RANDOM_SEED, 120))
+    labels = remote("labels", LABELS, 120)
+    if (
+        labels.returncode != 0
+        or labels.stderr.strip()
+        or len(labels.stdout.splitlines()) != 3
+        or "unlabeled_t" in labels.stdout
+    ):
+        problems.append(
+            "cannot confirm SELinux labels:"
+            f" {(labels.stdout + labels.stderr).strip() or labels.returncode!r}"
+        )
+    relabel = remote("restorecon", RELABEL, 300)
+    if relabel.returncode != 0 or relabel.stdout.strip() or relabel.stderr.strip():
+        problems.append(
+            "SELinux labels differ from policy:"
+            f" {(relabel.stdout + relabel.stderr).strip() or relabel.returncode!r}"
+        )
     return problems
 
 
@@ -132,7 +227,10 @@ def check_guest(vm) -> None:
     )
     if problems:
         raise RuntimeError("installed disk is unhealthy: " + "; ".join(problems))
-    print("Installed disk: running, no failed units, /var/home is the home subvolume")
+    print(
+        "Installed disk: running, no failed units, random seed saved,"
+        " /var from the root subvolume, labels match policy"
+    )
 
 
 def disk_vm(outdir: Path, keys: Path, image: Path, code: Path, variables: Path):
