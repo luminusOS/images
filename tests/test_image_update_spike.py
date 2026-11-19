@@ -1,5 +1,6 @@
 import importlib.util
 import os
+import re
 import sys
 import unittest
 from pathlib import Path
@@ -96,6 +97,18 @@ class ImageUpdateSpikeTests(unittest.TestCase):
         self.assertNotIn("record-validation", text)
         self.assertNotIn("inputs.base_tag", text)
         self.assertIn("image_update_spike.py base-tag", text)
+
+    def test_sudo_podman_passes_environment_values_explicitly(self):
+        workflow = yaml.safe_load(
+            (ROOT / ".github/workflows/image-update-spike.yml").read_text()
+        )
+        for step in workflow["jobs"]["spike"]["steps"]:
+            script = step.get("run", "")
+            if "sudo podman run" not in script:
+                continue
+            for name in re.findall(r"-e\s+([A-Za-z_][A-Za-z0-9_]*)(?=[\s\\])", script):
+                with self.subTest(step=step.get("name"), variable=name):
+                    self.fail(f"sudo drops the environment; pass {name}=value")
 
 
 if __name__ == "__main__":

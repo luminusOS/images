@@ -90,7 +90,7 @@ jobs:
           sudo podman run --rm --privileged \
             --security-opt label=type:unconfined_t \
             -v "$PWD:/work" -w /work \
-            -e WORKSTATION_IMAGE -e OUTPUT_NAME=spike-base.qcow2 \
+            -e WORKSTATION_IMAGE="${WORKSTATION_IMAGE}" -e OUTPUT_NAME=spike-base.qcow2 \
             quay.io/fedora/fedora:45 \
             sh -c 'dnf -y install python3 && exec python3 .github/scripts/ci-package.py qcow2'
           sudo chown "$(id -u):$(id -g)" spike-base.qcow2
