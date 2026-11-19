@@ -180,6 +180,32 @@ There is no automated withdrawal or channel rollback. The maintainer should iden
 
 Review renewals on the appropriate branch; do not carry testing exceptions into stable or extend records automatically. Update workflow policy hash pins when policy bytes change. If refreshed records change the signed scan evidence or approval summary, do not reuse the old approval; prepare and validate against the new policy.
 
+### Repairing qcow2 installs with a failed `home.mount`
+
+qcow2 disks published before the `disk.yaml` fix mounted the Btrfs `home` subvolume at `/home`, which is a symlink to `var/home` on bootc. Every boot fails `home.mount` and the system reports `degraded`. User data written so far is in `/var/home` on the `var` subvolume; the separate `home` subvolume stays unmounted. Updating the image does not repair an existing install, because the generated unit lives in `/etc`.
+
+Confirm:
+
+```sh
+systemctl is-system-running                   # degraded
+systemctl --failed                            # lists home.mount
+systemctl show home.mount -p FragmentPath     # /etc/systemd/system/home.mount
+```
+
+Back up both locations before changing anything: `/var/home`, and the `home` subvolume, which you can reach read-only by mounting the filesystem's top level, for example `sudo mount -o ro,subvolid=5 "$(findmnt -no SOURCE /var | sed 's/\[.*//')" /mnt` and copying `/mnt/home`.
+
+Conservative repair, which leaves the visible data where it is:
+
+```sh
+sudo systemctl disable home.mount
+sudo mv /etc/systemd/system/home.mount /root/home.mount.disabled
+sudo find /etc/systemd/system -name home.mount -type l -delete   # leftover enablement links
+sudo systemctl daemon-reload
+sudo systemctl reset-failed home.mount
+```
+
+After a reboot `systemctl is-system-running` should report `running`. To use the subvolume instead, do it offline (no user logged in): merge `/var/home` into the subvolume, then add a `var-home.mount` unit with `Where=/var/home`, `Type=btrfs` and `Options=subvol=home`, and enable it. Never delete `/var/home` or the `home` subvolume; whatever stays under the new mount remains as a fallback. These steps have not yet been tested on a clone of an affected install.
+
 ## How Universal Blue (Bluefin) does it
 
 Checked against `ublue-os/bluefin` workflows and Justfile, September 2026:

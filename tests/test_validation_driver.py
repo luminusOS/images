@@ -167,6 +167,8 @@ class DriverTests(unittest.TestCase):
         wrong_version["status"]["booted"]["image"]["version"] = "45.20261105.1"
         for name, result in (
             ("first-boot-state", done("degraded\n", 1)),
+            ("first-boot-state", done("running\n", 1)),
+            ("first-boot-state", done("degraded\n", 0)),
             ("first-boot-bootc", done(json.dumps(wrong_version))),
             ("first-boot-mounts", done(mounts(boot="vfat"))),
             (

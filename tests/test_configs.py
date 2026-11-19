@@ -116,8 +116,13 @@ class ConfigurationTests(unittest.TestCase):
             self.assertIn(f"Format={fs}", text(repart / name).splitlines())
         disk = text(SYSTEM / "usr/lib/image-builder/bootc/disk.yaml")
         self.assertRegex(disk, r'type: "ext4"[\s\S]*?mountpoint: "/boot"')
-        for path in ("/", "/home", "/var"):
+        for path in ("/", "/var"):
             self.assertIn(f'mountpoint: "{path}"', disk)
+        # /home is a symlink to var/home on bootc; mounting over it fails.
+        self.assertRegex(disk, r'- name: "home"\s+mountpoint: "/var/home"')
+        self.assertNotRegex(
+            disk, re.compile(r'^\s*mountpoint:\s*"?/home/?"?\s*$', re.MULTILINE)
+        )
         flatpaks = text(ROOT / "shared/flatpaks").splitlines()
         self.assertEqual(flatpaks, sorted(set(flatpaks)))
         for path in ("etc/sirius", "var/lib/AccountsService/users/liveuser"):
