@@ -90,6 +90,7 @@ class Publication:
         self.promoted = []
         self.calls = []
         self.release = None
+        self.draft = False
         self.events = []
 
     def helper(self, name):
@@ -117,12 +118,19 @@ class Publication:
             if self.release is None:
                 raise subprocess.CalledProcessError(1, argv, stderr="release not found")
             view = {
+                "isDraft": self.draft,
                 "isPrerelease": self.candidate["channel"] == "testing",
+                "targetCommitish": self.candidate["source_sha"],
+                "name": f"LuminusOS {self.candidate['build_version']}",
                 "assets": [{"name": n} for n in self.release],
             }
             return mock.Mock(stdout=json.dumps(view))
         if argv[:3] == ["gh", "release", "download"]:
             return mock.Mock(stdout=self.release[argv[argv.index("--pattern") + 1]])
+        if argv[:3] == ["gh", "release", "edit"]:
+            self.events.append("edit")
+            self.draft = False
+            return mock.Mock(stdout="")
         if argv[:3] in (["gh", "release", "create"], ["gh", "release", "upload"]):
             self.events.append(argv[2])
             uploaded = {
@@ -174,7 +182,7 @@ class Publication:
             self.ga = ga
 
     def writes(self):
-        return [e for e in self.events if e in ("promote", "create", "upload")]
+        return [e for e in self.events if e in ("promote", "create", "upload", "edit")]
 
 
 class ImagePromotionTests(unittest.TestCase):
@@ -273,6 +281,32 @@ class ImagePromotionTests(unittest.TestCase):
         }
         partial.publish()
         self.assertEqual(set(partial.release), set(publish.RELEASE_ASSETS))
+
+    def test_retry_publishes_the_draft_an_interrupted_create_left(self):
+        run = Publication(self)
+        run.publish()
+        complete = dict(run.release)
+        run.base.resolved = ValueError("line tags now serve the candidate")
+        run.base.tags = {
+            e: run.candidate["images"][e].split("@", 1)[1] for e in EDITIONS
+        }
+        run.release = {"SHA256SUMS": complete["SHA256SUMS"]}
+        run.draft = True
+        run.events.clear()
+        run.publish()
+        self.assertEqual(run.writes(), ["promote", "promote", "upload", "edit"])
+        self.assertFalse(run.draft)
+        self.assertEqual(set(run.release), set(publish.RELEASE_ASSETS))
+        edit = next(c for c in run.calls if c[:3] == ["gh", "release", "edit"])
+        self.assertIn("--prerelease=true", edit)
+
+    def test_draft_with_other_contents_fails_before_any_write(self):
+        run = Publication(self)
+        run.release = {"SHA256SUMS": b"other contents\n"}
+        run.draft = True
+        with self.assertRaisesRegex(ValueError, "already exists with other contents"):
+            run.publish()
+        self.assertEqual(run.writes(), [])
 
     def test_own_release_must_hold_every_line_tag(self):
         run = Publication(self)

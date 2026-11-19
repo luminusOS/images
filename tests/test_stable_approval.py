@@ -431,7 +431,10 @@ class GitHubReleaseTests(unittest.TestCase):
                         1, "gh", stderr="release not found"
                     )
                 view = {
+                    "isDraft": release.get("draft", False),
                     "isPrerelease": release["prerelease"],
+                    "targetCommitish": release.get("target", "a" * 40),
+                    "name": release.get("name", "LuminusOS 45"),
                     "assets": [{"name": name} for name in release["assets"]],
                 }
                 return mock.Mock(stdout=json.dumps(view))
@@ -494,6 +497,79 @@ class GitHubReleaseTests(unittest.TestCase):
                 for c in calls
             )
         )
+
+    def writes(self, calls):
+        return [
+            c[2]
+            for c in calls
+            if c[:3]
+            in (
+                ["gh", "release", "create"],
+                ["gh", "release", "upload"],
+                ["gh", "release", "edit"],
+            )
+        ]
+
+    def test_interrupted_create_leaves_a_draft_that_a_retry_publishes(self):
+        for channel in ("stable", "testing"):
+            with self.subTest(channel=channel):
+                draft = {
+                    "draft": True,
+                    "prerelease": channel == "testing",
+                    "assets": {"SHA256SUMS": b"SHA256SUMS"},
+                }
+                calls = self.release(channel, draft)
+                self.assertEqual(self.writes(calls), ["upload", "edit"])
+                edit = next(c for c in calls if c[:3] == ["gh", "release", "edit"])
+                self.assertEqual(
+                    edit,
+                    [
+                        "gh",
+                        "release",
+                        "edit",
+                        "45.20261120.1",
+                        "--draft=false",
+                        f"--prerelease={str(channel == 'testing').lower()}",
+                    ],
+                )
+
+    def test_complete_draft_is_published_and_published_release_left_alone(self):
+        assets = {
+            "SHA256SUMS": b"SHA256SUMS",
+            "SHA256SUMS.sig": b"any valid signature",
+            "evidence.tar.gz": self.bundle,
+        }
+        calls = self.release(
+            "stable", {"draft": True, "prerelease": False, "assets": assets}
+        )
+        self.assertEqual(self.writes(calls), ["edit"])
+        calls = self.release(
+            "stable", {"draft": False, "prerelease": False, "assets": assets}
+        )
+        self.assertEqual(self.writes(calls), [])
+
+    def test_draft_with_other_contents_or_identity_is_refused_before_writes(self):
+        for draft in (
+            {"draft": True, "prerelease": False, "assets": {"SHA256SUMS": b"other"}},
+            {"draft": True, "prerelease": True, "assets": {}},
+            {"draft": True, "prerelease": False, "assets": {"x.iso": b"x"}},
+            {"draft": True, "prerelease": False, "assets": {}, "target": "b" * 40},
+            {"draft": True, "prerelease": False, "assets": {}, "name": "Other"},
+            {"draft": None, "prerelease": False, "assets": {}},
+            {"draft": False, "prerelease": False, "assets": {}, "target": "b" * 40},
+        ):
+            calls = []
+            with (
+                self.subTest(draft=draft),
+                mock.patch.object(
+                    publish.subprocess, "run", side_effect=self.gh(draft, calls)
+                ),
+                self.assertRaisesRegex(ValueError, "already exists"),
+            ):
+                publish.github_release(
+                    self.files, "45.20261120.1", "a" * 40, "LuminusOS 45", "stable"
+                )
+            self.assertEqual(self.writes(calls), [])
 
     def test_retry_accepts_new_valid_signatures_over_the_same_content(self):
         def bundle(signature, content="{}"):

@@ -1038,7 +1038,14 @@ RELEASE_ASSETS = ("SHA256SUMS", "SHA256SUMS.sig", "evidence.tar.gz")
 def existing_release(version: str) -> dict | None:
     try:
         view = subprocess.run(
-            ["gh", "release", "view", version, "--json", "isPrerelease,assets"],
+            [
+                "gh",
+                "release",
+                "view",
+                version,
+                "--json",
+                "isDraft,isPrerelease,assets,targetCommitish,name",
+            ],
             check=True,
             capture_output=True,
             text=True,
@@ -1185,11 +1192,33 @@ def github_release(
     files: dict[str, Path], version: str, source_sha: str, title: str, channel: str
 ) -> None:
     missing = check_release(files, version, channel)
-    if existing_release(version) is not None:
+    release = existing_release(version)
+    if release is not None:
+        if (
+            release.get("targetCommitish") != source_sha
+            or release.get("name") != title
+            or not isinstance(release.get("isDraft"), bool)
+        ):
+            raise ValueError(f"release {version} already exists with other contents")
         if missing:
             subprocess.run(
                 ["gh", "release", "upload", version]
                 + [str(files[name]) for name in missing],
+                check=True,
+            )
+        # gh creates a draft while it uploads and publishes it last, so an
+        # interrupted create leaves a draft that published history (and the
+        # next image candidate's base) never sees.
+        if release["isDraft"]:
+            subprocess.run(
+                [
+                    "gh",
+                    "release",
+                    "edit",
+                    version,
+                    "--draft=false",
+                    f"--prerelease={str(channel == 'testing').lower()}",
+                ],
                 check=True,
             )
         return
