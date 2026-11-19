@@ -47,27 +47,39 @@ def done(stdout="", code=0, stderr=""):
     return subprocess.CompletedProcess([], code, stdout, stderr)
 
 
-def home_mount(fstype="btrfs", options="rw,relatime,subvol=/home", count=1):
-    return json.dumps(
-        {
-            "filesystems": [
-                {
-                    "target": "/var/home",
-                    "source": "/dev/vda4[/home]",
-                    "fstype": fstype,
-                    "options": options,
-                }
-            ]
-            * count
-        }
+def mount(target, source, fstype="btrfs", count=1):
+    return done(
+        json.dumps(
+            {
+                "filesystems": [
+                    {
+                        "target": target,
+                        "source": source,
+                        "fstype": fstype,
+                        "options": "rw,relatime,seclabel",
+                    }
+                ]
+                * count
+            }
+        )
     )
 
 
+STATEROOT_VAR = "/dev/vda4[/root/ostree/deploy/default/var]"
 HEALTHY = {
     "is-system-running": done("running\n"),
     "failed-units": done(""),
-    "var-home-mount": done(home_mount()),
+    "sysroot-mount": mount("/sysroot", "/dev/vda4[/root]"),
+    "var-mount": mount("/var", STATEROOT_VAR),
+    "var-home-mount": mount("/var", STATEROOT_VAR),
     "home-link": done("/var/home\n"),
+    "random-seed": done("Result=success\nActiveState=active\n"),
+    "labels": done("drwxr-xr-x. root root system_u:object_r:var_t:s0 /var\n"),
+    "restorecon": done(""),
+}
+OLD_VAR = {
+    "var-mount": mount("/var", "/dev/vda4[/var]"),
+    "var-home-mount": mount("/var/home", "/dev/vda4[/home]"),
 }
 
 
@@ -86,6 +98,7 @@ class GuestGateTests(unittest.TestCase):
     def test_healthy_disk_passes_with_the_exact_commands(self):
         problems, calls = self.check()
         self.assertEqual(problems, [])
+        findmnt = "findmnt -J -o TARGET,SOURCE,FSTYPE,OPTIONS --target"
         self.assertEqual(
             calls,
             [
@@ -94,19 +107,45 @@ class GuestGateTests(unittest.TestCase):
                     "failed-units",
                     "systemctl --failed --no-legend --plain --no-pager",
                 ),
-                (
-                    "var-home-mount",
-                    "findmnt -J --mountpoint /var/home -o TARGET,SOURCE,FSTYPE,OPTIONS",
-                ),
+                ("sysroot-mount", f"{findmnt} /sysroot"),
+                ("var-mount", f"{findmnt} /var"),
+                ("var-home-mount", f"{findmnt} /var/home"),
                 ("home-link", "readlink -f /home"),
+                (
+                    "random-seed",
+                    (
+                        "systemctl show -p Result -p ActiveState"
+                        " systemd-random-seed.service"
+                    ),
+                ),
+                ("labels", "ls -ldZ /var /var/home /var/lib/systemd"),
+                ("restorecon", "restorecon -n -v /var /var/home /var/lib/systemd"),
             ],
         )
+
+    def test_stateroot_and_root_subvolume_paths_are_not_pinned(self):
+        for sysroot, var in (
+            ("/dev/vda4", "/dev/vda4[/ostree/deploy/default/var]"),
+            ("/dev/vda4[/root]", "/dev/vda4[/root/ostree/deploy/luminusos/var]"),
+            ("/dev/sda3[/@]", "/dev/sda3[/@/ostree/deploy/fedora/var]"),
+        ):
+            with self.subTest(var=var):
+                problems, _ = self.check(
+                    **{
+                        "sysroot-mount": mount("/sysroot", sysroot),
+                        "var-mount": mount("/var", var),
+                        "var-home-mount": mount("/var", var),
+                    }
+                )
+                self.assertEqual(problems, [])
 
     def test_degraded_boot_is_rejected(self):
         for overrides in (
             {
                 "is-system-running": done("degraded\n", 1),
-                "failed-units": done("home.mount loaded failed failed /home\n"),
+                "failed-units": done(
+                    "systemd-random-seed.service loaded failed failed X\n"
+                ),
             },
             {"is-system-running": done("running\n", 1)},
             {"is-system-running": done("", 255, "timed out")},
@@ -116,31 +155,74 @@ class GuestGateTests(unittest.TestCase):
             with self.subTest(overrides=overrides):
                 self.assertTrue(self.check(**overrides)[0])
 
-    def test_home_mounted_layout_is_rejected(self):
-        # The old disk.yaml mounted the subvolume at /home: home.mount fails
-        # and nothing is mounted at /var/home.
-        problems, _ = self.check(
-            **{
-                "is-system-running": done("degraded\n", 1),
-                "failed-units": done("home.mount loaded failed failed /home\n"),
-                "var-home-mount": done("", 1),
-            }
-        )
-        self.assertIn("/var/home is not a mount point", problems)
-        for overrides in (
-            {"var-home-mount": done(home_mount(fstype="xfs"))},
-            {"var-home-mount": done(home_mount(options="rw,subvol=/root"))},
-            {"var-home-mount": done(home_mount(options="rw,subvol=/home2"))},
-            {"var-home-mount": done(home_mount(count=2))},
-            {"var-home-mount": done("not json")},
-            {"home-link": done("/home\n")},
+    def test_separate_var_or_home_subvolumes_are_rejected(self):
+        for overrides, message in (
+            (OLD_VAR, "/var is the separate var subvolume"),
+            (
+                {"var-home-mount": mount("/var/home", "/dev/vda4[/home]")},
+                "/var/home is the separate home subvolume",
+            ),
+            (
+                {"var-home-mount": mount("/var/home", "/dev/vda4[/var/home]")},
+                "/var/home is a separate mount",
+            ),
+            (
+                {"var-mount": mount("/var", "/dev/vda4[/root/var]")},
+                "not the ostree stateroot",
+            ),
+            (
+                {"var-mount": mount("/var", "/dev/vdb1[/root/ostree/deploy/x/var]")},
+                "/var is on /dev/vdb1",
+            ),
+            (
+                {"var-mount": mount("/", "overlay", fstype="overlay")},
+                "want the root Btrfs filesystem",
+            ),
+            ({"var-mount": mount("/var", STATEROOT_VAR, fstype="xfs")}, "xfs"),
+            ({"var-mount": mount("/var", STATEROOT_VAR, count=2)}, "2 filesystems"),
+            ({"var-mount": done("not json")}, "JSON"),
+            ({"var-mount": done("", 1)}, "findmnt exited 1"),
+            ({"home-link": done("/home\n")}, "/home resolves"),
         ):
-            with self.subTest(overrides=overrides):
-                self.assertTrue(self.check(**overrides)[0])
+            with self.subTest(message=message):
+                problems, _ = self.check(**overrides)
+                self.assertTrue(
+                    any(message in p for p in problems), (message, problems)
+                )
 
-    def test_both_subvol_spellings_are_the_home_subvolume(self):
-        for options in ("rw,subvol=/home", "rw,subvolid=257,subvol=home"):
-            self.assertEqual(boot.home_problems(home_mount(options=options)), [])
+    def test_random_seed_must_have_succeeded_in_this_boot(self):
+        for result in (
+            done("Result=exit-code\nActiveState=failed\n"),
+            done("Result=success\nActiveState=inactive\n"),
+            done("ActiveState=active\n"),
+            done("Result=success\nActiveState=active\n", 1),
+            done("", 255, "ssh: timed out"),
+        ):
+            with self.subTest(result=result.stdout):
+                problems, _ = self.check(**{"random-seed": result})
+                self.assertTrue(
+                    any("systemd-random-seed" in p for p in problems), problems
+                )
+        self.assertEqual(
+            self.check(**{"random-seed": done("ActiveState=active\nResult=success")})[
+                0
+            ],
+            [],
+        )
+
+    def test_labels_must_match_policy(self):
+        for result in (
+            done(
+                "Would relabel /var from system_u:object_r:unlabeled_t:s0"
+                " to system_u:object_r:var_t:s0\n"
+            ),
+            done("", 255, "restorecon: command not found"),
+        ):
+            with self.subTest(result=result.stdout or result.stderr):
+                problems, _ = self.check(restorecon=result)
+                self.assertTrue(any("SELinux labels" in p for p in problems))
+        problems, _ = self.check(labels=done("", 2))
+        self.assertEqual(problems, [])
 
 
 class CheckGuestTests(unittest.TestCase):

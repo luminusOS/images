@@ -180,21 +180,27 @@ There is no automated withdrawal or channel rollback. The maintainer should iden
 
 Review renewals on the appropriate branch; do not carry testing exceptions into stable or extend records automatically. Update workflow policy hash pins when policy bytes change. If refreshed records change the signed scan evidence or approval summary, do not reuse the old approval; prepare and validate against the new policy.
 
-### Repairing qcow2 installs with a failed `home.mount`
+### Existing qcow2 installs with separate `var` or `home` subvolumes
 
-qcow2 disks published before the `disk.yaml` fix mounted the Btrfs `home` subvolume at `/home`, which is a symlink to `var/home` on bootc. Every boot fails `home.mount` and the system reports `degraded`. User data written so far is in `/var/home` on the `var` subvolume; the separate `home` subvolume stays unmounted. Updating the image does not repair an existing install, because the generated unit lives in `/etc`.
+New qcow2 disks have a single Btrfs `root` subvolume; `/var` and `/var/home` are the ostree stateroot directories inside it, as on Sirius installs. Older published disks mounted separate subvolumes, and their mount units live in `/etc`, so updating the image neither removes them nor migrates data:
 
-Confirm:
+- Disks built before the `/var/home` fix mount a `var` subvolume at `/var` and try to mount a `home` subvolume at `/home`, a symlink to `var/home`. `home.mount` fails on every boot.
+- Disks built after it mount `var` at `/var` and `home` at `/var/home`. The `var` subvolume starts empty with an unlabeled root, and `systemd-random-seed.service` can fail on SELinux denials.
+
+Diagnose on a clone of the disk before touching the original:
 
 ```sh
-systemctl is-system-running                   # degraded
-systemctl --failed                            # lists home.mount
-systemctl show home.mount -p FragmentPath     # /etc/systemd/system/home.mount
+systemctl is-system-running; systemctl --failed
+systemctl show home.mount var.mount var-home.mount -p FragmentPath -p ActiveState
+findmnt --target /var; findmnt --target /var/home
+restorecon -n -v /var /var/lib /var/home        # prints labels that differ from policy
 ```
 
-Back up both locations before changing anything: `/var/home`, and the `home` subvolume, which you can reach read-only by mounting the filesystem's top level, for example `sudo mount -o ro,subvolid=5 "$(findmnt -no SOURCE /var | sed 's/\[.*//')" /mnt` and copying `/mnt/home`.
+Back up the active `/var` and all home data before changing mounts. That means the `/var/home` you see now and every subvolume, which you can reach read-only by mounting the top level, for example `sudo mount -o ro,subvolid=5 "$(findmnt -no SOURCE --target /var | sed 's/\[.*//')" /mnt`.
 
-Conservative repair, which leaves the visible data where it is:
+Do not disable `var.mount`. It would show the stateroot's own, different `/var` and hide the state that lives on the `var` subvolume.
+
+For the failed `home.mount` on disks built before the `/var/home` fix, the conservative repair removes only that unit and leaves the visible data in `/var/home`:
 
 ```sh
 sudo systemctl disable home.mount
@@ -204,7 +210,7 @@ sudo systemctl daemon-reload
 sudo systemctl reset-failed home.mount
 ```
 
-After a reboot `systemctl is-system-running` should report `running`. To use the subvolume instead, do it offline (no user logged in): merge `/var/home` into the subvolume, then add a `var-home.mount` unit with `Where=/var/home`, `Type=btrfs` and `Options=subvol=home`, and enable it. Never delete `/var/home` or the `home` subvolume; whatever stays under the new mount remains as a fallback. These steps have not yet been tested on a clone of an affected install.
+Never delete `/var/home`, the `var` subvolume or the `home` subvolume. None of these steps has been tested on a clone of an affected install yet.
 
 ## How Universal Blue (Bluefin) does it
 
