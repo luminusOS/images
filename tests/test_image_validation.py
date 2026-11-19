@@ -145,7 +145,7 @@ def candidate_layouts(root: Path):
     )
 
 
-def signature_line(index, repository=CANDIDATES):
+def signature_line(index, repository=CANDIDATES, signature="c2ln"):
     payload = json.dumps(
         {
             "critical": {
@@ -157,7 +157,7 @@ def signature_line(index, repository=CANDIDATES):
         }
     ).encode()
     return json.dumps(
-        {"Base64Signature": "c2ln", "Payload": base64.b64encode(payload).decode()}
+        {"Base64Signature": signature, "Payload": base64.b64encode(payload).decode()}
     )
 
 
@@ -629,10 +629,21 @@ class ImageDriverTests(unittest.TestCase):
     def written(self):
         return {p.stem for p in self.receipts_dir.glob("*.json")}
 
-    def mirror_with(self, digest):
+    def mirror_with(
+        self, digest, *, served=None, bad_signature=False, real_cosign=False
+    ):
+        signatures = (self.mirror_dir / "signatures.json").read_text()
+        real_host = driver.host
+
         def host(argv, log, **_kwargs):
+            if real_cosign and argv[:2] == ["cosign", "verify-blob"]:
+                return real_host(argv, log)
             if argv[:2] == ["skopeo", "copy"]:
                 Path(argv[argv.index("--digestfile") + 1]).write_text(digest + "\n")
+            if argv[:2] == ["cosign", "verify-blob"] and bad_signature:
+                raise driver.CheckFailed("cosign failed: invalid signature")
+            if argv[:3] == ["cosign", "download", "signature"]:
+                return signatures if served is None else served
             return ""
 
         work = self.root / "work"
@@ -646,15 +657,126 @@ class ImageDriverTests(unittest.TestCase):
     def test_mirror_preserves_and_requires_the_verified_candidate_digest(self):
         result, calls = self.mirror_with(self.index)
         self.assertEqual(result, self.mirror())
-        copy, attach, verify = calls
-        self.assertIn("--preserve-digests", copy)
-        self.assertIn("--all", copy)
-        self.assertEqual(copy[-1], f"docker://{driver.CANDIDATE_REPOSITORY}:candidate")
-        self.assertEqual(attach[:3], ["cosign", "attach", "signature"])
-        self.assertEqual(attach[-1], f"{driver.CANDIDATE_REPOSITORY}@{self.index}")
-        self.assertEqual(verify[verify.index("--key") + 1], str(driver.CANDIDATE_KEY))
+        work = self.root / "work"
+        reference = f"{driver.CANDIDATE_REPOSITORY}@{self.index}"
+        self.assertEqual(
+            calls,
+            [
+                [
+                    "skopeo",
+                    "copy",
+                    "--all",
+                    "--preserve-digests",
+                    "--dest-tls-verify=false",
+                    "--digestfile",
+                    str(work / "candidate-index.digest"),
+                    f"oci:{self.mirror_dir / 'layout'}:candidate",
+                    f"docker://{driver.CANDIDATE_REPOSITORY}:candidate",
+                ],
+                [
+                    "cosign",
+                    "verify-blob",
+                    "--key",
+                    str(driver.CANDIDATE_KEY),
+                    "--signature",
+                    str(work / "candidate-signature.b64"),
+                    "--insecure-ignore-tlog=true",
+                    "--offline=true",
+                    str(work / "candidate-payload.json"),
+                ],
+                [
+                    "cosign",
+                    "attach",
+                    "signature",
+                    "--allow-http-registry",
+                    "--payload",
+                    str(work / "candidate-payload.json"),
+                    "--signature",
+                    str(work / "candidate-signature.b64"),
+                    reference,
+                ],
+                ["cosign", "download", "signature", "--allow-http-registry", reference],
+            ],
+        )
+        self.assertNotIn(["cosign", "verify"], [c[:2] for c in calls])
         with self.assertRaisesRegex(driver.CheckFailed, "changed the candidate digest"):
             self.mirror_with("sha256:" + "7" * 64)
+
+    def test_a_bad_signature_fails_before_anything_is_attached(self):
+        with self.assertRaisesRegex(driver.CheckFailed, "invalid signature"):
+            self.mirror_with(self.index, bad_signature=True)
+
+    def test_a_payload_for_another_digest_is_never_attached(self):
+        (self.mirror_dir / "signatures.json").write_text(
+            signature_line("sha256:" + "7" * 64) + "\n"
+        )
+        with self.assertRaisesRegex(driver.CheckFailed, "no candidate signature"):
+            self.mirror_with(self.index)
+
+    def test_the_mirror_must_serve_exactly_the_attached_signature(self):
+        for served, message in (
+            (signature_line(self.index, signature="b3RoZXI="), "different candidate"),
+            (signature_line("sha256:" + "7" * 64), "another image"),
+            (signature_line(self.index, "ghcr.io/other/x"), "another image"),
+            ("", "serves 0"),
+            (
+                signature_line(self.index) + "\n" + signature_line(self.index),
+                "serves 2",
+            ),
+        ):
+            with (
+                self.subTest(message=message),
+                self.assertRaisesRegex(driver.CheckFailed, message),
+            ):
+                self.mirror_with(self.index, served=served)
+
+    @unittest.skipUnless(shutil.which("cosign"), "cosign is not installed")
+    def test_offline_verification_runs_with_the_real_cosign(self):
+        work = self.root / "keys"
+        work.mkdir()
+        env = {**os.environ, "COSIGN_PASSWORD": ""}
+        subprocess.run(
+            ["cosign", "generate-key-pair", "--output-key-prefix", str(work / "k")],
+            check=True,
+            capture_output=True,
+            env=env,
+        )
+        payload = base64.b64decode(json.loads(signature_line(self.index))["Payload"])
+        (work / "payload.json").write_bytes(payload)
+        signature = subprocess.run(
+            [
+                "cosign",
+                "sign-blob",
+                "--yes",
+                "--tlog-upload=false",
+                "--key",
+                str(work / "k.key"),
+                str(work / "payload.json"),
+            ],
+            check=True,
+            capture_output=True,
+            text=True,
+            env=env,
+        ).stdout.strip()
+        (self.mirror_dir / "signatures.json").write_text(
+            signature_line(self.index, signature=signature) + "\n"
+        )
+
+        subprocess.run(
+            ["cosign", "generate-key-pair", "--output-key-prefix", str(work / "other")],
+            check=True,
+            capture_output=True,
+            env=env,
+        )
+        with mock.patch.object(driver, "CANDIDATE_KEY", work / "k.pub"):
+            self.assertEqual(
+                self.mirror_with(self.index, real_cosign=True)[0], self.mirror()
+            )
+        with (
+            mock.patch.object(driver, "CANDIDATE_KEY", work / "other.pub"),
+            self.assertRaisesRegex(driver.CheckFailed, "cosign failed"),
+        ):
+            self.mirror_with(self.index, real_cosign=True)
 
     def test_mirror_refuses_inputs_that_are_not_the_signed_candidate(self):
         self.candidate["images"]["workstation"] = f"{CANDIDATES}@sha256:" + "7" * 64
