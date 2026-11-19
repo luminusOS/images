@@ -89,6 +89,8 @@ Configure the publication signing key, SourceForge credentials, and R2 credentia
 2. Dispatch **Installation Validation** (`installation-validation.yml`) on the same branch with `candidate_run_id` set to that preparation run ID. Wait for the `installation` job and run to succeed. It installs the candidate ISO with Sirius, boots the installed disk, and checks update, rollback and trust. Keep the validation run ID and its signed `installation-validation` artifact.
 3. [Resume publication](#resume) with those two IDs. The `release-evidence` job verifies their binding and uploads the approval summary. `release-stable` waits for a required reviewer in the `stable` GitHub Environment. Do not dispatch another publication for the same line while one is waiting.
 
+If installation validation fails, stop without dispatching publication. If a step in `release-evidence` fails, the publication run ends before approval. In either case, do not resume the failed candidate: fix the cause, prepare a new candidate, and validate it.
+
 ### Approve
 
 Only the repository owner approves stable deployments. Agents must never approve or publish stable, accept risks, or read secret values. Check that the `stable` Environment requires the owner as reviewer, allows only the active release branches and disallows admin bypass. These are GitHub settings, not implied by the workflow YAML.
@@ -96,16 +98,20 @@ Only the repository owner approves stable deployments. Agents must never approve
 Before choosing **Review deployments** → **stable** → **Approve and deploy** in the publication run:
 
 1. Read `approval-summary.json` in the `stable-approval-summary` artifact and compare it with the run summary. Confirm the candidate run and source commit, version, Fedora base digest, and exact core, workstation and installer digests.
-2. Check the preparation run's `candidate-scans` against the summary. Confirm each scan decision and policy SHA-256, and review all applied exceptions (classification, scope, owner and UTC expiry), exclusions and the unsigned-base risk record. Do not approve missing, mismatched or expired evidence.
+2. Check the preparation run's `candidate-scans` against the summary. Confirm each scan decision and policy SHA-256, and review all applied exceptions (advisory, package and version, classification, owner and UTC expiry), exclusions and the unsigned-base risk record. Do not approve missing, mismatched or expired evidence.
 3. Open the matching **Installation Validation** run. Confirm it ran on the same release line for that candidate, succeeded without skipping the required job, and produced signed `validation.json` and receipts in `installation-validation`. A boot smoke test is not installation validation.
 
 After approval, [`release-stable`](../.github/workflows/publish.yml#L635-L694) re-verifies the candidate evidence and regenerates the summary using the current branch tip's policy and risk records. A changed summary or an expired record blocks publication before public writes. Promotion copies the approved digests without rebuilding: core and workstation get version and Fedora-line tags, installer tags append `-iso`, and only `LATEST_RELEASE` moves `latest` on core and workstation. It publishes downloads to R2 and SourceForge and creates a normal GitHub release using the exact version as its tag (no `v` prefix).
 
 ### Reject
 
-In the waiting publication run, choose **Review deployments** → **stable** → **Reject**, and record why. Verify that the promotion and download steps did not run. Rejecting a pending deployment does not undo writes from any earlier attempt.
+Use `gh` authenticated with repository read access, `skopeo`, and `curl`.
 
-For a rejection check, record the following results before rejecting and repeat afterward. Set `version` to the candidate's build version from the summary (the value below is an example), and `fedora` to its Fedora line. These checks are read-only against all services.
+1. Run the read-only checks below, including the **Before rejection** index request, and record the results.
+2. In the waiting publication run, choose **Review deployments** → **stable** → **Reject**, and record why. In the `release-stable` job (**Promote approved stable candidate**), confirm that **Verify and promote immutable images** and **Publish verified downloads and release** are skipped or not started.
+3. Repeat the read-only checks, this time using the **After rejection** index request, and compare the results. Rejecting a pending deployment does not undo writes from an earlier attempt.
+
+Set `version` to the candidate's build version from the summary (the value below is an example), and `fedora` to its Fedora line.
 
 ```bash
 repo=luminusOS/images
@@ -138,11 +144,18 @@ curl -sS -o stable-latest.after.json -w '%{http_code}\n' \
   https://download.luminusos.org/stable/latest.json
 ```
 
-Expect `404` both times if there was no index. If both responses are `200`, `cmp stable-latest.before.json stable-latest.after.json` should find no difference. If anything has changed, check for another publication or a previous partial attempt before attributing the change to this run.
+Expect `404` both times if there was no index. If both responses are `200`, `cmp stable-latest.before.json stable-latest.after.json` should find no difference. A change in HTTP status (for example, `200` → `404`) also counts as a change. If anything has changed, check for another publication or a previous partial attempt before attributing the change to this run.
 
 ### Resume
 
-If validation succeeded but publication did not start or needs another attempt, dispatch `publish.yml` on the same release branch with both original run IDs. This fetches and verifies existing evidence rather than rebuilding; the new publication run still needs approval. Substitute the original numeric IDs:
+If validation succeeded but publication did not start or needs another attempt, first check that no publication is waiting on the same release branch. Substitute the candidate's branch for `release/45`:
+
+```bash
+gh api --paginate 'repos/luminusOS/images/actions/workflows/publish.yml/runs?branch=release%2F45&per_page=100' \
+  --jq '.workflow_runs[] | select(.status == "waiting") | .html_url'
+```
+
+If the check returns a run URL, resolve the waiting deployment before dispatching another run. If the check fails, do not dispatch. Otherwise, dispatch `publish.yml` on the same release branch with both original run IDs. This fetches and verifies existing evidence rather than rebuilding; the new publication run still needs approval. Substitute the original numeric IDs:
 
 ```bash
 gh workflow run publish.yml --repo luminusOS/images --ref release/45 \
@@ -151,7 +164,8 @@ gh workflow run publish.yml --repo luminusOS/images --ref release/45 \
 
 - The scheduled chain checks the exact Git tag for the version before validation and again before publication, and skips candidates superseded by a newer successful Auto Stable candidate on that line. Builds choose their sequence number from existing Git tags, so overlapping builds can pick the same version. The publisher separately refuses to overwrite an OCI version tag with a different digest. If another candidate owns the version, prepare and validate a fresh candidate; do not delete tags to make room.
 - After a partial publication, inspect which destinations changed. Retry only the same candidate with its matching validation, and do not resume an older candidate after a newer release has advanced channel tags. Publication is not atomic across GHCR, SourceForge, R2 and GitHub.
-- Before moving image tags, the publisher preflights existing GitHub assets and the public versioned `SHA256SUMS`; conflicts detected by those checks fail before public writes. A retry reuses matching GitHub assets and uploads only missing ones. It does **not** publish an existing draft: the code returns after the existing-release check and any asset upload. If a draft remains after approved publication, the owner must reconcile its assets and other destinations before publishing it manually in GitHub. Do not treat the retry succeeding as proof that a draft became public.
+- Before moving image tags, the publisher preflights existing GitHub assets and the public versioned `SHA256SUMS`; conflicts detected by those checks fail before public writes.
+- [`gh release create` with assets](https://cli.github.com/manual/gh_release_create) creates a draft, uploads the assets, then publishes it. An interruption before the last step can leave a draft. On retry, the [publisher](../.github/scripts/workflow/release_publish.py#L1064-L1091) reuses matching assets and uploads only missing ones, but does **not** publish the draft. If a draft remains after an approved retry, the owner must reconcile its assets and other destinations before publishing it manually in GitHub.
 
 ### Revert
 
