@@ -87,6 +87,8 @@ Full publication requires the SourceForge and R2 credentials as well as the offi
 
 **Scheduled.** Daily [Auto Stable](../.github/workflows/auto-stable.yml) runs on `main` and checks each active `release/<Fedora>` line independently. A line without a published stable release fails before a build, with a command to prepare its first full release. Other line jobs continue. The [branch detector](../.github/scripts/workflow/stable_detect.py) compares the live Fedora bootc digest with the base label on the public workstation line tag. It requests image-only preparation if the digests differ or the image version lacks a Git tag, unless another run is already in flight. The `main` run verifies that the scheduled candidate is signed and image-only, dispatches validation and publication on the same branch, and stops at the `stable` Environment for approval.
 
+Auto Stable on `main` dispatches the workflows of each `release/<Fedora>` branch, so a release line only gets image-only updates once its branch carries the same `publish.yml`, `installation-validation.yml`, detector and release scripts as `main`. Backport every change to these files to each active release branch before relying on its schedule. Until then the line fails closed: a full candidate from an older branch is refused by the image-kind check on `main`, and nothing is published.
+
 **Manual.** The first stable release of a Fedora line must be a full release. In **Image Publication** (`publish.yml`), select the active `release/<Fedora>` branch, set `channel=stable` and `artifacts=full`, and leave both run IDs blank. For Fedora 45:
 
 ```sh
