@@ -800,6 +800,8 @@ def publish_downloads(candidate_path: Path, directory: Path, key: Path) -> None:
             version,
             str(directory),
             "--require-evidence",
+            "--latest-release",
+            release_configuration(candidate["fedora_version"])["LATEST_RELEASE"],
         ],
         check=True,
     )

@@ -52,7 +52,12 @@ class PublishTests(unittest.TestCase):
             patch.object(publish_r2, "download_digest", side_effect=download),
         ):
             publish_r2.publish(
-                "testing", self.version, self.dist, "bucket", "https://example.invalid"
+                "testing",
+                self.version,
+                self.dist,
+                "bucket",
+                "https://example.invalid",
+                latest_release="45",
             )
         removals = [call for call in calls if call[:3] == ["aws", "s3", "rm"]]
         self.assertEqual(len(removals), 1)
@@ -225,7 +230,12 @@ class PublishTests(unittest.TestCase):
             self.assertRaises(ValueError),
         ):
             publish_r2.publish(
-                "testing", self.version, self.dist, "bucket", "https://example.invalid"
+                "testing",
+                self.version,
+                self.dist,
+                "bucket",
+                "https://example.invalid",
+                latest_release="45",
             )
         self.assertFalse(
             any(
@@ -236,17 +246,27 @@ class PublishTests(unittest.TestCase):
 
     def test_invalid_inputs_cannot_call_aws(self):
         with patch.object(publish_r2.subprocess, "run") as run:
-            for channel, version, bucket in (
-                ("testing", "../bad", "bucket"),
-                ("stable", "testing-45.20261031", "bucket"),
-                ("testing", self.version, "../bucket"),
+            for channel, version, bucket, latest in (
+                ("testing", "../bad", "bucket", "45"),
+                ("stable", "testing-45.20261031", "bucket", "45"),
+                ("testing", self.version, "../bucket", "45"),
+                ("testing", self.version, "bucket", ""),
+                ("testing", self.version, "bucket", None),
+                ("testing", self.version, "bucket", "45 44"),
             ):
                 with (
-                    self.subTest(channel=channel, version=version, bucket=bucket),
+                    self.subTest(
+                        channel=channel, version=version, bucket=bucket, latest=latest
+                    ),
                     self.assertRaises(ValueError),
                 ):
                     publish_r2.publish(
-                        channel, version, self.dist, bucket, "https://example.invalid"
+                        channel,
+                        version,
+                        self.dist,
+                        bucket,
+                        "https://example.invalid",
+                        latest_release=latest,
                     )
             run.assert_not_called()
 
@@ -281,6 +301,7 @@ class PublishTests(unittest.TestCase):
                     self.dist,
                     "bucket",
                     "https://example.invalid",
+                    latest_release="45",
                 )
             self.assertFalse(
                 any(
@@ -334,6 +355,7 @@ class PublishTests(unittest.TestCase):
                 "bucket",
                 "https://example.invalid",
                 True,
+                latest_release="45",
             )
         self.assertIn("image/sbom.spdx.json", latest[0]["evidence"])
         self.assertEqual(
@@ -367,6 +389,7 @@ class PublishTests(unittest.TestCase):
                 "bucket",
                 "https://example.invalid",
                 True,
+                latest_release="45",
             )
         run.assert_called_once()
 

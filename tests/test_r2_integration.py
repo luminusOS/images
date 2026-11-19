@@ -82,6 +82,8 @@ class PublicationIntegrationTests(unittest.TestCase):
                 "testing",
                 VERSION,
                 str(self.dist),
+                "--latest-release",
+                VERSION.removeprefix("testing-").split(".")[0],
                 *arguments,
             ],
             env={**self.env, **overrides},
