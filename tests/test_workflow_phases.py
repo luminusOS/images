@@ -923,7 +923,10 @@ class WorkflowPhasesTest(unittest.TestCase):
             with self.subTest(job=name):
                 self.assertIn(line, jobs[name]["if"])
                 self.assertNotIn("github.ref == 'refs/heads/main' &&", jobs[name]["if"])
-        self.assertIs(jobs["containers"]["with"]["build_installer"], True)
+        self.assertEqual(
+            jobs["containers"]["with"]["build_installer"],
+            "${{ needs.inputs.outputs.release_kind == 'full' }}",
+        )
         self.assertEqual(jobs["containers"]["with"]["channel"], "${{ inputs.channel }}")
         self.assertIn(line, jobs["release-evidence"]["if"])
         steps = {step.get("id"): step for step in jobs["scan-candidates"]["steps"]}

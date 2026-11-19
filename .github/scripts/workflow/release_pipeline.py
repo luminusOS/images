@@ -153,6 +153,30 @@ def check_phase(env) -> None:
         )
 
 
+def requested_kind(env) -> str:
+    """Return the kind a new candidate is built as, or "" when resuming.
+
+    "auto" builds new candidates as image releases and takes a resumed
+    candidate's kind from its signature; an explicit kind on a resume is
+    only checked against the signed one by check_kind.
+    """
+    requested = env.get("ARTIFACTS", "")
+    require(requested in ("auto", *RELEASE_KINDS), "invalid artifacts input")
+    if env.get("CANDIDATE", ""):
+        return ""
+    return "image" if requested == "auto" else requested
+
+
+def check_kind(env) -> None:
+    requested = env.get("ARTIFACTS", "")
+    signed = env.get("SIGNED", "")
+    require(signed in RELEASE_KINDS, "signed candidate has no release kind")
+    require(
+        requested in ("auto", signed),
+        f"artifacts={requested} conflicts with the signed {signed} candidate",
+    )
+
+
 def require(condition: object, message: str) -> None:
     if not condition:
         raise ValueError(message)
@@ -953,7 +977,10 @@ def create_candidate(metadata: Path, directory: Path, output: Path, key: Path) -
     )
     c = {"release_kind": "full"} | load(metadata)
     require(
-        set(c) == (LEGACY_FIELDS - {"artifacts"}) | {"release_kind"},
+        set(c)
+        == (LEGACY_FIELDS - {"artifacts"})
+        | {"release_kind"}
+        | ({"published_base"} if c["release_kind"] == "image" else set()),
         "invalid metadata fields",
     )
     legacy_candidate(c)
@@ -1398,6 +1425,8 @@ def main() -> int:
         "--workflow", default=".github/workflows/installation-validation.yml"
     )
     sub.add_parser("check-phase")
+    sub.add_parser("resolve-kind")
+    sub.add_parser("check-kind")
     e = sub.add_parser("assemble-evidence")
     for x in ("candidate", "validation", "results", "output", "public-key"):
         e.add_argument("--" + x, required=True, type=Path)
@@ -1405,6 +1434,15 @@ def main() -> int:
     try:
         if a.action == "check-phase":
             check_phase(os.environ)
+            return 0
+        if a.action == "check-kind":
+            check_kind(os.environ)
+            return 0
+        if a.action == "resolve-kind":
+            kind = requested_kind(os.environ)
+            with open(os.environ["GITHUB_OUTPUT"], "a", encoding="utf-8") as stream:
+                stream.write(f"release_kind={kind}\n")
+            print(json.dumps({"release_kind": kind}))
             return 0
         require(
             a.public_key.resolve() == CANDIDATE_PUBLIC_KEY.resolve(),
