@@ -258,6 +258,8 @@ class FakeVM:
             return self.health
         if command == driver.FAILED_UNITS:
             return done("home.mount loaded failed failed /home\n")
+        if command.startswith(("systemctl status ", "journalctl ", "ls -laZ ")):
+            return done("")
         if command.startswith("ostree show"):
             text = json.dumps(json.dumps({"rootfs": {"diff_ids": DIFF_IDS}}))
             return done(repr(json.loads(text)) + "\n")

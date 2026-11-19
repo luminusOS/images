@@ -680,10 +680,19 @@ def system_health(guest: Guest, prefix: str) -> tuple[list[str], str]:
     argv, state = guest.run(f"{prefix}-state", "systemctl is-system-running --wait")
     log = transcript(argv, state)
     if state.returncode != 0 or state.stdout.strip() != "running":
-        _, failed = guest.run(f"{prefix}-failed", FAILED_UNITS)
+        try:
+            _, failed = guest.run(f"{prefix}-failed", FAILED_UNITS)
+            listing = failed.stdout.strip() or failed.stderr.strip()
+        except CheckFailed as error:
+            listing = f"unavailable: {error}"
+        excerpt = vmlib.failed_unit_diagnostics(
+            lambda name, command: guest.run(name, command, timeout=300)[1],
+            prefix,
+            listing,
+        )
         raise CheckFailed(
-            f"system is {state.stdout.strip()!r}, failed units: "
-            f"{failed.stdout.strip() or failed.stderr.strip()!r}"
+            f"system is {state.stdout.strip()!r}, failed units: {listing!r}"
+            + (f"\n{excerpt}" if excerpt else "")
         )
     return argv, log
 
