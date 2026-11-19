@@ -2552,7 +2552,7 @@ class ContainerWorkflowTests(unittest.TestCase):
         self.assertNotIn("secrets", reusable)
         publisher = workflow["jobs"]["publish-images"]
         self.assertEqual(publisher["permissions"]["packages"], "write")
-        self.assertEqual(publisher["needs"], ["containers"])
+        self.assertEqual(publisher["needs"], ["inputs", "containers"])
         self.assertTrue(
             any(
                 "docker/login-action" in step.get("uses", "")
@@ -2576,7 +2576,7 @@ class ContainerWorkflowTests(unittest.TestCase):
                     )
                     if name == "publish-images":
                         self.assertEqual(
-                            job.get("needs"), ["containers"], workflow_name
+                            job.get("needs"), ["inputs", "containers"], workflow_name
                         )
                     elif name == "publish-stable-installer":
                         self.assertEqual(
@@ -2616,7 +2616,10 @@ class ContainerWorkflowTests(unittest.TestCase):
         for name in ("iso", "qcow2"):
             with self.subTest(job=name):
                 job = workflow["jobs"][name]
-                self.assertEqual(job["needs"], ["containers", "publish-images"])
+                self.assertEqual(
+                    job["needs"], ["inputs", "containers", "publish-images"]
+                )
+                self.assertIn("needs.inputs.outputs.release_kind == 'full'", job["if"])
                 self.assertIn("needs.publish-images.result == 'success'", job["if"])
                 self.assertNotIn("inputs.channel", job["if"])
 

@@ -111,8 +111,15 @@ def main() -> int:
     args = parser.parse_args()
     try:
         if args.metadata:
-            if args.installer_only or len(args.images) != 3:
-                raise ValueError("metadata requires core, workstation and installer")
+            kind = os.environ.get("RELEASE_KIND", "full")
+            if kind not in ("full", "image"):
+                raise ValueError("invalid release kind")
+            if args.installer_only or len(args.images) != (3 if kind == "full" else 2):
+                raise ValueError(
+                    "metadata requires core, workstation and installer"
+                    if kind == "full"
+                    else "image metadata requires core and workstation only"
+                )
             metadata = {
                 "version": 1,
                 "repository": os.environ["GITHUB_REPOSITORY"],
@@ -124,9 +131,18 @@ def main() -> int:
                 "fedora_version": os.environ["FEDORA_VERSION"],
                 "fedora_bootc_digest": os.environ["FEDORA_BOOTC_DIGEST"],
                 "images": dict(
-                    zip(("core", "workstation", "installer"), args.images, strict=True)
+                    zip(
+                        ("core", "workstation", "installer")[: len(args.images)],
+                        args.images,
+                        strict=True,
+                    )
                 ),
             }
+            if kind == "image":
+                base = json.loads(
+                    Path(os.environ["PUBLISHED_BASE"]).read_text(encoding="utf-8")
+                )
+                metadata |= {"release_kind": "image", "published_base": base}
             args.metadata.write_text(
                 json.dumps(metadata, sort_keys=True) + "\n", encoding="utf-8"
             )
