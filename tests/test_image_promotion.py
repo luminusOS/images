@@ -29,6 +29,13 @@ promote_images = load("promote_images")
 CANDIDATE_KEY = ROOT / "shared/release/candidate.pub"
 REAL_HELPER = publish.load_helper
 EDITIONS = {"core": "luminusos", "workstation": "luminusos-workstation"}
+MISMATCHED = (
+    {"targetCommitish": "b" * 40},
+    {"targetCommitish": "main"},
+    {"name": "LuminusOS 45.20261118.3"},
+    {"isDraft": None},
+    {"isDraft": "true"},
+)
 FORBIDDEN = ("rsync", "ssh-keyscan", "ssh-keygen", "aws", "python3")
 
 
@@ -91,6 +98,7 @@ class Publication:
         self.calls = []
         self.release = None
         self.draft = False
+        self.identity = {}
         self.events = []
 
     def helper(self, name):
@@ -123,7 +131,7 @@ class Publication:
                 "targetCommitish": self.candidate["source_sha"],
                 "name": f"LuminusOS {self.candidate['build_version']}",
                 "assets": [{"name": n} for n in self.release],
-            }
+            } | self.identity
             return mock.Mock(stdout=json.dumps(view))
         if argv[:3] == ["gh", "release", "download"]:
             return mock.Mock(stdout=self.release[argv[argv.index("--pattern") + 1]])
@@ -308,6 +316,33 @@ class ImagePromotionTests(unittest.TestCase):
             run.publish()
         self.assertEqual(run.writes(), [])
 
+    def test_draft_with_another_identity_fails_before_any_public_write(self):
+        for identity in MISMATCHED:
+            for assets in ({}, {"SHA256SUMS": None}):
+                run = Publication(self)
+                with self.subTest(identity=identity, assets=sorted(assets)):
+                    if assets:
+                        run.publish()
+                        run.release = {"SHA256SUMS": run.release["SHA256SUMS"]}
+                        run.calls.clear()
+                        run.events.clear()
+                        run.promoted.clear()
+                    else:
+                        run.release = {}
+                    run.draft = True
+                    run.identity = identity
+                    with self.assertRaisesRegex(ValueError, "other contents"):
+                        run.publish()
+                    self.assertEqual(run.writes(), [])
+                    self.assertEqual(run.promoted, [])
+                    self.assertNotIn("recheck", run.events)
+                    self.assertFalse(
+                        any(
+                            c[0] == "skopeo" or c[:2] == ["cosign", "verify"]
+                            for c in run.calls
+                        )
+                    )
+
     def test_own_release_must_hold_every_line_tag(self):
         run = Publication(self)
         run.base.resolved = ValueError("line tags moved")
@@ -383,6 +418,79 @@ class FullPublicationTests(unittest.TestCase):
         )
         self.assertIn("--require-evidence", r2)
         release.assert_called_once()
+
+
+class FullPreflightIdentityTests(unittest.TestCase):
+    def setUp(self):
+        temp = tempfile.TemporaryDirectory()
+        self.addCleanup(temp.cleanup)
+        self.directory = Path(temp.name)
+        self.candidate = Fixture(self.directory).full()
+        (self.directory / "SHA256SUMS").write_text("sums\n")
+        (self.directory / "SHA256SUMS.sig").write_text("sig")
+        (self.directory / "release-evidence.json").write_text("{}")
+
+    def run_full(self, operation, identity):
+        calls = []
+
+        def run(argv, **kwargs):
+            calls.append(argv)
+            if argv[:3] == ["gh", "release", "view"]:
+                view = {
+                    "isDraft": True,
+                    "isPrerelease": True,
+                    "targetCommitish": self.candidate["source_sha"],
+                    "name": f"LuminusOS {self.candidate['build_version']}",
+                    "assets": [],
+                } | identity
+                return mock.Mock(stdout=json.dumps(view))
+            raise AssertionError(f"write or registry call before preflight: {argv}")
+
+        promotion = mock.Mock()
+        with (
+            mock.patch.dict(
+                publish.os.environ, {"SF_USER": "builder", "SF_SSH_KEY": "fixture"}
+            ),
+            mock.patch.object(publish, "verify_release", return_value=self.candidate),
+            mock.patch.object(publish, "release_artifacts", return_value=[]),
+            mock.patch.object(publish, "verify_staged_distribution"),
+            mock.patch.object(
+                publish, "release_configuration", return_value={"LATEST_RELEASE": "45"}
+            ),
+            mock.patch.object(publish, "check_downloads") as downloads,
+            mock.patch.object(publish, "load_helper", return_value=promotion),
+            mock.patch.object(publish, "github_release") as release,
+            mock.patch.object(publish.subprocess, "run", side_effect=run),
+            self.assertRaisesRegex(ValueError, "other contents"),
+        ):
+            operation()
+        self.assertEqual([c[:3] for c in calls], [["gh", "release", "view"]])
+        promotion.promote.assert_not_called()
+        downloads.assert_not_called()
+        release.assert_not_called()
+
+    def test_full_promotion_and_downloads_stop_at_a_mismatched_draft(self):
+        for identity in MISMATCHED:
+            for name, operation in (
+                (
+                    "promote",
+                    lambda: publish.promote(
+                        Path("c.json"),
+                        self.directory / "release-evidence.json",
+                        Path("k"),
+                        self.directory,
+                        "testing",
+                    ),
+                ),
+                (
+                    "publish-downloads",
+                    lambda: publish.publish_downloads(
+                        Path("c.json"), self.directory, Path("k")
+                    ),
+                ),
+            ):
+                with self.subTest(operation=name, identity=identity):
+                    self.run_full(operation, identity)
 
 
 class ReleaseJobTests(unittest.TestCase):

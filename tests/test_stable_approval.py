@@ -599,7 +599,14 @@ class GitHubReleaseTests(unittest.TestCase):
             mock.patch.object(publish, "verify_blob") as verify,
         ):
             self.assertEqual(
-                publish.check_release(self.files, "45.20261120.1", "stable"), []
+                publish.check_release(
+                    self.files,
+                    "45.20261120.1",
+                    "stable",
+                    source_sha="a" * 40,
+                    title="LuminusOS 45",
+                ),
+                [],
             )
         self.assertEqual(verify.call_count, 2)
         changed = published | {
@@ -614,7 +621,13 @@ class GitHubReleaseTests(unittest.TestCase):
             ),
             self.assertRaises(ValueError),
         ):
-            publish.check_release(self.files, "45.20261120.1", "stable")
+            publish.check_release(
+                self.files,
+                "45.20261120.1",
+                "stable",
+                source_sha="a" * 40,
+                title="LuminusOS 45",
+            )
         self.assertEqual(
             publish.bundle_content(bundle("a")), publish.bundle_content(bundle("b"))
         )
@@ -647,7 +660,13 @@ class GitHubReleaseTests(unittest.TestCase):
                 ),
                 mock.patch.object(publish, "verify_blob", side_effect=verify) as blob,
             ):
-                publish.check_release(self.files, "45.20261120.1", "stable")
+                publish.check_release(
+                    self.files,
+                    "45.20261120.1",
+                    "stable",
+                    source_sha="a" * 40,
+                    title="LuminusOS 45",
+                )
             return blob
 
         blob = check(bundle(both))
@@ -708,7 +727,13 @@ class GitHubReleaseTests(unittest.TestCase):
                 ),
                 self.assertRaisesRegex(ValueError, "already exists"),
             ):
-                publish.check_release(self.files, "45.20261120.1", "stable")
+                publish.check_release(
+                    self.files,
+                    "45.20261120.1",
+                    "stable",
+                    source_sha="a" * 40,
+                    title="LuminusOS 45",
+                )
             self.assertFalse(
                 any(
                     c[:3] in (["gh", "release", "create"], ["gh", "release", "upload"])
@@ -777,6 +802,7 @@ class GitHubReleaseTests(unittest.TestCase):
             "channel": "stable",
             "build_version": "45.20261120.1",
             "fedora_version": "45",
+            "source_sha": "a" * 40,
             "images": {},
         }
         promotion = mock.Mock()

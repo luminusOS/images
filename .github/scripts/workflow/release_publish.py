@@ -767,7 +767,7 @@ def publish_image(
         files,
         release_version(candidate),
         candidate["source_sha"],
-        f"LuminusOS {candidate['build_version']}",
+        title_of(candidate),
         candidate["channel"],
     )
 
@@ -953,7 +953,7 @@ def publish_downloads(candidate_path: Path, directory: Path, key: Path) -> None:
         release_files,
         version,
         candidate["source_sha"],
-        f"LuminusOS {candidate['build_version']}",
+        title_of(candidate),
         channel,
     )
 
@@ -975,10 +975,20 @@ def release_preflight(candidate: dict, directory: Path, artifacts) -> dict[str, 
     }
     release_notes(files["notes.md"], candidate, version, artifacts)
     evidence_bundle(directory, artifacts, files["evidence.tar.gz"])
-    check_release(files, version, channel)
+    check_release(
+        files,
+        version,
+        channel,
+        source_sha=candidate["source_sha"],
+        title=title_of(candidate),
+    )
     if kind_of(candidate) == "full":
         check_downloads(files["SHA256SUMS"], channel, version)
     return files
+
+
+def title_of(candidate: dict) -> str:
+    return f"LuminusOS {candidate['build_version']}"
 
 
 def release_notes(path: Path, candidate: dict, version: str, artifacts) -> None:
@@ -1118,15 +1128,29 @@ def bundle_signatures(data: bytes) -> set[str]:
     return names
 
 
-def check_release(files: dict[str, Path], version: str, channel: str) -> list[str]:
+def check_release(
+    files: dict[str, Path],
+    version: str,
+    channel: str,
+    *,
+    source_sha: str,
+    title: str,
+) -> list[str]:
     """Return the assets still missing from a release this run may resume.
 
-    A rerun after a partial failure may find its own release; anything else
-    under the tag is a conflict and is never overwritten.
+    A rerun after a partial failure may find its own release, published or
+    left as a draft; anything else under the tag is a conflict and is never
+    overwritten.
     """
     release = existing_release(version)
     if release is None:
         return list(RELEASE_ASSETS)
+    if (
+        release.get("targetCommitish") != source_sha
+        or release.get("name") != title
+        or not isinstance(release.get("isDraft"), bool)
+    ):
+        raise ValueError(f"release {version} already exists with other contents")
     names = [asset["name"] for asset in release.get("assets", [])]
     if release.get("isPrerelease") is not (channel == "testing") or not set(
         names
@@ -1191,7 +1215,7 @@ def check_downloads(sums: Path, channel: str, version: str) -> None:
 def github_release(
     files: dict[str, Path], version: str, source_sha: str, title: str, channel: str
 ) -> None:
-    missing = check_release(files, version, channel)
+    missing = check_release(files, version, channel, source_sha=source_sha, title=title)
     release = existing_release(version)
     if release is not None:
         if (
