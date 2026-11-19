@@ -1,4 +1,8 @@
-"""Install the verified candidate with Sirius and record the release receipts.
+"""Validate the verified candidate in a disposable VM and record the receipts.
+
+A full candidate is installed from its ISO with Sirius. An image candidate is
+reached the way users get it: a disk built from the published base it pins is
+booted and upgraded to the candidate with bootc.
 
 Runs on a hosted KVM runner from the checkout of the dispatching main commit.
 Every receipt describes a check observed inside a disposable VM; a failed check
@@ -9,6 +13,7 @@ from __future__ import annotations
 
 import argparse
 import ast
+import base64
 import datetime as dt
 import gzip
 import hashlib
@@ -37,6 +42,14 @@ REGISTRY_HOST = "registry.validation.test"
 REGISTRY = f"{REGISTRY_HOST}:5000"
 FIXTURE = f"{REGISTRY}/fixture"
 FIXTURE_KEY_PATH = "/etc/pki/containers/validation-fixture.pub"
+CANDIDATE_REPOSITORY = f"{REGISTRY}/candidate"
+CANDIDATE_KEY = ROOT / "shared/release/candidate.pub"
+CANDIDATE_KEY_PATH = "/etc/pki/containers/validation-candidate.pub"
+CANDIDATE_DROP_INS = (
+    CANDIDATE_KEY_PATH,
+    "/etc/containers/registries.d/zz-validation-candidate.yaml",
+    "/etc/containers/registries.conf.d/zz-validation-candidate.conf",
+)
 MARKER = "/usr/share/luminusos-validation/marker"
 TRUST = ROOT / "shared/trust"
 OFFICIAL_FILES = (
@@ -457,12 +470,41 @@ def validate(args: argparse.Namespace) -> None:
         shutil.rmtree(work, ignore_errors=True)
 
 
+def kind_inputs(args: argparse.Namespace, candidate: dict) -> str:
+    kind = release_pipeline.release_kind(candidate)
+    given = (args.disk is not None, args.candidate_mirror is not None)
+    if given != ((True, True) if kind == "image" else (False, False)):
+        raise CheckFailed(
+            f"a {kind} candidate needs "
+            + ("a base disk and a candidate mirror" if kind == "image" else "neither")
+        )
+    return kind
+
+
 def _validate(args, candidate, receipts, diagnostics, work) -> None:
+    if kind_inputs(args, candidate) == "image":
+        disk = work / "base.qcow2"
+        vmlib.preflight(work, required_bytes=args.disk.stat().st_size + 60 * vmlib.GIB)
+        shutil.move(args.disk, disk)
+        vm = machine_vm(args, diagnostics, work, disk)
+        _validate_image(args, candidate, receipts, diagnostics, work, vm)
+        return
     isos = [name for name in candidate["artifacts"] if name.endswith(".iso")]
     if len(isos) != 1:
         raise CheckFailed("candidate must bind exactly one ISO")
     iso = args.artifacts / isos[0]
     vmlib.preflight(work, required_bytes=iso.stat().st_size + 60 * vmlib.GIB)
+    disk = work / "target.qcow2"
+    subprocess.run(
+        ["qemu-img", "create", "-f", "qcow2", str(disk), "96G"],
+        check=True,
+        capture_output=True,
+    )
+    vm = machine_vm(args, diagnostics, work, disk)
+    _validate_full(args, candidate, receipts, diagnostics, work, vm, iso)
+
+
+def machine_vm(args, diagnostics: Path, work: Path, disk: Path) -> vmlib.VM:
     code, template = secure_firmware(os.environ)
     variables = work / "vars.fd"
     shutil.copyfile(template, variables)
@@ -470,13 +512,7 @@ def _validate(args, candidate, receipts, diagnostics, work) -> None:
     subprocess.run(
         ["ssh-keygen", "-q", "-t", "ed25519", "-N", "", "-f", str(key)], check=True
     )
-    disk = work / "target.qcow2"
-    subprocess.run(
-        ["qemu-img", "create", "-f", "qcow2", str(disk), "96G"],
-        check=True,
-        capture_output=True,
-    )
-    vm = vmlib.VM(
+    return vmlib.VM(
         cid=args.cid,
         disk=disk,
         key=key,
@@ -485,6 +521,9 @@ def _validate(args, candidate, receipts, diagnostics, work) -> None:
         code=code,
         variables=variables,
     )
+
+
+def _validate_full(args, candidate, receipts, diagnostics, work, vm, iso) -> None:
     guest = Guest(vm, diagnostics)
     machine = Machine(vm, diagnostics)
     registry = None
@@ -504,56 +543,7 @@ def _validate(args, candidate, receipts, diagnostics, work) -> None:
         machine.start(None)
         base_digest = first_boot(guest, receipts, candidate, candidate_diff_ids)
         live_isolation(guest, receipts)
-        expected_key(guest, receipts)
-        security_state(guest, receipts)
-        no_tcp_ssh(guest, receipts)
-        secure_boot(guest, receipts)
-        install_fixture_trust(guest, fixtures["public_key"])
-        for name, ref in (
-            ("unsigned_rejected", "unsigned"),
-            ("foreign_key_rejected", "foreign"),
-        ):
-            rejection(guest, receipts, name, ref, base_digest)
-        started = now()
-        switch_argv, switch = guest.run(
-            "switch-update", f"bootc switch {FIXTURE}:update", timeout=3600
-        )
-        if switch.returncode != 0:
-            raise CheckFailed("signed fixture update was refused")
-        machine.stop()
-
-        phase.write_text("update\n")
-        machine.start(None)
-        moved(
-            guest,
-            receipts,
-            "update",
-            switch_argv,
-            switch,
-            started,
-            fixtures["digests"]["update"],
-            marker="update",
-        )
-        started = now()
-        rollback_argv, rollback = guest.run("rollback", "bootc rollback")
-        if rollback.returncode != 0:
-            raise CheckFailed("bootc rollback failed")
-        machine.stop()
-
-        phase.write_text("rollback\n")
-        machine.start(None)
-        moved(
-            guest,
-            receipts,
-            "rollback",
-            rollback_argv,
-            rollback,
-            started,
-            base_digest,
-            marker=None,
-        )
-        machine.stop()
-        phase.write_text("complete\n")
+        installed_checks(guest, machine, receipts, fixtures, base_digest, phase)
     except BaseException as error:
         with phase.open("a") as handle:
             handle.write(f"failed: {type(error).__name__}: {error}\n")
@@ -562,9 +552,112 @@ def _validate(args, candidate, receipts, diagnostics, work) -> None:
         machine.kill()
         if registry is not None:
             terminate(registry)
+    require_complete(receipts)
+
+
+def _validate_image(args, candidate, receipts, diagnostics, work, vm) -> None:
+    guest = Guest(vm, diagnostics)
+    machine = Machine(vm, diagnostics)
+    registry = None
+    phase = diagnostics / "phase.txt"
+    base = candidate["published_base"]["workstation"]
+    try:
+        phase.write_text("fixtures\n")
+        registry = start_registry(work, diagnostics)
+        candidate_diff_ids = base_diff_ids(args.fixture_base)
+        mirror = mirror_candidate(
+            work, args.candidate_mirror, candidate, args.fixture_base, diagnostics
+        )
+        fixtures = prepare_fixtures(work, args.fixture_base, diagnostics)
+        wrong = push_wrong_digest(work, args.fixture_base, diagnostics)
+
+        phase.write_text("published base\n")
+        machine.start(None)
+        base_boot(guest, receipts, base)
+
+        phase.write_text("upgrade\n")
+        upgrade_from_published(guest, machine, receipts, candidate, base, mirror, wrong)
+        restore_official_trust(guest)
+
+        phase.write_text("candidate checks\n")
+        base_digest = first_boot(
+            guest,
+            receipts,
+            candidate,
+            candidate_diff_ids,
+            reference=f"{CANDIDATE_REPOSITORY}@{mirror['index']}",
+        )
+        if base_digest != mirror["manifest"]:
+            raise CheckFailed("the checked system is not the mirrored candidate")
+        installed_checks(guest, machine, receipts, fixtures, base_digest, phase)
+    except BaseException as error:
+        with phase.open("a") as handle:
+            handle.write(f"failed: {type(error).__name__}: {error}\n")
+        raise
+    finally:
+        machine.kill()
+        if registry is not None:
+            terminate(registry)
+    require_complete(receipts)
+
+
+def require_complete(receipts: Receipts) -> None:
     missing = set(receipts.checks) - set(receipts.names)
     if missing:
         raise CheckFailed(f"checks not run: {sorted(missing)}")
+
+
+def installed_checks(guest, machine, receipts, fixtures, base_digest, phase) -> None:
+    expected_key(guest, receipts)
+    security_state(guest, receipts)
+    no_tcp_ssh(guest, receipts)
+    secure_boot(guest, receipts)
+    install_fixture_trust(guest, fixtures["public_key"])
+    for name, ref in (
+        ("unsigned_rejected", "unsigned"),
+        ("foreign_key_rejected", "foreign"),
+    ):
+        rejection(guest, receipts, name, ref, base_digest)
+    started = now()
+    switch_argv, switch = guest.run(
+        "switch-update", f"bootc switch {FIXTURE}:update", timeout=3600
+    )
+    if switch.returncode != 0:
+        raise CheckFailed("signed fixture update was refused")
+    machine.stop()
+
+    phase.write_text("update\n")
+    machine.start(None)
+    moved(
+        guest,
+        receipts,
+        "update",
+        switch_argv,
+        switch,
+        started,
+        fixtures["digests"]["update"],
+        marker="update",
+    )
+    started = now()
+    rollback_argv, rollback = guest.run("rollback", "bootc rollback")
+    if rollback.returncode != 0:
+        raise CheckFailed("bootc rollback failed")
+    machine.stop()
+
+    phase.write_text("rollback\n")
+    machine.start(None)
+    moved(
+        guest,
+        receipts,
+        "rollback",
+        rollback_argv,
+        rollback,
+        started,
+        base_digest,
+        marker=None,
+    )
+    machine.stop()
+    phase.write_text("complete\n")
 
 
 def status(
@@ -577,7 +670,12 @@ def status(
 
 
 def first_boot(
-    guest: Guest, receipts: Receipts, candidate: dict, diff_ids: list[str]
+    guest: Guest,
+    receipts: Receipts,
+    candidate: dict,
+    diff_ids: list[str],
+    *,
+    reference: str | None = None,
 ) -> str:
     started = now()
     log = []
@@ -592,9 +690,13 @@ def first_boot(
     log.append(transcript(status_argv, result))
     image = booted(document)
     owner = candidate["repository"].split("/")[0].lower()
-    reference = image.get("image", {}).get("image", "")
-    if not reference.startswith(f"ghcr.io/{owner}/luminusos-workstation:"):
-        raise CheckFailed(f"installed system tracks {reference!r}")
+    tracked = image.get("image", {}).get("image", "")
+    if (
+        tracked != reference
+        if reference is not None
+        else not tracked.startswith(f"ghcr.io/{owner}/luminusos-workstation:")
+    ):
+        raise CheckFailed(f"installed system tracks {tracked!r}")
     if image.get("version") != candidate["build_version"]:
         raise CheckFailed(
             f"installed version {image.get('version')!r} is not the candidate"
@@ -634,6 +736,292 @@ def first_boot(
         raise CheckFailed("; ".join(problems))
     receipts.write("first_boot", argv, started, "".join(log))
     return image["imageDigest"]
+
+
+def oci_blob(layout: Path, digest: str) -> bytes:
+    if not release_pipeline.DIGEST.fullmatch(digest):
+        raise CheckFailed(f"invalid digest {digest!r}")
+    data = (layout / "blobs" / digest.replace(":", "/", 1)).read_bytes()
+    if "sha256:" + hashlib.sha256(data).hexdigest() != digest:
+        raise CheckFailed(f"OCI blob {digest} does not match its digest")
+    return data
+
+
+def oci_ref(layout: Path, ref: str) -> str:
+    index = json.loads((layout / "index.json").read_text())
+    found = [
+        m["digest"]
+        for m in index.get("manifests", [])
+        if m.get("annotations", {}).get("org.opencontainers.image.ref.name") == ref
+    ]
+    if len(found) != 1:
+        raise CheckFailed(f"OCI layout {layout} has no single {ref!r} image")
+    return found[0]
+
+
+def amd64_manifest(index: dict) -> str:
+    found = [
+        entry.get("digest")
+        for entry in index.get("manifests") or []
+        if isinstance(entry, dict)
+        and (entry.get("platform") or {}).get("architecture") == "amd64"
+        and (entry.get("platform") or {}).get("os") == "linux"
+    ]
+    if len(found) != 1 or not release_pipeline.DIGEST.fullmatch(str(found[0])):
+        raise CheckFailed("the candidate index needs one linux/amd64 manifest")
+    return found[0]
+
+
+def identity(index: str, manifest: str, config: str, version: str) -> str:
+    record = {
+        "index_digest": index,
+        "manifest_digest": manifest,
+        "config_digest": config,
+        "version": version,
+    }
+    return f"--- booted identity\n{json.dumps(record, sort_keys=True)}\n"
+
+
+def candidate_signature(path: Path, index: str, repository: str) -> tuple[bytes, str]:
+    # The guest checks the real candidate signature, so the mirror carries the
+    # signature the producer attached to the candidate's index digest.
+    for line in path.read_text().splitlines():
+        entry = json.loads(line)
+        payload = base64.b64decode(entry["Payload"], validate=True)
+        critical = json.loads(payload).get("critical") or {}
+        if (
+            critical.get("type") == "cosign container image signature"
+            and (critical.get("image") or {}).get("docker-manifest-digest") == index
+            and (critical.get("identity") or {}).get("docker-reference") == repository
+            and isinstance(entry.get("Base64Signature"), str)
+        ):
+            return payload, entry["Base64Signature"]
+    raise CheckFailed(f"no candidate signature for {repository}@{index}")
+
+
+def mirror_candidate(
+    work: Path, mirror: Path, candidate: dict, fixture_base: Path, diagnostics: Path
+) -> dict:
+    log = diagnostics / "candidate-mirror.txt"
+    repository, index = candidate["images"]["workstation"].split("@", 1)
+    layout = mirror / "layout"
+    if oci_ref(layout, "candidate") != index:
+        raise CheckFailed("the staged candidate index is not the verified candidate")
+    manifest = amd64_manifest(json.loads(oci_blob(layout, index)))
+    if oci_ref(fixture_base, "base") != manifest:
+        raise CheckFailed("the staged fixture base is not the candidate's amd64 image")
+    config = json.loads(oci_blob(layout, manifest))["config"]["digest"]
+    oci_blob(layout, config)
+    digest_file = work / "candidate-index.digest"
+    host(
+        [
+            "skopeo",
+            "copy",
+            "--all",
+            "--preserve-digests",
+            "--dest-tls-verify=false",
+            "--digestfile",
+            str(digest_file),
+            f"oci:{layout}:candidate",
+            f"docker://{CANDIDATE_REPOSITORY}:candidate",
+        ],
+        log,
+    )
+    mirrored = digest_file.read_text().strip()
+    if mirrored != index:
+        raise CheckFailed(f"the mirror changed the candidate digest to {mirrored}")
+    payload, signature = candidate_signature(
+        mirror / "signatures.json", index, repository
+    )
+    (work / "candidate-payload.json").write_bytes(payload)
+    (work / "candidate-signature.b64").write_text(signature)
+    reference = f"{CANDIDATE_REPOSITORY}@{index}"
+    host(
+        [
+            "cosign",
+            "attach",
+            "signature",
+            "--allow-http-registry",
+            "--payload",
+            str(work / "candidate-payload.json"),
+            "--signature",
+            str(work / "candidate-signature.b64"),
+            reference,
+        ],
+        log,
+    )
+    host(
+        [
+            "cosign",
+            "verify",
+            "--allow-http-registry",
+            "--insecure-ignore-tlog=true",
+            "--key",
+            str(CANDIDATE_KEY),
+            reference,
+        ],
+        log,
+    )
+    return {
+        "repository": repository,
+        "index": index,
+        "manifest": manifest,
+        "config": config,
+    }
+
+
+def push_wrong_digest(work: Path, fixture_base: Path, diagnostics: Path) -> str:
+    digest_file = work / "wrong.digest"
+    host(
+        [
+            "skopeo",
+            "copy",
+            "--dest-tls-verify=false",
+            "--digestfile",
+            str(digest_file),
+            f"oci:{fixture_base}:unsigned",
+            f"docker://{CANDIDATE_REPOSITORY}:wrong",
+        ],
+        diagnostics / "candidate-mirror.txt",
+    )
+    return digest_file.read_text().strip()
+
+
+def base_boot(guest: Guest, receipts: Receipts, base: dict) -> None:
+    started = now()
+    argv, result, document = status(guest, "base-boot-bootc")
+    image = booted(document)
+    repository = base["reference"].rsplit(":", 1)[0]
+    version = base["version"].removeprefix("testing-")
+    observed = image.get("imageDigest")
+    if observed != base["manifest_digest"]:
+        raise CheckFailed(
+            f"booted base {observed}, want published {base['manifest_digest']}"
+        )
+    if image.get("version") != version:
+        raise CheckFailed(f"booted base version {image.get('version')!r} != {version}")
+    tracked = image.get("image", {}).get("image")
+    if tracked != f"{repository}@{base['manifest_digest']}":
+        raise CheckFailed(f"the base disk tracks {tracked!r}")
+    if document["status"].get("staged") is not None:
+        raise CheckFailed("the base disk has a staged deployment")
+    receipts.write(
+        "base_boot",
+        argv,
+        started,
+        transcript(argv, result)
+        + identity(
+            base["index_digest"], observed, base["config_digest"], image["version"]
+        ),
+    )
+
+
+def install_candidate_trust(guest: Guest, repository: str) -> None:
+    # The scope trusts only the run-local candidate mirror, and only for
+    # signatures the candidate key made for the candidate repository.
+    _, policy = guest.run("candidate-policy-read", "cat /etc/containers/policy.json")
+    if policy.returncode != 0:
+        raise CheckFailed("cannot read the guest trust policy")
+    updated = json.loads(policy.stdout)
+    updated["transports"]["docker"][CANDIDATE_REPOSITORY] = [
+        {
+            "type": "sigstoreSigned",
+            "keyPath": CANDIDATE_KEY_PATH,
+            "signedIdentity": {
+                "type": "exactRepository",
+                "dockerRepository": repository,
+            },
+        }
+    ]
+    key_path, attachments, insecure = CANDIDATE_DROP_INS
+    files = {
+        key_path: CANDIDATE_KEY.read_text(),
+        "/etc/containers/policy.json": json.dumps(updated, indent=1),
+        attachments: (
+            f"docker:\n  {CANDIDATE_REPOSITORY}:\n    use-sigstore-attachments: true\n"
+        ),
+        insecure: f'[[registry]]\nlocation = "{REGISTRY}"\ninsecure = true\n',
+    }
+    for index, (path, content) in enumerate(files.items()):
+        _, result = guest.run(
+            f"candidate-trust-{index}", f"cat > {path}", stdin=content
+        )
+        if result.returncode != 0:
+            raise CheckFailed(f"cannot write {path}")
+    _, result = guest.run(
+        "candidate-hosts", f"echo '10.0.2.2 {REGISTRY_HOST}' >> /etc/hosts"
+    )
+    if result.returncode != 0:
+        raise CheckFailed("cannot map the candidate mirror")
+
+
+def restore_official_trust(guest: Guest) -> None:
+    _, result = guest.run(
+        "restore-trust",
+        "cp /usr/etc/containers/policy.json /etc/containers/policy.json && rm -f "
+        + " ".join(CANDIDATE_DROP_INS),
+    )
+    if result.returncode != 0:
+        raise CheckFailed("cannot restore the candidate's trust policy")
+
+
+def deployment_digest(document: dict, slot: str) -> str | None:
+    entry = (document.get("status") or {}).get(slot) or {}
+    return (entry.get("image") or {}).get("imageDigest")
+
+
+def upgrade_from_published(
+    guest: Guest,
+    machine: Machine,
+    receipts: Receipts,
+    candidate: dict,
+    base: dict,
+    mirror: dict,
+    wrong: str,
+) -> None:
+    started = now()
+    log = []
+    install_candidate_trust(guest, mirror["repository"])
+    refused_argv, refused = guest.run(
+        "upgrade-wrong-digest",
+        f"bootc switch {CANDIDATE_REPOSITORY}@{wrong}",
+        timeout=3600,
+    )
+    log.append(transcript(refused_argv, refused))
+    if wrong == mirror["index"] or not rejected(refused, "unsigned"):
+        raise CheckFailed("a wrong digest was not refused by the candidate policy")
+    status_argv, after, document = status(guest, "upgrade-wrong-digest-status")
+    log.append(transcript(status_argv, after))
+    if (
+        document["status"].get("staged") is not None
+        or deployment_digest(document, "booted") != base["manifest_digest"]
+    ):
+        raise CheckFailed("the refused digest changed the deployments")
+    switch_argv, switch = guest.run(
+        "upgrade-switch",
+        f"bootc switch {CANDIDATE_REPOSITORY}@{mirror['index']}",
+        timeout=3600,
+    )
+    log.append(transcript(switch_argv, switch))
+    if switch.returncode != 0:
+        raise CheckFailed("the signed candidate was refused")
+    machine.stop()
+    machine.start(None)
+    status_argv, result, document = status(guest, "upgrade-status")
+    log.append(transcript(status_argv, result))
+    image = booted(document)
+    observed = image.get("imageDigest")
+    if observed != mirror["manifest"]:
+        raise CheckFailed(f"upgrade booted {observed}, want {mirror['manifest']}")
+    if image.get("version") != candidate["build_version"]:
+        raise CheckFailed(f"upgrade booted version {image.get('version')!r}")
+    rollback = deployment_digest(document, "rollback")
+    if rollback != base["manifest_digest"]:
+        raise CheckFailed(
+            f"rollback deployment is {rollback}, want {base['manifest_digest']}"
+        )
+    log.append(identity(mirror["index"], observed, mirror["config"], image["version"]))
+    receipts.write("upgrade_from_published", switch_argv, started, "".join(log))
 
 
 def live_isolation(guest: Guest, receipts: Receipts) -> None:
@@ -806,14 +1194,23 @@ def moved(guest, receipts, name, argv, action, started, digest, *, marker) -> No
     )
 
 
+def cancelled(signum, _frame) -> None:
+    # Cancellation must unwind through validate()'s cleanup of the VM disk,
+    # keys and fixture registry.
+    raise CheckFailed(f"cancelled by signal {signum}")
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--candidate", type=Path, required=True)
     parser.add_argument("--artifacts", type=Path, required=True)
     parser.add_argument("--receipts", type=Path, required=True)
     parser.add_argument("--fixture-base", type=Path, required=True)
+    parser.add_argument("--disk", type=Path)
+    parser.add_argument("--candidate-mirror", type=Path)
     parser.add_argument("--cid", type=int, default=3 + os.getpid() % 10000)
     args = parser.parse_args(argv)
+    previous = signal.signal(signal.SIGTERM, cancelled)
     try:
         validate(args)
     except (
@@ -824,6 +1221,8 @@ def main(argv: list[str] | None = None) -> int:
     ) as error:
         print(f"installation validation failed: {error}", file=sys.stderr)
         return 1
+    finally:
+        signal.signal(signal.SIGTERM, previous)
     return 0
 
 
