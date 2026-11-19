@@ -10,6 +10,7 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import re
 import shutil
 import subprocess
 import sys
@@ -18,9 +19,11 @@ from pathlib import Path
 
 HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE))
+import release_pipeline
 import validation_driver as driver
 from validation_driver import FIXTURE, CheckFailed, Guest, Machine, vmlib
 
+CANDIDATE_KEY = HERE.parents[2] / "shared/release/candidate.pub"
 DROP_INS = (
     driver.FIXTURE_KEY_PATH,
     "/etc/containers/registries.d/zz-validation-fixture.yaml",
@@ -246,6 +249,23 @@ def run(args: argparse.Namespace) -> int:
     return 0 if all(result["ok"] for result in probe.results) else 1
 
 
+def base_tag(candidate: dict, version: str) -> str:
+    # The base comes from the candidate's own channel and Fedora line, so a
+    # stable candidate is never updated from a testing image.
+    line = (
+        f"testing-{candidate['fedora_version']}"
+        if candidate["channel"] == "testing"
+        else candidate["fedora_version"]
+    )
+    if not re.fullmatch(r"[1-9][0-9]*", candidate["fedora_version"]):
+        raise ValueError("invalid candidate Fedora version")
+    if not version:
+        return line
+    if not re.fullmatch(re.escape(line) + r"\.[0-9]{8}(?:\.[0-9]+)?", version):
+        raise ValueError(f"base version {version!r} is not on line {line}")
+    return version
+
+
 def main(argv: list[str] | None = None) -> int:
     if (
         os.environ.get("GITHUB_REF") != "refs/heads/main"
@@ -266,6 +286,20 @@ def main(argv: list[str] | None = None) -> int:
             file=sys.stderr,
         )
         return 2
+    if argv is None:
+        argv = sys.argv[1:]
+    if argv[:1] == ["base-tag"]:
+        parser = argparse.ArgumentParser()
+        parser.add_argument("--candidate", type=Path, required=True)
+        parser.add_argument("--version", default="")
+        options = parser.parse_args(argv[1:])
+        candidate = release_pipeline.candidate(options.candidate, CANDIDATE_KEY)
+        try:
+            print(base_tag(candidate, options.version))
+        except ValueError as error:
+            print(f"image update spike: {error}", file=sys.stderr)
+            return 2
+        return 0
     parser = argparse.ArgumentParser()
     parser.add_argument("--disk", type=Path, required=True)
     parser.add_argument("--base-manifest", required=True)

@@ -56,6 +56,30 @@ class ImageUpdateSpikeTests(unittest.TestCase):
             self.assertEqual(spike.main(ARGS), 2)
             run.assert_not_called()
 
+    def test_base_tag_comes_from_the_candidate_line(self):
+        testing = {"channel": "testing", "fedora_version": "45"}
+        stable = {"channel": "stable", "fedora_version": "45"}
+        self.assertEqual(spike.base_tag(testing, ""), "testing-45")
+        self.assertEqual(spike.base_tag(stable, ""), "45")
+        self.assertEqual(
+            spike.base_tag(testing, "testing-45.20261117.2"), "testing-45.20261117.2"
+        )
+        self.assertEqual(spike.base_tag(stable, "45.20261120.1"), "45.20261120.1")
+        for candidate, version in (
+            (stable, "testing-45.20261117.2"),
+            (stable, "testing-45"),
+            (testing, "45.20261120.1"),
+            (testing, "testing-44.20261117"),
+            (testing, "testing-45"),
+            (testing, "testing-45.2026111"),
+            ({"channel": "testing", "fedora_version": "4x"}, ""),
+        ):
+            with (
+                self.subTest(candidate=candidate, version=version),
+                self.assertRaises(ValueError),
+            ):
+                spike.base_tag(candidate, version)
+
     def test_workflow_has_no_environment_or_write_permissions(self):
         workflow = yaml.safe_load(
             (ROOT / ".github/workflows/image-update-spike.yml").read_text()
@@ -70,6 +94,8 @@ class ImageUpdateSpikeTests(unittest.TestCase):
         self.assertNotIn("secrets.CANDIDATE", text)
         self.assertNotIn("secrets.COSIGN", text)
         self.assertNotIn("record-validation", text)
+        self.assertNotIn("inputs.base_tag", text)
+        self.assertIn("image_update_spike.py base-tag", text)
 
 
 if __name__ == "__main__":

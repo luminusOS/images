@@ -9,10 +9,10 @@ on:
         description: Successful candidate run whose workstation image is switched to
         type: string
         required: true
-      base_tag:
-        description: Published workstation tag to boot first (line or version tag)
+      base_version:
+        description: Published version of the candidate's line to boot first (blank uses the line tag)
         type: string
-        default: testing-45
+        default: ""
 
 permissions:
   contents: read
@@ -71,10 +71,10 @@ jobs:
       - name: Resolve and verify the published base
         id: base
         env:
-          BASE_TAG: ${{ inputs.base_tag }}
+          BASE_VERSION: ${{ inputs.base_version }}
         run: |
           set -euo pipefail
-          [[ "$BASE_TAG" =~ ^(testing-)?[1-9][0-9](\.[0-9]{8}(\.[0-9]+)?)?$ ]] || { echo "invalid base tag" >&2; exit 1; }
+          BASE_TAG="$(python3 .github/scripts/workflow/image_update_spike.py base-tag --candidate candidate/candidate.json --version "$BASE_VERSION")"
           repo="ghcr.io/${GITHUB_REPOSITORY_OWNER,,}/luminusos-workstation"
           index="$(skopeo inspect --raw "docker://$repo:$BASE_TAG" | sha256sum | cut -d' ' -f1)"
           cosign verify --key shared/trust/etc/pki/containers/luminusos.pub "$repo@sha256:$index" > /dev/null
