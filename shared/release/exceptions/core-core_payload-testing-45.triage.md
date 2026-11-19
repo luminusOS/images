@@ -148,3 +148,28 @@ component type `linux_kernel_any` with package version `any` and no
 binary identity. The original triage above still applies: applicability
 was not verified for any kernel version, and stable still requires
 per-CVE verification.
+
+## 2026-11-19: Go stdlib 1.27.4 fixes
+
+[Candidate 44520540433](https://github.com/luminusOS/images/actions/runs/44520540433)
+reported eight High `stdlib` advisories on each of the four binaries below:
+CVE-2026-97033, CVE-2026-97034, CVE-2026-97035, CVE-2026-97036,
+CVE-2026-97037, CVE-2026-97038, CVE-2026-97039 and CVE-2026-97043.
+Grype lists fixes in Go 1.26.11 and 1.27.4. The Fedora 45 Bodhi check on
+2026-11-19 found `golang-1.27.4-2.fc45` stable since 2026-11-14, but
+`podman-6.2.0-1.fc45` and `toolbox-0.3-7.fc45` had not been rebuilt with it.
+The scanner still finds Go 1.27.3 in the Podman binaries and Go 1.27rc2
+in Toolbox. The exact OSTree objects and SBOM SHA-256 hashes are bound in
+the policy; their path and RPM identities match the prior testing review.
+
+| Binary | RPM | Default exposure from prior package review |
+|---|---|---|
+| `/usr/bin/podman` | `podman-5:6.2.0-1.fc45.x86_64` | CLI on invocation. The RPM ships `podman.service` and `podman.socket`; the image disables them system-wide and for users. |
+| `/usr/libexec/podman/rootlessport` | `podman-5:6.2.0-1.fc45.x86_64` | Helper invoked for rootless containers with published ports; it is not a standalone systemd service. |
+| `/usr/libexec/podman/quadlet` | `podman-5:6.2.0-1.fc45.x86_64` | System and user generators run at boot and login, respectively, and parse local Quadlet files. Disabled Podman units do not disable these generators. |
+| `/usr/bin/toolbox` | `toolbox-0.3-7.fc45.x86_64` | CLI on invocation; the RPM ships no systemd units. |
+
+The prior review found no setuid bit or file capabilities on these binaries.
+Exposure describes the shipped defaults, not per-CVE non-applicability.
+`leandromqrs` accepted the risk on 2026-11-19 for Fedora 45 testing only, until
+2026-12-16T00:00:00Z. Stable still requires a separate per-CVE review.

@@ -217,3 +217,34 @@ component type `linux_kernel_any` with package version `any` and no
 binary identity. The original triage above still applies: applicability
 was not verified for any kernel version, and stable still requires
 per-CVE verification.
+
+## 2026-11-19: Go stdlib 1.27.4 fixes
+
+Candidate 44520540433 stopped at the core gate. For the workstation payload,
+Grype 0.101.1 rescanned the workstation SPDX SBOM from
+[full candidate 44376008169](https://github.com/luminusOS/images/actions/runs/44376008169)
+with the checksum-verified database from 44520540433. The SPDX `evident-by`
+relationships link each stdlib match to its file. File checksums and RPM
+identities match the previously reviewed binaries in this policy.
+
+Each of the seven binaries below matched all eight High stdlib advisories:
+CVE-2026-97033, CVE-2026-97034, CVE-2026-97035, CVE-2026-97036,
+CVE-2026-97037, CVE-2026-97038, CVE-2026-97039 and CVE-2026-97043.
+Grype lists fixes in Go 1.26.11 and 1.27.4. Bodhi showed
+`golang-1.27.4-2.fc45` stable since 2026-11-14, but as of 2026-11-19
+Podman and Toolbox had not been rebuilt with it. The scanned go-l2tp
+binaries also still embed Go 1.27rc2.
+
+| Binary | RPM | Default exposure from prior package review |
+|---|---|---|
+| `/usr/bin/podman` | `podman-5:6.2.0-1.fc45.x86_64` | CLI on invocation; shipped `podman.service` and `podman.socket` are disabled system-wide and for users. |
+| `/usr/libexec/podman/quadlet` | `podman-5:6.2.0-1.fc45.x86_64` | System and user generators parse local Quadlet files at boot and login, even with the Podman units disabled. |
+| `/usr/libexec/podman/rootlessport` | `podman-5:6.2.0-1.fc45.x86_64` | Helper for rootless containers with published ports; no standalone systemd service. |
+| `/usr/bin/toolbox` | `toolbox-0.3-7.fc45.x86_64` | CLI on invocation; the RPM ships no systemd units. |
+| `/usr/bin/kl2tpd` | `go-l2tp-0.1.8-5.fc45.x86_64` | Started on L2TP VPN activation through NetworkManager-l2tp; go-l2tp ships no systemd units. |
+| `/usr/bin/kpppoed`, `/usr/bin/ql2tpd` | `go-l2tp-0.1.8-5.fc45.x86_64` | Not started by default; go-l2tp ships no systemd units. |
+
+The prior package review found no setuid bits or file capabilities on these
+binaries. Default exposure does not establish per-CVE non-applicability.
+`leandromqrs` accepted the risk on 2026-11-19 for Fedora 45 testing only,
+until 2026-12-16T00:00:00Z. Stable still requires separate per-CVE review.
