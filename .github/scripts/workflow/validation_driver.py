@@ -43,6 +43,7 @@ REGISTRY = f"{REGISTRY_HOST}:5000"
 FIXTURE = f"{REGISTRY}/fixture"
 FIXTURE_KEY_PATH = "/etc/pki/containers/validation-fixture.pub"
 CANDIDATE_REPOSITORY = f"{REGISTRY}/candidate"
+HOSTS_LINE = f"10.0.2.2 {REGISTRY_HOST}"
 CANDIDATE_KEY = ROOT / "shared/release/candidate.pub"
 CANDIDATE_KEY_PATH = "/etc/pki/containers/validation-candidate.pub"
 CANDIDATE_DROP_INS = (
@@ -585,7 +586,7 @@ def _validate_image(args, candidate, receipts, diagnostics, work, vm) -> None:
             receipts,
             candidate,
             candidate_diff_ids,
-            reference=f"{CANDIDATE_REPOSITORY}@{mirror['index']}",
+            references=digest_references(CANDIDATE_REPOSITORY, mirror),
         )
         if base_digest != mirror["manifest"]:
             raise CheckFailed("the checked system is not the mirrored candidate")
@@ -675,7 +676,7 @@ def first_boot(
     candidate: dict,
     diff_ids: list[str],
     *,
-    reference: str | None = None,
+    references: tuple[str, ...] | None = None,
 ) -> str:
     started = now()
     log = []
@@ -692,8 +693,8 @@ def first_boot(
     owner = candidate["repository"].split("/")[0].lower()
     tracked = image.get("image", {}).get("image", "")
     if (
-        tracked != reference
-        if reference is not None
+        tracked not in references
+        if references is not None
         else not tracked.startswith(f"ghcr.io/{owner}/luminusos-workstation:")
     ):
         raise CheckFailed(f"installed system tracks {tracked!r}")
@@ -887,6 +888,13 @@ def push_wrong_digest(work: Path, fixture_base: Path, diagnostics: Path) -> str:
     return digest_file.read_text().strip()
 
 
+def digest_references(repository: str, image: dict) -> tuple[str, str]:
+    # bootc records the reference it was given, or the platform manifest it
+    # resolved; run 44462787104 showed the latter for a disk built from an
+    # index. imageDigest and the version stay the binding either way.
+    return (f"{repository}@{image['index']}", f"{repository}@{image['manifest']}")
+
+
 def base_boot(guest: Guest, receipts: Receipts, base: dict) -> None:
     started = now()
     argv, result, document = status(guest, "base-boot-bootc")
@@ -901,7 +909,8 @@ def base_boot(guest: Guest, receipts: Receipts, base: dict) -> None:
     if image.get("version") != version:
         raise CheckFailed(f"booted base version {image.get('version')!r} != {version}")
     tracked = image.get("image", {}).get("image")
-    if tracked != f"{repository}@{base['manifest_digest']}":
+    pinned = {"index": base["index_digest"], "manifest": base["manifest_digest"]}
+    if tracked not in digest_references(repository, pinned):
         raise CheckFailed(f"the base disk tracks {tracked!r}")
     if document["status"].get("staged") is not None:
         raise CheckFailed("the base disk has a staged deployment")
@@ -948,9 +957,7 @@ def install_candidate_trust(guest: Guest, repository: str) -> None:
         )
         if result.returncode != 0:
             raise CheckFailed(f"cannot write {path}")
-    _, result = guest.run(
-        "candidate-hosts", f"echo '10.0.2.2 {REGISTRY_HOST}' >> /etc/hosts"
-    )
+    _, result = guest.run("candidate-hosts", f"echo '{HOSTS_LINE}' >> /etc/hosts")
     if result.returncode != 0:
         raise CheckFailed("cannot map the candidate mirror")
 
@@ -959,7 +966,10 @@ def restore_official_trust(guest: Guest) -> None:
     _, result = guest.run(
         "restore-trust",
         "cp /usr/etc/containers/policy.json /etc/containers/policy.json && rm -f "
-        + " ".join(CANDIDATE_DROP_INS),
+        + " ".join(CANDIDATE_DROP_INS)
+        + " && sed -i --follow-symlinks '/^"
+        + HOSTS_LINE.replace(".", r"\.")
+        + "$/d' /etc/hosts",
     )
     if result.returncode != 0:
         raise CheckFailed("cannot restore the candidate's trust policy")
@@ -988,7 +998,9 @@ def upgrade_from_published(
         timeout=3600,
     )
     log.append(transcript(refused_argv, refused))
-    if wrong == mirror["index"] or not rejected(refused, "unsigned"):
+    if wrong in (mirror["index"], mirror["manifest"]) or not rejected(
+        refused, "unsigned"
+    ):
         raise CheckFailed("a wrong digest was not refused by the candidate policy")
     status_argv, after, document = status(guest, "upgrade-wrong-digest-status")
     log.append(transcript(status_argv, after))
@@ -1150,9 +1162,7 @@ def install_fixture_trust(guest: Guest, public_key: str) -> None:
         _, result = guest.run(f"fixture-trust-{index}", f"cat > {path}", stdin=content)
         if result.returncode != 0:
             raise CheckFailed(f"cannot write {path}")
-    _, result = guest.run(
-        "fixture-hosts", f"echo '10.0.2.2 {REGISTRY_HOST}' >> /etc/hosts"
-    )
+    _, result = guest.run("fixture-hosts", f"echo '{HOSTS_LINE}' >> /etc/hosts")
     if result.returncode != 0:
         raise CheckFailed("cannot map the fixture registry")
 
@@ -1196,7 +1206,8 @@ def moved(guest, receipts, name, argv, action, started, digest, *, marker) -> No
 
 def cancelled(signum, _frame) -> None:
     # Cancellation must unwind through validate()'s cleanup of the VM disk,
-    # keys and fixture registry.
+    # keys and fixture registry; a repeated signal must not interrupt it.
+    signal.signal(signal.SIGTERM, signal.SIG_IGN)
     raise CheckFailed(f"cancelled by signal {signum}")
 
 

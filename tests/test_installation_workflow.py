@@ -553,6 +553,13 @@ class KindWorkflowTests(unittest.TestCase):
         ]
         self.assertIn(f'mirror="$RUNNER_TEMP/{runner.CANDIDATE_MIRROR}"', stage["run"])
         self.assertIn("--all --preserve-digests", stage["run"])
+        fixture = self.steps(self.installation)[
+            "Stage the private workstation image as the update fixture base"
+        ]
+        self.assertIn(
+            'skopeo copy --preserve-digests --authfile "$auth" "docker://$image"',
+            fixture["run"],
+        )
         self.assertIn("oci:$mirror/layout:candidate", stage["run"])
         self.assertIn('> "$mirror/signatures.json"', stage["run"])
         self.assertIn("trap 'rm -rf \"$auth\"' EXIT", stage["run"])

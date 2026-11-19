@@ -4,6 +4,8 @@ import hashlib
 import io
 import json
 import os
+import shutil
+import signal
 import subprocess
 import sys
 import tempfile
@@ -187,6 +189,7 @@ class FakeVM:
         }
         self.accept_wrong = False
         self.broken_rollback = None
+        self.tracks_manifest = False
         self.commands = []
 
     def boot(self):
@@ -220,7 +223,12 @@ class FakeVM:
         repository, _, digest = target.partition("@")
         if repository == driver.CANDIDATE_REPOSITORY:
             if digest == self.candidate_index:
-                return self.stage(self.candidate_manifest, "45.20261118", target)
+                tracked = (
+                    f"{repository}@{self.candidate_manifest}"
+                    if self.tracks_manifest
+                    else target
+                )
+                return self.stage(self.candidate_manifest, "45.20261118", tracked)
             if self.accept_wrong:
                 return self.stage(digest, "45.20261118", target)
             return done(code=1, stderr=REJECTED_UNSIGNED)
@@ -440,6 +448,127 @@ class ImageDriverTests(unittest.TestCase):
             self.run_image_flow()
         self.assertNotIn("upgrade_from_published", self.written())
 
+    def test_bootc_may_track_the_candidate_by_index_or_manifest(self):
+        for tracks_manifest in (False, True):
+            with self.subTest(tracks_manifest=tracks_manifest):
+                shutil.rmtree(self.receipts_dir)
+                self.receipts_dir.mkdir()
+                self.vm = FakeVM(self.index, self.manifest)
+                self.vm.tracks_manifest = tracks_manifest
+                receipts = self.run_image_flow()
+                self.assertEqual(
+                    sorted(receipts.names), sorted(pipeline.checks("image"))
+                )
+
+    def test_candidate_check_refuses_any_other_tracked_reference(self):
+        allowed = driver.digest_references(driver.CANDIDATE_REPOSITORY, self.mirror())
+        self.assertEqual(
+            allowed,
+            (
+                f"{driver.CANDIDATE_REPOSITORY}@{self.index}",
+                f"{driver.CANDIDATE_REPOSITORY}@{self.manifest}",
+            ),
+        )
+        for tracked in (
+            f"{driver.CANDIDATE_REPOSITORY}@sha256:" + "9" * 64,
+            f"{driver.CANDIDATE_REPOSITORY}:candidate",
+            f"{driver.FIXTURE}@{self.manifest}",
+            f"{CANDIDATES}@{self.index}",
+        ):
+            self.vm.deployments["booted"] = (self.manifest, "45.20261118", tracked)
+            with (
+                self.subTest(tracked=tracked),
+                self.assertRaisesRegex(driver.CheckFailed, "tracks"),
+            ):
+                driver.first_boot(
+                    FakeGuest(self.vm),
+                    driver.Receipts(Path(tempfile.mkdtemp()), self.candidate),
+                    self.candidate,
+                    DIFF_IDS,
+                    references=allowed,
+                )
+
+    def test_base_disk_may_track_the_pinned_index_or_manifest_only(self):
+        repository = "ghcr.io/owner/luminusos-workstation"
+        for digest in (P_INDEX, P_MANIFEST):
+            self.vm.deployments["booted"] = (
+                P_MANIFEST,
+                "45.20261117.2",
+                f"{repository}@{digest}",
+            )
+            with self.subTest(accepted=digest):
+                driver.base_boot(
+                    FakeGuest(self.vm),
+                    driver.Receipts(Path(tempfile.mkdtemp()), self.candidate),
+                    self.candidate["published_base"]["workstation"],
+                )
+        for tracked in (
+            f"{repository}@sha256:" + "9" * 64,
+            f"{repository}:testing-45",
+            f"ghcr.io/owner/luminusos@{P_MANIFEST}",
+            f"ghcr.io/other/luminusos-workstation@{P_INDEX}",
+            f"{repository}@{P_MANIFEST}x",
+        ):
+            self.vm.deployments["booted"] = (P_MANIFEST, "45.20261117.2", tracked)
+            with (
+                self.subTest(rejected=tracked),
+                self.assertRaisesRegex(driver.CheckFailed, "tracks"),
+            ):
+                driver.base_boot(
+                    FakeGuest(self.vm),
+                    driver.Receipts(Path(tempfile.mkdtemp()), self.candidate),
+                    self.candidate["published_base"]["workstation"],
+                )
+
+    def test_wrong_digest_must_differ_from_the_candidate_index_and_manifest(self):
+        for wrong in (self.index, self.manifest):
+            self.vm = FakeVM(self.index, self.manifest)
+            with (
+                self.subTest(wrong=wrong),
+                self.assertRaisesRegex(driver.CheckFailed, "wrong digest"),
+            ):
+                driver.upgrade_from_published(
+                    FakeGuest(self.vm),
+                    FakeMachine(self.vm),
+                    driver.Receipts(Path(tempfile.mkdtemp()), self.candidate),
+                    self.candidate,
+                    self.candidate["published_base"]["workstation"],
+                    self.mirror(),
+                    wrong,
+                )
+
+    def test_restore_removes_exactly_the_mirror_hosts_line(self):
+        seen = []
+
+        class Recorder:
+            def run(self, name, command, **_kwargs):
+                seen.append(command)
+                return ["ssh", command], done()
+
+        driver.install_candidate_trust(FakeGuest(self.vm), CANDIDATES)
+        self.assertIn(f"echo '{driver.HOSTS_LINE}' >> /etc/hosts", self.vm.commands)
+        driver.restore_official_trust(Recorder())
+        sed = seen[0].rsplit(" && ", 1)[1]
+        self.assertTrue(sed.startswith("sed -i --follow-symlinks "))
+        self.assertTrue(sed.endswith(" /etc/hosts"))
+        hosts = self.root / "hosts"
+        lines = [
+            "127.0.0.1 localhost",
+            driver.HOSTS_LINE,
+            f"{driver.HOSTS_LINE}.example",
+            f"# {driver.HOSTS_LINE}",
+            "10.0.2.20 registry.validation.test",
+            driver.HOSTS_LINE,
+        ]
+        hosts.write_text("\n".join(lines) + "\n")
+        script = sed.removesuffix("/etc/hosts") + str(hosts)
+        for _ in range(2):
+            subprocess.run(["sh", "-c", script], check=True)
+            self.assertEqual(
+                hosts.read_text().splitlines(),
+                [line for line in lines if line != driver.HOSTS_LINE],
+            )
+
     def test_base_disk_must_boot_the_pinned_published_base(self):
         for slot, broken in (
             ("digest", ("sha256:" + "9" * 64, "45.20261117.2")),
@@ -628,6 +757,14 @@ class ImageDriverTests(unittest.TestCase):
             )
         self.assertEqual(code, 1)
         self.assertIn("cancelled by signal 15", err.getvalue())
+
+    def test_cancellation_ignores_a_repeated_signal_during_cleanup(self):
+        previous = signal.signal(signal.SIGTERM, driver.cancelled)
+        self.addCleanup(signal.signal, signal.SIGTERM, previous)
+        with self.assertRaisesRegex(driver.CheckFailed, "cancelled by signal 15"):
+            driver.cancelled(signal.SIGTERM, None)
+        self.assertIs(signal.getsignal(signal.SIGTERM), signal.SIG_IGN)
+        os.kill(os.getpid(), signal.SIGTERM)
 
     def test_work_directory_is_removed_when_a_check_fails(self):
         receipts = self.root / "out"

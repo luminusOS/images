@@ -165,7 +165,7 @@ jobs:
           auth="$RUNNER_TEMP/ghcr-auth.json"
           trap 'rm -f "$auth"' EXIT
           printf '%s' "$GH_TOKEN" | skopeo login --authfile "$auth" --username "$GITHUB_ACTOR" --password-stdin ghcr.io
-          skopeo copy --authfile "$auth" "docker://$image" "oci:$RUNNER_TEMP/fixture-base:base"
+          skopeo copy --preserve-digests --authfile "$auth" "docker://$image" "oci:$RUNNER_TEMP/fixture-base:base"
           chmod -R go-w "$RUNNER_TEMP/fixture-base"
       - name: Stage the candidate index and signature for the upgrade
         if: steps.candidate.outputs.release_kind == 'image'
