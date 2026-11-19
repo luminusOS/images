@@ -1,5 +1,6 @@
 import hashlib
 import importlib.util
+import io
 import json
 import subprocess
 import tempfile
@@ -51,7 +52,12 @@ class PublishTests(unittest.TestCase):
             patch.object(publish_r2, "download_digest", side_effect=download),
         ):
             publish_r2.publish(
-                "testing", self.version, self.dist, "bucket", "https://example.invalid"
+                "testing",
+                self.version,
+                self.dist,
+                "bucket",
+                "https://example.invalid",
+                latest_release="45",
             )
         removals = [call for call in calls if call[:3] == ["aws", "s3", "rm"]]
         self.assertEqual(len(removals), 1)
@@ -71,6 +77,146 @@ class PublishTests(unittest.TestCase):
             max(i for i, call in enumerate(calls) if call[0] == "curl"),
         )
 
+    def test_older_line_never_moves_channel_index_or_prunes_other_lines(self):
+        calls = []
+        version = "testing-44.20261031"
+        for fmt in ("iso", "qcow2"):
+            (self.dist / f"luminusos-workstation-{version}.{fmt}").write_bytes(
+                fmt.encode()
+            )
+
+        def fake(args, **kwargs):
+            calls.append(args)
+            if args[:3] == ["aws", "s3", "ls"]:
+                return subprocess.CompletedProcess(
+                    args,
+                    0,
+                    stdout=" PRE testing-45.20261030/\n PRE testing-44.20261001/\n",
+                )
+            return subprocess.CompletedProcess(args, 0)
+
+        def download(url):
+            return hashlib.sha256(url.rsplit(".", 1)[-1].encode()).hexdigest()
+
+        with (
+            patch.object(publish_r2.subprocess, "run", side_effect=fake),
+            patch.object(publish_r2, "download_digest", side_effect=download),
+        ):
+            publish_r2.publish(
+                "testing",
+                version,
+                self.dist,
+                "bucket",
+                "https://example.invalid",
+                latest_release="45",
+            )
+        self.assertFalse(any("latest.json" in " ".join(call) for call in calls))
+        removals = [call[3] for call in calls if call[:3] == ["aws", "s3", "rm"]]
+        self.assertEqual(removals, ["s3://bucket/testing/testing-44.20261001/"])
+
+    def test_latest_line_prunes_only_its_own_older_versions(self):
+        calls = []
+
+        def fake(args, **kwargs):
+            calls.append(args)
+            if args[:3] == ["aws", "s3", "ls"]:
+                return subprocess.CompletedProcess(
+                    args,
+                    0,
+                    stdout=" PRE testing-44.20261001/\n PRE testing-45.20261030/\n",
+                )
+            return subprocess.CompletedProcess(args, 0)
+
+        def download(url):
+            return hashlib.sha256(url.rsplit(".", 1)[-1].encode()).hexdigest()
+
+        with (
+            patch.object(publish_r2.subprocess, "run", side_effect=fake),
+            patch.object(publish_r2, "download_digest", side_effect=download),
+        ):
+            publish_r2.publish(
+                "testing",
+                self.version,
+                self.dist,
+                "bucket",
+                "https://example.invalid",
+                latest_release="45",
+            )
+        self.assertTrue(any("latest.json" in " ".join(call) for call in calls))
+        removals = [call[3] for call in calls if call[:3] == ["aws", "s3", "rm"]]
+        self.assertEqual(removals, ["s3://bucket/testing/testing-45.20261030/"])
+
+    def test_dropped_download_is_retried_from_scratch(self):
+        outcomes = iter([56, 0])
+        streams = []
+
+        class Process:
+            def __init__(self, command, **kwargs):
+                self.code = next(outcomes)
+                body = b"partial" if self.code else b"complete"
+                streams.append(command)
+                self.stdout = io.BytesIO(body)
+                self.pid = 0
+
+            def wait(self, timeout=None):
+                return self.code
+
+            def poll(self):
+                return self.code
+
+        with (
+            patch.object(publish_r2.subprocess, "Popen", Process),
+            patch.object(publish_r2.time, "sleep"),
+        ):
+            digest = publish_r2.download_digest("https://example.invalid/a.iso")
+        self.assertEqual(digest, hashlib.sha256(b"complete").hexdigest())
+        self.assertEqual(len(streams), 2)
+
+    def test_download_gives_up_after_bounded_attempts(self):
+        attempts = []
+
+        class Process:
+            def __init__(self, command, **kwargs):
+                attempts.append(command)
+                self.stdout = io.BytesIO(b"")
+                self.pid = 0
+
+            def wait(self, timeout=None):
+                return 56
+
+            def poll(self):
+                return 56
+
+        with (
+            patch.object(publish_r2.subprocess, "Popen", Process),
+            patch.object(publish_r2.time, "sleep"),
+            self.assertRaises(subprocess.CalledProcessError),
+        ):
+            publish_r2.download_digest("https://example.invalid/a.iso")
+        self.assertEqual(len(attempts), publish_r2.DOWNLOAD_ATTEMPTS)
+
+    def test_http_error_is_not_retried(self):
+        attempts = []
+
+        class Process:
+            def __init__(self, command, **kwargs):
+                attempts.append(command)
+                self.stdout = io.BytesIO(b"")
+                self.pid = 0
+
+            def wait(self, timeout=None):
+                return 22
+
+            def poll(self):
+                return 22
+
+        with (
+            patch.object(publish_r2.subprocess, "Popen", Process),
+            self.assertRaises(subprocess.CalledProcessError),
+        ):
+            publish_r2.download_digest("https://example.invalid/a.iso")
+        self.assertEqual(len(attempts), 1)
+
     def test_corrupt_download_never_updates_index_or_prunes(self):
         calls = []
 
@@ -84,7 +230,12 @@ class PublishTests(unittest.TestCase):
             self.assertRaises(ValueError),
         ):
             publish_r2.publish(
-                "testing", self.version, self.dist, "bucket", "https://example.invalid"
+                "testing",
+                self.version,
+                self.dist,
+                "bucket",
+                "https://example.invalid",
+                latest_release="45",
             )
         self.assertFalse(
             any(
@@ -95,17 +246,27 @@ class PublishTests(unittest.TestCase):
 
     def test_invalid_inputs_cannot_call_aws(self):
         with patch.object(publish_r2.subprocess, "run") as run:
-            for channel, version, bucket in (
-                ("testing", "../bad", "bucket"),
-                ("stable", "testing-45.20261031", "bucket"),
-                ("testing", self.version, "../bucket"),
+            for channel, version, bucket, latest in (
+                ("testing", "../bad", "bucket", "45"),
+                ("stable", "testing-45.20261031", "bucket", "45"),
+                ("testing", self.version, "../bucket", "45"),
+                ("testing", self.version, "bucket", ""),
+                ("testing", self.version, "bucket", None),
+                ("testing", self.version, "bucket", "45 44"),
             ):
                 with (
-                    self.subTest(channel=channel, version=version, bucket=bucket),
+                    self.subTest(
+                        channel=channel, version=version, bucket=bucket, latest=latest
+                    ),
                     self.assertRaises(ValueError),
                 ):
                     publish_r2.publish(
-                        channel, version, self.dist, bucket, "https://example.invalid"
+                        channel,
+                        version,
+                        self.dist,
+                        bucket,
+                        "https://example.invalid",
+                        latest_release=latest,
                     )
             run.assert_not_called()
 
@@ -140,6 +301,7 @@ class PublishTests(unittest.TestCase):
                     self.dist,
                     "bucket",
                     "https://example.invalid",
+                    latest_release="45",
                 )
             self.assertFalse(
                 any(
@@ -193,6 +355,7 @@ class PublishTests(unittest.TestCase):
                 "bucket",
                 "https://example.invalid",
                 True,
+                latest_release="45",
             )
         self.assertIn("image/sbom.spdx.json", latest[0]["evidence"])
         self.assertEqual(
@@ -226,6 +389,7 @@ class PublishTests(unittest.TestCase):
                 "bucket",
                 "https://example.invalid",
                 True,
+                latest_release="45",
             )
         run.assert_called_once()
 

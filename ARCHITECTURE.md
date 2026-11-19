@@ -648,7 +648,7 @@ Installed systems track the channel named by `UPDATE_CHANNEL` in `config/version
 Release metadata lives in `config/releases.env` on `main` and is read by every branch (see [docs/release-strategy.md](docs/release-strategy.md)):
 
 - `SUPPORTED_RELEASES`: releases that may be built.
-- `LATEST_RELEASE`: the only release allowed to move the floating `testing` and `latest` tags.
+- `LATEST_RELEASE`: the only release allowed to move the floating `testing` and `latest` tags and to write `<channel>/latest.json` on the download site.
 - `STABLE_LINES`: releases with an active `release/<fedora>` line. A stable build runs only on that branch, and only when its release is listed here on `main`; the branch's own `config/versions.env` sets `UPDATE_CHANNEL=stable`.
 
 `auto-testing` checks the Fedora base on `main`. Automatic builds are candidates, not evidence that a release has passed installation or update tests. `python3 tools/release-notes.py` compares `rpm -qa` of the previous and new image for release notes.
