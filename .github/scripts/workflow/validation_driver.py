@@ -586,7 +586,9 @@ def _validate_image(args, candidate, receipts, diagnostics, work, vm) -> None:
             receipts,
             candidate,
             candidate_diff_ids,
-            references=digest_references(CANDIDATE_REPOSITORY, mirror),
+            references=digest_references(
+                CANDIDATE_REPOSITORY, mirror["index"], mirror["manifest"]
+            ),
         )
         if base_digest != mirror["manifest"]:
             raise CheckFailed("the checked system is not the mirrored candidate")
@@ -888,11 +890,11 @@ def push_wrong_digest(work: Path, fixture_base: Path, diagnostics: Path) -> str:
     return digest_file.read_text().strip()
 
 
-def digest_references(repository: str, image: dict) -> tuple[str, str]:
+def digest_references(repository: str, index: str, manifest: str) -> tuple[str, str]:
     # bootc records the reference it was given, or the platform manifest it
     # resolved; run 44462787104 showed the latter for a disk built from an
     # index. imageDigest and the version stay the binding either way.
-    return (f"{repository}@{image['index']}", f"{repository}@{image['manifest']}")
+    return (f"{repository}@{index}", f"{repository}@{manifest}")
 
 
 def base_boot(guest: Guest, receipts: Receipts, base: dict) -> None:
@@ -909,8 +911,10 @@ def base_boot(guest: Guest, receipts: Receipts, base: dict) -> None:
     if image.get("version") != version:
         raise CheckFailed(f"booted base version {image.get('version')!r} != {version}")
     tracked = image.get("image", {}).get("image")
-    pinned = {"index": base["index_digest"], "manifest": base["manifest_digest"]}
-    if tracked not in digest_references(repository, pinned):
+    allowed = digest_references(
+        repository, base["index_digest"], base["manifest_digest"]
+    )
+    if tracked not in allowed:
         raise CheckFailed(f"the base disk tracks {tracked!r}")
     if document["status"].get("staged") is not None:
         raise CheckFailed("the base disk has a staged deployment")
@@ -969,7 +973,9 @@ def restore_official_trust(guest: Guest) -> None:
         + " ".join(CANDIDATE_DROP_INS)
         + " && sed -i --follow-symlinks '/^"
         + HOSTS_LINE.replace(".", r"\.")
-        + "$/d' /etc/hosts",
+        + "$/d' /etc/hosts && ! grep -Fxq '"
+        + HOSTS_LINE
+        + "' /etc/hosts",
     )
     if result.returncode != 0:
         raise CheckFailed("cannot restore the candidate's trust policy")

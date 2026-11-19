@@ -461,7 +461,11 @@ class ImageDriverTests(unittest.TestCase):
                 )
 
     def test_candidate_check_refuses_any_other_tracked_reference(self):
-        allowed = driver.digest_references(driver.CANDIDATE_REPOSITORY, self.mirror())
+        allowed = driver.digest_references(
+            driver.CANDIDATE_REPOSITORY,
+            self.mirror()["index"],
+            self.mirror()["manifest"],
+        )
         self.assertEqual(
             allowed,
             (
@@ -548,9 +552,10 @@ class ImageDriverTests(unittest.TestCase):
         driver.install_candidate_trust(FakeGuest(self.vm), CANDIDATES)
         self.assertIn(f"echo '{driver.HOSTS_LINE}' >> /etc/hosts", self.vm.commands)
         driver.restore_official_trust(Recorder())
-        sed = seen[0].rsplit(" && ", 1)[1]
+        sed, check = seen[0].split(" && ")[-2:]
         self.assertTrue(sed.startswith("sed -i --follow-symlinks "))
         self.assertTrue(sed.endswith(" /etc/hosts"))
+        self.assertEqual(check, f"! grep -Fxq '{driver.HOSTS_LINE}' /etc/hosts")
         hosts = self.root / "hosts"
         lines = [
             "127.0.0.1 localhost",
@@ -561,7 +566,7 @@ class ImageDriverTests(unittest.TestCase):
             driver.HOSTS_LINE,
         ]
         hosts.write_text("\n".join(lines) + "\n")
-        script = sed.removesuffix("/etc/hosts") + str(hosts)
+        script = f"{sed} && {check}".replace("/etc/hosts", str(hosts))
         for _ in range(2):
             subprocess.run(["sh", "-c", script], check=True)
             self.assertEqual(

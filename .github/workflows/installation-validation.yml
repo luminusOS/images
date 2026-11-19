@@ -159,13 +159,18 @@ jobs:
       - name: Stage the private workstation image as the update fixture base
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          RELEASE_KIND: ${{ steps.candidate.outputs.release_kind }}
         run: |
           set -euo pipefail
           image="$(python3 -c 'import json; print(json.load(open("candidate/candidate.json"))["images"]["workstation"])')"
           auth="$RUNNER_TEMP/ghcr-auth.json"
           trap 'rm -f "$auth"' EXIT
           printf '%s' "$GH_TOKEN" | skopeo login --authfile "$auth" --username "$GITHUB_ACTOR" --password-stdin ghcr.io
-          skopeo copy --preserve-digests --authfile "$auth" "docker://$image" "oci:$RUNNER_TEMP/fixture-base:base"
+          # Only the image path compares this layout with the candidate's
+          # manifest; a full copy keeps skopeo free to convert formats.
+          preserve=()
+          if [ "$RELEASE_KIND" = image ]; then preserve=(--preserve-digests); fi
+          skopeo copy "${preserve[@]}" --authfile "$auth" "docker://$image" "oci:$RUNNER_TEMP/fixture-base:base"
           chmod -R go-w "$RUNNER_TEMP/fixture-base"
       - name: Stage the candidate index and signature for the upgrade
         if: steps.candidate.outputs.release_kind == 'image'

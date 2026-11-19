@@ -557,8 +557,16 @@ class KindWorkflowTests(unittest.TestCase):
             "Stage the private workstation image as the update fixture base"
         ]
         self.assertIn(
-            'skopeo copy --preserve-digests --authfile "$auth" "docker://$image"',
+            'skopeo copy "${preserve[@]}" --authfile "$auth" "docker://$image"',
             fixture["run"],
+        )
+        self.assertIn(
+            'if [ "$RELEASE_KIND" = image ]; then preserve=(--preserve-digests); fi',
+            fixture["run"],
+        )
+        self.assertEqual(
+            fixture["env"]["RELEASE_KIND"],
+            "${{ steps.candidate.outputs.release_kind }}",
         )
         self.assertIn("oci:$mirror/layout:candidate", stage["run"])
         self.assertIn('> "$mirror/signatures.json"', stage["run"])
