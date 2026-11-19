@@ -45,6 +45,8 @@ Sirius is configured through `/etc/sirius/distro.toml` and `/etc/sirius/sirius.t
 
 ## Stable Releases
 
+Scheduled releases publish OCI updates only. To prepare ISO and qcow2 downloads, or to bootstrap a stable Fedora line, dispatch `publish.yml` with `artifacts=full`.
+
 Follow the [stable release runbook](docs/release-strategy.md#stable-release-runbook). Stable candidates come from `release/<Fedora>` and stop at the `stable` GitHub Environment. Only the repository owner approves. Agents must never approve or publish stable, accept risk exceptions, or read secret values.
 
 ## Cleanup Rules

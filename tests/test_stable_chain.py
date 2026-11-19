@@ -1,4 +1,5 @@
 import importlib.util
+import io
 import json
 import re
 import subprocess
@@ -10,6 +11,7 @@ from unittest import mock
 import yaml
 
 ROOT = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(ROOT / ".github/scripts/workflow"))
 
 
 def load(name):
@@ -54,6 +56,9 @@ class FakeGitHub:
     def candidate_version(self, run_id):
         return "45.20261118.1"
 
+    def scheduled_candidate_version(self, run: dict, workflow: str) -> str:
+        return self.candidate_version(run["id"])
+
     def tag_exists(self, tag):
         return tag in self.tags
 
@@ -69,12 +74,15 @@ class FakeGitHub:
         return 200 + len(self.dispatched) - 1
 
 
-def advance(github, overrides=None, validation="success", gate="waiting"):
+def advance(
+    github, overrides=None, validation="success", gate="waiting", *, scheduled=False
+):
     return chain.advance(
         run(**(overrides or {})),
         REPO,
         LINES,
         github,
+        scheduled=scheduled,
         wait_for=lambda _g, run_id, *, deadline: validation,
         wait_for_gate=lambda _g, run_id, *, deadline: gate,
     )
@@ -104,6 +112,20 @@ class StableChainTests(unittest.TestCase):
             ],
         )
         self.assertEqual(github.superseded_query, ("auto-stable.yml", "release/45"))
+
+    def test_scheduled_parent_enforces_image_on_its_dispatched_child(self) -> None:
+        github = FakeGitHub()
+        github.scheduled_candidate_version = mock.Mock(
+            side_effect=ValueError("scheduled candidate must have release_kind=image")
+        )
+        with self.assertRaisesRegex(ValueError, "must have release_kind=image"):
+            advance(github, scheduled=True)
+        github.scheduled_candidate_version.assert_called_once_with(
+            run(), chain.AUTO_STABLE
+        )
+        self.assertEqual(github.dispatched, [])
+        self.assertEqual(advance(github, scheduled=False), 201)
+        self.assertNotIn("artifacts", github.dispatched[1][1])
 
     def test_untrusted_runs_and_inactive_lines_dispatch_nothing(self):
         for overrides in (
@@ -219,16 +241,18 @@ class StableChainTests(unittest.TestCase):
 
         github = Line()
         clock = iter(range(0, 1000, 7))
-        publication = chain.run_line(
-            "45",
-            LINES,
-            REPO,
-            github,
-            77,
-            wait_for=wait_for,
-            wait_for_gate=gate,
-            clock=lambda: next(clock),
-        )
+        with mock.patch.object(chain, "require_published_base"):
+            publication = chain.run_line(
+                "45",
+                LINES,
+                REPO,
+                github,
+                77,
+                scheduled=True,
+                wait_for=wait_for,
+                wait_for_gate=gate,
+                clock=lambda: next(clock),
+            )
         self.assertEqual(
             [d[0] for d in github.dispatched],
             ["auto-stable.yml", "installation-validation.yml", "publish.yml"],
@@ -244,21 +268,29 @@ class StableChainTests(unittest.TestCase):
     def test_failed_or_inactive_line_never_validates(self):
         github = FakeGitHub()
         with self.assertRaisesRegex(ValueError, "not an active"):
-            chain.run_line("46", LINES, REPO, github, 77)
+            chain.run_line("46", LINES, REPO, github, 77, scheduled=True)
         self.assertEqual(github.dispatched, [])
-        with self.assertRaisesRegex(ValueError, "ended with failure"):
+        with (
+            mock.patch.object(chain, "require_published_base"),
+            self.assertRaisesRegex(ValueError, "ended with failure"),
+        ):
             chain.run_line(
                 "45",
                 LINES,
                 REPO,
                 github,
                 77,
+                scheduled=True,
                 wait_for=lambda _g, run_id, *, deadline: "failure",
             )
         self.assertEqual([d[0] for d in github.dispatched], ["auto-stable.yml"])
 
     def test_cli_lists_lines_and_runs_one_line(self):
-        env = {"GITHUB_REPOSITORY": REPO, "GITHUB_RUN_ID": "77"}
+        env = {
+            "GITHUB_REPOSITORY": REPO,
+            "GITHUB_RUN_ID": "77",
+            "GITHUB_EVENT_NAME": "schedule",
+        }
         with (
             mock.patch.dict(chain.os.environ, env),
             mock.patch.object(chain, "run_line") as line,
@@ -270,6 +302,12 @@ class StableChainTests(unittest.TestCase):
             self.assertEqual(chain.main(["line", "45"]), 0)
             self.assertEqual(line.call_args.args[0], "45")
             self.assertEqual(line.call_args.args[4], 77)
+            self.assertIs(line.call_args.kwargs["scheduled"], True)
+            with mock.patch.dict(
+                chain.os.environ, {"GITHUB_EVENT_NAME": "workflow_dispatch"}
+            ):
+                self.assertEqual(chain.main(["line", "45"]), 0)
+            self.assertIs(line.call_args.kwargs["scheduled"], False)
             line.side_effect = ValueError("validation run 9 ended with failure")
             self.assertEqual(chain.main(["line", "45"]), 1)
             for argv in (["line"], ["advance", "[1]"], []):
@@ -361,6 +399,49 @@ class DetectTests(unittest.TestCase):
             self.assertTrue(detect.released("45.20261118.1"))
         self.assertFalse(detect.released(""))
 
+    def test_missing_stable_base_stops_before_dispatch_or_registry_inspection(
+        self,
+    ) -> None:
+        testing = {
+            "tag_name": "testing-45.20261118.1",
+            "draft": False,
+            "prerelease": True,
+        }
+        stable_other_line = {
+            "tag_name": "46.20261118.1",
+            "draft": False,
+            "prerelease": False,
+            "author": {"login": "github-actions[bot]"},
+            "url": f"https://api.github.com/repos/{REPO}/releases/1",
+        }
+        command = (
+            f"gh workflow run publish.yml --repo {REPO} --ref release/45 "
+            "-f channel=stable -f artifacts=full"
+        )
+        env = {"GITHUB_REPOSITORY": REPO, "GITHUB_REF": "refs/heads/release/45"}
+        with (
+            mock.patch.object(
+                detect.published_base,
+                "list_releases",
+                return_value=[testing, stable_other_line],
+            ),
+            mock.patch.dict(detect.os.environ, env, clear=True),
+            mock.patch.object(detect, "stable_lines", return_value={"45", "46"}),
+            mock.patch.object(detect.subprocess, "check_output") as live,
+            mock.patch.object(detect, "published") as published,
+            mock.patch.object(detect.sys, "stderr", new_callable=io.StringIO) as errors,
+        ):
+            github = FakeGitHub()
+            with self.assertRaisesRegex(ValueError, re.escape(command)):
+                chain.run_line("45", {"45", "46"}, REPO, github, 77, scheduled=True)
+            self.assertEqual(github.dispatched, [])
+            self.assertEqual(detect.main(), 1)
+            self.assertIn(detect.published_base.FIRST_RELEASE, errors.getvalue())
+            self.assertIn(command, errors.getvalue())
+            live.assert_not_called()
+            published.assert_not_called()
+            detect.require_published_base(REPO, "46")
+
     def test_lines_must_be_numbers(self):
         self.assertEqual(detect.parse_lines('STABLE_LINES="45 46"\n'), {"45", "46"})
         for config in ('STABLE_LINES="45;x"\n', "", 'STABLE_LINES="04"\n'):
@@ -387,6 +468,7 @@ class StableWorkflowTests(unittest.TestCase):
         prepare = auto["jobs"]["prepare"]
         self.assertEqual(prepare["uses"], "./.github/workflows/publish.yml")
         self.assertEqual(prepare["with"]["channel"], "stable")
+        self.assertEqual(prepare["with"]["artifacts"], "image")
         self.assertEqual(
             prepare["with"]["detected_base_digest"],
             "${{ needs.check.outputs.fedora_bootc_digest }}",
@@ -415,7 +497,10 @@ class StableWorkflowTests(unittest.TestCase):
             "${{ fromJSON(needs.lines.outputs.lines) }}",
         )
         self.assertEqual(job["steps"][0]["with"]["persist-credentials"], "false")
-        self.assertIn('stable_chain.py line "$LINE"', job["steps"][1]["run"])
+        self.assertTrue(
+            job["steps"][1]["uses"].startswith("sigstore/cosign-installer@")
+        )
+        self.assertIn('stable_chain.py line "$LINE"', job["steps"][2]["run"])
         self.assertEqual(
             auto["jobs"]["check"]["steps"][1]["env"]["ORCHESTRATOR_RUN_ID"],
             "${{ inputs.orchestrator_run_id }}",
