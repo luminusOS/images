@@ -785,21 +785,39 @@ def identity(index: str, manifest: str, config: str, version: str) -> str:
     return f"--- booted identity\n{json.dumps(record, sort_keys=True)}\n"
 
 
+def signature_claims(
+    entry: dict, index: str, repository: str
+) -> tuple[bytes, str] | None:
+    payload = base64.b64decode(entry["Payload"], validate=True)
+    critical = json.loads(payload).get("critical") or {}
+    if (
+        critical.get("type") == "cosign container image signature"
+        and (critical.get("image") or {}).get("docker-manifest-digest") == index
+        and (critical.get("identity") or {}).get("docker-reference") == repository
+        and isinstance(entry.get("Base64Signature"), str)
+    ):
+        return payload, entry["Base64Signature"]
+    return None
+
+
 def candidate_signature(path: Path, index: str, repository: str) -> tuple[bytes, str]:
     # The guest checks the real candidate signature, so the mirror carries the
     # signature the producer attached to the candidate's index digest.
     for line in path.read_text().splitlines():
-        entry = json.loads(line)
-        payload = base64.b64decode(entry["Payload"], validate=True)
-        critical = json.loads(payload).get("critical") or {}
-        if (
-            critical.get("type") == "cosign container image signature"
-            and (critical.get("image") or {}).get("docker-manifest-digest") == index
-            and (critical.get("identity") or {}).get("docker-reference") == repository
-            and isinstance(entry.get("Base64Signature"), str)
-        ):
-            return payload, entry["Base64Signature"]
+        found = signature_claims(json.loads(line), index, repository)
+        if found is not None:
+            return found
     raise CheckFailed(f"no candidate signature for {repository}@{index}")
+
+
+def served_signature(served: str, index: str, repository: str) -> tuple[bytes, str]:
+    entries = [json.loads(line) for line in served.splitlines() if line.strip()]
+    if len(entries) != 1:
+        raise CheckFailed(f"the mirror serves {len(entries)} candidate signatures")
+    found = signature_claims(entries[0], index, repository)
+    if found is None:
+        raise CheckFailed("the mirror serves a signature for another image")
+    return found
 
 
 def mirror_candidate(
@@ -839,6 +857,23 @@ def mirror_candidate(
     (work / "candidate-payload.json").write_bytes(payload)
     (work / "candidate-signature.b64").write_text(signature)
     reference = f"{CANDIDATE_REPOSITORY}@{index}"
+    # cosign 2.6.5 verify ignores --allow-http-registry and dials the mirror
+    # over HTTPS, so the signature is verified offline and the mirror is then
+    # shown to serve exactly those bytes.
+    host(
+        [
+            "cosign",
+            "verify-blob",
+            "--key",
+            str(CANDIDATE_KEY),
+            "--signature",
+            str(work / "candidate-signature.b64"),
+            "--insecure-ignore-tlog=true",
+            "--offline=true",
+            str(work / "candidate-payload.json"),
+        ],
+        log,
+    )
     host(
         [
             "cosign",
@@ -853,18 +888,11 @@ def mirror_candidate(
         ],
         log,
     )
-    host(
-        [
-            "cosign",
-            "verify",
-            "--allow-http-registry",
-            "--insecure-ignore-tlog=true",
-            "--key",
-            str(CANDIDATE_KEY),
-            reference,
-        ],
-        log,
+    served = host(
+        ["cosign", "download", "signature", "--allow-http-registry", reference], log
     )
+    if served_signature(served, index, repository) != (payload, signature):
+        raise CheckFailed("the mirror serves a different candidate signature")
     return {
         "repository": repository,
         "index": index,
