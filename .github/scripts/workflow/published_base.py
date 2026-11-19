@@ -250,12 +250,24 @@ def image_identity(repository: str, tag: str, version: str) -> dict:
     }
 
 
-def resolve(repository: str, channel: str, fedora: str) -> dict:
-    pipeline = helper("release_pipeline")
-    publish = helper("release_publish")
+def line_digest(repository_ref: str, line: str) -> str:
+    return sha(raw(f"{repository_ref}:{line}"))
+
+
+def line_tag(channel: str, fedora: str) -> str:
+    return ("testing-" if channel == "testing" else "") + fedora
+
+
+def image_repository(repository: str, edition: str) -> str:
     owner = repository.split("/", 1)[0].lower()
     require(re.fullmatch(r"[a-z0-9](?:[a-z0-9-]*[a-z0-9])?", owner), "invalid owner")
-    line = ("testing-" if channel == "testing" else "") + fedora
+    return f"ghcr.io/{owner}/{EDITIONS[edition]}"
+
+
+def release_evidence(repository: str, channel: str, fedora: str):
+    """Return the newest release of the line with its authenticated evidence."""
+    pipeline = helper("release_pipeline")
+    publish = helper("release_publish")
     release = newest_release(list_releases(repository), repository, channel, fedora)
     version = release["tag_name"]
     with tempfile.TemporaryDirectory(prefix="luminus-base-") as temp:
@@ -278,15 +290,20 @@ def resolve(repository: str, channel: str, fedora: str) -> dict:
         and source.get("ref") == pipeline.release_ref(channel, fedora),
         f"release {version} evidence is not from this repository's {channel} line",
     )
-    images = evidence.get("images")
-    require(isinstance(images, dict), "release evidence has no images")
+    require(isinstance(evidence.get("images"), dict), "release evidence has no images")
+    return version, evidence, evidence_sha
+
+
+def resolve(repository: str, channel: str, fedora: str) -> dict:
+    line = line_tag(channel, fedora)
+    version, evidence, evidence_sha = release_evidence(repository, channel, fedora)
     official = hashlib.sha256(OFFICIAL_KEY.read_bytes()).hexdigest()
     result = {}
-    for edition, name in EDITIONS.items():
-        repository_ref = f"ghcr.io/{owner}/{name}"
+    for edition in EDITIONS:
+        repository_ref = image_repository(repository, edition)
         reference = f"{repository_ref}:{line}"
         identity = image_identity(repository_ref, line, version)
-        signed = images.get(edition)
+        signed = evidence["images"].get(edition)
         require(
             isinstance(signed, str) and signed.endswith("@" + identity["index_digest"]),
             f"{reference} is not the {edition} image of release {version}",

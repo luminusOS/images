@@ -263,6 +263,12 @@ class PublishedBaseTests(unittest.TestCase):
                     any(call[:2] == ["gh", "release"] for call in world.calls)
                 )
 
+    def test_newer_draft_is_never_the_base(self):
+        world = World()
+        world.releases.append(world.release("testing-45.20261119.1", draft=True))
+        world.resolve()
+        self.assertEqual(world.downloaded, world.version)
+
     def test_no_release_of_the_line_fails_closed(self):
         for releases in (
             [],

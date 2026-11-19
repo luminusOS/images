@@ -602,6 +602,7 @@ jobs:
       contents: read
     outputs:
       summary_sha256: ${{ steps.approval.outputs.summary_sha256 }}
+      release_kind: ${{ steps.candidate.outputs.release_kind }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
         with: {persist-credentials: false}
@@ -687,13 +688,25 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
       - name: Verify and promote immutable images
+        if: needs.release-evidence.outputs.release_kind == 'full'
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           COSIGN_PRIVATE_KEY: ${{ secrets.COSIGN_PRIVATE_KEY }}
           COSIGN_PASSWORD: ${{ secrets.COSIGN_PASSWORD }}
           CHANNEL: ${{ inputs.channel }}
         run: python3 .github/scripts/workflow/release_publish.py promote --candidate candidate/candidate.json --evidence dist/release-evidence.json --public-key shared/release/candidate.pub --channel "$CHANNEL"
+      # Image releases write only OCI tags and an evidence-only GitHub release,
+      # so this step gets no download-site or SourceForge credentials.
+      - name: Promote images and publish the evidence release
+        if: needs.release-evidence.outputs.release_kind == 'image'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          COSIGN_PRIVATE_KEY: ${{ secrets.COSIGN_PRIVATE_KEY }}
+          COSIGN_PASSWORD: ${{ secrets.COSIGN_PASSWORD }}
+          CHANNEL: ${{ inputs.channel }}
+        run: python3 .github/scripts/workflow/release_publish.py publish-image --candidate candidate/candidate.json --evidence dist/release-evidence.json --public-key shared/release/candidate.pub --channel "$CHANNEL" --directory dist
       - name: Publish verified downloads and release
+        if: needs.release-evidence.outputs.release_kind == 'full'
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           AWS_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
@@ -748,13 +761,25 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
       - name: Verify and promote immutable images
+        if: needs.release-evidence.outputs.release_kind == 'full'
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           COSIGN_PRIVATE_KEY: ${{ secrets.COSIGN_PRIVATE_KEY }}
           COSIGN_PASSWORD: ${{ secrets.COSIGN_PASSWORD }}
           CHANNEL: ${{ inputs.channel }}
         run: python3 .github/scripts/workflow/release_publish.py promote --candidate candidate/candidate.json --evidence dist/release-evidence.json --public-key shared/release/candidate.pub --channel "$CHANNEL"
+      # Image releases write only OCI tags and an evidence-only GitHub release,
+      # so this step gets no download-site or SourceForge credentials.
+      - name: Promote images and publish the evidence release
+        if: needs.release-evidence.outputs.release_kind == 'image'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          COSIGN_PRIVATE_KEY: ${{ secrets.COSIGN_PRIVATE_KEY }}
+          COSIGN_PASSWORD: ${{ secrets.COSIGN_PASSWORD }}
+          CHANNEL: ${{ inputs.channel }}
+        run: python3 .github/scripts/workflow/release_publish.py publish-image --candidate candidate/candidate.json --evidence dist/release-evidence.json --public-key shared/release/candidate.pub --channel "$CHANNEL" --directory dist
       - name: Publish verified downloads and release
+        if: needs.release-evidence.outputs.release_kind == 'full'
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           AWS_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
