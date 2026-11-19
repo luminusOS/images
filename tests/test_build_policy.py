@@ -295,6 +295,15 @@ class MetadataTests(unittest.TestCase):
     def test_rejects_shell_config_and_bad_overrides(self):
         with self.assertRaises(ValueError):
             meta.releases('SUPPORTED_RELEASES="$(touch nope)"\nLATEST_RELEASE=45')
+        for latest in ('"45 44"', "045", "0"):
+            with self.subTest(latest=latest), self.assertRaises(ValueError):
+                meta.releases(f"SUPPORTED_RELEASES=45\nLATEST_RELEASE={latest}\n")
+        self.assertEqual(
+            meta.releases('SUPPORTED_RELEASES="45"\nLATEST_RELEASE="45" # newest\n')[
+                "LATEST_RELEASE"
+            ],
+            "45",
+        )
         with self.assertRaises(ValueError):
             meta.metadata(
                 {**ENV, "SIRIUS_VERSION": "1.2"}, CONFIG, RELEASES, BASE, "20261105"

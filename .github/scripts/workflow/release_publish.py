@@ -753,6 +753,9 @@ def publish_downloads(candidate_path: Path, directory: Path, key: Path) -> None:
         candidate_path, directory / "release-evidence.json", directory, candidate, key
     )
     release_files = release_preflight(candidate, directory, artifacts)
+    latest_release = release_configuration(candidate["fedora_version"])[
+        "LATEST_RELEASE"
+    ]
     username = os.environ["SF_USER"]
     if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_-]{0,63}", username):
         raise ValueError("invalid SourceForge username")
@@ -800,6 +803,8 @@ def publish_downloads(candidate_path: Path, directory: Path, key: Path) -> None:
             version,
             str(directory),
             "--require-evidence",
+            "--latest-release",
+            latest_release,
         ],
         check=True,
     )

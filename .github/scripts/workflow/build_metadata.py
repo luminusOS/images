@@ -27,6 +27,8 @@ def releases(text):
         tokens = shlex.split(value, comments=True)
         if len(tokens) != 1 or not re.fullmatch(r"[0-9 ]+", tokens[0]):
             raise ValueError("invalid releases value")
+        if key == "LATEST_RELEASE" and not re.fullmatch(r"[1-9][0-9]*", tokens[0]):
+            raise ValueError("LATEST_RELEASE must name one release")
         values[key] = tokens[0]
     if not {"SUPPORTED_RELEASES", "LATEST_RELEASE"} <= set(values):
         raise ValueError("incomplete releases configuration")

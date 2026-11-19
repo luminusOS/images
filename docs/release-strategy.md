@@ -143,7 +143,7 @@ Branch workflows read it from `origin/main`.
 ### Rules
 
 - Installed systems follow their version tag (`testing-<N>` or `<N>`), as today.
-- The floating tags `latest` and `testing` move only when publishing `LATEST_RELEASE`, so they never go backwards.
+- The floating tags `latest` and `testing` and the download index `<channel>/latest.json` move only when publishing `LATEST_RELEASE`, so they never go backwards. Publishing an older supported line uploads its downloads and prunes only that line's previous versions.
 - Stable promotion is refused while the Fedora base is still a prerelease (`fedora-bootc:latest` older than N). The first LuminusOS stable ships with Fedora 45 GA.
 
 ## Lifecycle implementation phases

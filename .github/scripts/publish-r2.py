@@ -8,10 +8,12 @@ import signal
 import subprocess
 import sys
 import tempfile
+import time
 from pathlib import Path
 from urllib.parse import quote, urlsplit
 
-VERSION = r"[0-9]+\.[0-9]{8}(?:\.[0-9]+)?"
+DATE_SEQUENCE = r"[0-9]{8}(?:\.[0-9]+)?"
+VERSION = r"[0-9]+\." + DATE_SEQUENCE
 EVIDENCE_NAMES = {
     "sbom.spdx.json",
     "provenance.json",
@@ -25,6 +27,10 @@ PUBLIC_KEY = (
     Path(__file__).resolve().parents[2]
     / "shared/trust/etc/pki/containers/luminusos.pub"
 )
+DOWNLOAD_ATTEMPTS = 3
+# curl: couldn't connect, partial file, timeout, SSL connect, empty reply, recv
+# failure. HTTP errors (22) are answers, not dropped connections.
+TRANSIENT_CURL_CODES = {7, 18, 28, 35, 52, 56}
 
 
 def sha256(path):
@@ -36,7 +42,34 @@ def sha256(path):
 
 
 def download_digest(url):
-    command = ["curl", "--fail", "--silent", "--show-error", url]
+    # A multi-gigabyte read through the CDN can be reset mid-stream. Each
+    # attempt hashes a fresh stream, so a dropped connection never mixes bytes.
+    for attempt in range(1, DOWNLOAD_ATTEMPTS + 1):
+        try:
+            return _download_digest_once(url)
+        except subprocess.CalledProcessError as error:
+            if (
+                error.returncode not in TRANSIENT_CURL_CODES
+                or attempt == DOWNLOAD_ATTEMPTS
+            ):
+                raise
+            time.sleep(10 * attempt)
+
+
+def _download_digest_once(url):
+    command = [
+        "curl",
+        "--fail",
+        "--silent",
+        "--show-error",
+        "--connect-timeout",
+        "30",
+        "--speed-limit",
+        "10240",
+        "--speed-time",
+        "60",
+        url,
+    ]
     process = subprocess.Popen(command, stdout=subprocess.PIPE, start_new_session=True)
     digest = hashlib.sha256()
     try:
@@ -149,12 +182,25 @@ def _required_evidence(dist, artifacts):
     return files
 
 
-def publish(channel, version, dist, bucket, endpoint, require_evidence=False):
+def publish(
+    channel,
+    version,
+    dist,
+    bucket,
+    endpoint,
+    require_evidence=False,
+    *,
+    latest_release,
+):
     version_pattern = ("testing-" if channel == "testing" else "") + VERSION
     if channel not in ("testing", "stable") or not re.fullmatch(
         version_pattern, version, re.ASCII
     ):
         raise ValueError("Invalid channel or version")
+    if not isinstance(latest_release, str) or not re.fullmatch(
+        r"[1-9][0-9]*", latest_release, re.ASCII
+    ):
+        raise ValueError("Invalid latest release")
     if (
         not re.fullmatch(r"[a-z0-9](?:[a-z0-9.-]{1,61}[a-z0-9])?", bucket, re.ASCII)
         or ".." in bucket
@@ -219,6 +265,41 @@ def publish(channel, version, dist, bucket, endpoint, require_evidence=False):
             if name
             not in {path.relative_to(dist).as_posix() for path in artifacts.values()}
         }
+    prefix = "testing-" if channel == "testing" else ""
+    fedora = version.removeprefix(prefix).split(".", 1)[0]
+    # <channel>/latest.json belongs to the newest Fedora line; an older
+    # supported line must not take it over or delete the newer line's files.
+    owns_index = fedora == latest_release
+    line_pattern = re.escape(f"{prefix}{fedora}.") + DATE_SEQUENCE
+    if owns_index:
+        _write_index(manifest, bucket, channel, aws_args)
+    result = subprocess.run(
+        ["aws", "s3", "ls", f"s3://{bucket}/{channel}/", *aws_args],
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+    for line in result.stdout.splitlines():
+        match = re.fullmatch(r"\s*PRE\s+([^/\s]+)/\s*", line)
+        if not match:
+            continue
+        old = match.group(1)
+        if old != version and re.fullmatch(line_pattern, old, re.ASCII):
+            subprocess.run(
+                [
+                    "aws",
+                    "s3",
+                    "rm",
+                    f"s3://{bucket}/{channel}/{old}/",
+                    "--recursive",
+                    *aws_args,
+                    "--only-show-errors",
+                ],
+                check=True,
+            )
+
+
+def _write_index(manifest, bucket, channel, aws_args):
     with tempfile.TemporaryDirectory() as temp:
         path = Path(temp) / "latest.json"
         path.write_text(json.dumps(manifest), encoding="utf-8")
@@ -238,30 +319,6 @@ def publish(channel, version, dist, bucket, endpoint, require_evidence=False):
             ],
             check=True,
         )
-    result = subprocess.run(
-        ["aws", "s3", "ls", f"s3://{bucket}/{channel}/", *aws_args],
-        check=True,
-        capture_output=True,
-        text=True,
-    )
-    for line in result.stdout.splitlines():
-        match = re.fullmatch(r"\s*PRE\s+([^/\s]+)/\s*", line)
-        if not match:
-            continue
-        old = match.group(1)
-        if old != version and re.fullmatch(version_pattern, old, re.ASCII):
-            subprocess.run(
-                [
-                    "aws",
-                    "s3",
-                    "rm",
-                    f"s3://{bucket}/{channel}/{old}/",
-                    "--recursive",
-                    *aws_args,
-                    "--only-show-errors",
-                ],
-                check=True,
-            )
 
 
 def main():
@@ -270,6 +327,7 @@ def main():
     parser.add_argument("version")
     parser.add_argument("dist", type=Path)
     parser.add_argument("--require-evidence", action="store_true")
+    parser.add_argument("--latest-release", required=True)
     args = parser.parse_args()
     try:
         publish(
@@ -279,6 +337,7 @@ def main():
             os.environ["R2_BUCKET"],
             os.environ["R2_ENDPOINT"],
             args.require_evidence,
+            latest_release=args.latest_release,
         )
     except (OSError, ValueError, KeyError, subprocess.CalledProcessError) as error:
         print(f"publish-r2: {error}", file=sys.stderr)
