@@ -41,6 +41,8 @@ Images are delivered through OCI registries; releases require cosign signatures 
 
 See the [release strategy](docs/release-strategy.md) for channels, signature verification, download checksums, and installation acceptance criteria. Shipping a trust policy alone does not establish that an installed system rejects untrusted updates.
 
+Stable candidates come from `release/<Fedora>` branches and wait for the repository owner's approval after installation validation. See the [stable release runbook](docs/release-strategy.md#stable-release-runbook) for release operations and [rollback](docs/release-strategy.md#revert).
+
 ## Documentation
 
 - [Architecture](ARCHITECTURE.md) — image layers, Sirius installation, and storage layout.

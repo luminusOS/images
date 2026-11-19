@@ -2,18 +2,26 @@
 
 This document separates the current release contract from the longer-term branch lifecycle decision recorded on 2026-09-25. Proposed branch automation below is not a claim that it has been deployed.
 
+- [Current state](#current-state)
+- [Candidate approval contract](#candidate-approval-contract)
+- [Stable release runbook](#stable-release-runbook)
+- [Release models: Bluefin](#how-universal-blue-bluefin-does-it) and [Fedora](#how-fedora-itself-does-it)
+- [Options considered](#options-considered)
+- [Longer-term lifecycle decision](#longer-term-lifecycle-decision)
+- [Lifecycle implementation phases](#lifecycle-implementation-phases)
+
 ## Current state
 
-- One branch (`main`); `DEFAULT_FEDORA_VERSION` in `config/versions.env` selects the Fedora release.
-- Channels: `testing` (`testing-45.X`, `testing-45`, `testing`) and planned `stable` (`45.X`, `45`, `latest`). Stable candidates are built on the protected `release/<Fedora>` branch and promoted only after a reviewer approves them in the protected `stable` Environment. Candidate creation and approval are separate operations: a scheduled build must not advance channel tags simply because it built successfully. Stable promotion must preserve the digests of the validated stable candidate.
-- Installed systems follow `UPDATE_CHANNEL` (currently `testing`), through a Fedora-pinned tag (`testing-45`).
+- Testing builds on `main`; stable builds on protected `release/<Fedora>` branches listed in `STABLE_LINES` in `config/releases.env` on `main`.
+- Channels: `testing` (`testing-45.X`, `testing-45`, `testing`) and `stable` (`45.X`, `45`, `latest`). See the [stable release runbook](#stable-release-runbook) for the approval gate and tag rules.
+- Installed systems follow the image's `UPDATE_CHANNEL` through a Fedora-pinned tag (`testing-45` or `45`).
 - The image enables `bootc-fetch-apply-updates.timer` with a drop-in that runs `bootc upgrade` without `--apply`. Updates are staged for the next reboot, not applied through a forced restart. Metered connections are excluded. Runtime behavior still needs confirmation on the installed system.
 
 ## Candidate approval contract
 
 - Validation builds have read-only permissions, require no publishing secrets, and transfer images between jobs as artifacts rather than assuming runner-local storage is shared.
 - Privileged publication is restricted to authorized repository runs. Candidate identities must distinguish retries; subsequent operations use the captured image digest, not a mutable tag lookup.
-- Verify the candidate signature against `shared/trust/etc/pki/containers/luminusos.pub`. Cosign 2 is retained for compatibility with containers/image.
+- Verify the staged candidate against `shared/release/candidate.pub`. Public images and download checksums use the separate official key, `shared/trust/etc/pki/containers/luminusos.pub`. Cosign 2 is retained for compatibility with containers/image.
 - Bind SBOM, vulnerability results, provenance, boot logs, and installer evidence to the source commit, image digests, and artifact hashes. Exceptions to the vulnerability policy require a specific package/finding, justification, and expiry.
 - Generate and sign a checksum manifest for downloadable artifacts. Publish the detached signature alongside the manifest; an unsigned checksum table in release notes is insufficient.
 - Require real Sirius installation and first-boot evidence. qcow2 boot screenshots alone do not satisfy this gate. Verify expected-key updates, unsigned and incorrect-key rejection, update and rollback, live/installed separation, and observed host security state.
@@ -47,18 +55,13 @@ The required receipt names are `sirius_install`, `first_boot`, `live_isolation`,
 
 Dispatch the installation workflow with the successful preparation run's `candidate_run_id`. It verifies the signed candidate, invokes the driver without signing secrets, checks all receipts and log hashes, and only then signs `validation.json`. The uploaded `installation-validation` artifact contains that document, its detached signature, and the receipts/logs. Promotion checks the GitHub run identity as well as the signature and exact candidate binding.
 
-### Preparing and resuming a release
+### Preparing and resuming a testing release
 
 Testing releases run without a person once Auto Testing produces a candidate. `testing-release-chain.yml` runs when Auto Testing succeeds on `main`. If that run uploaded a signed `release-candidate`, it dispatches `installation-validation.yml` for it, waits for that exact run, and on success dispatches `publish.yml` with both run IDs and waits for the publication as well. A failed validation or publication fails the chain run. A chain run also succeeds without publishing when Auto Testing produced no candidate, or when a newer Auto Testing candidate appeared in the meantime; that newer candidate goes through its own chain. A candidate is also skipped when the testing tag for its version already exists. A build numbers its version from the tags present when it starts, so two overlapping same-day builds can share a number; once one is released, promotion would refuse to move that tag to the other's bytes. The chain reads the version from the candidate's scanned image label, checks the exact tag before validation and again before publication, and the next build takes the following number. The run log states which of these happened. A chain that runs out of time fails and names the `publish.yml` command that resumes the release by hand. The chain only decides when to continue: the dispatched workflows verify the candidate, the validation and their runs exactly as they do for a manual release. The manual steps below remain available for reruns and for candidates prepared through `publish.yml`.
-
-Stable candidates are prepared without a person too, but never published without one. Scheduled workflows run only on `main`, so the daily Auto Stable run on `main` orchestrates the lines, one job per line in `STABLE_LINES`, each with its own time budget. A line's job dispatches Auto Stable on `release/<N>`, waits for it and then carries the candidate onward itself, because runs dispatched with the workflow token raise no `workflow_run` event. On the line, Auto Stable compares the live `fedora-bootc:<N>` digest with the base label of `luminusos-workstation:<N>`. It prepares a candidate through `publish.yml`, pinned to the detected digest, when the base changed or the published version has no release. Preparation receives only the candidate signing key. Nothing is prepared while an earlier candidate of the line is still on its way or waiting: an orchestrating Auto Stable run on `main`, or an Auto Stable, validation or `publish.yml` run on the line, other than the run that dispatched this one. A second queued `publish.yml` run would also make GitHub cancel the one already waiting. The line's job then validates the candidate on the same branch and skips it when its version tag exists or a newer Auto Stable candidate of the line appeared. It then resumes `publish.yml` with `channel=stable` and stops once that run waits for the `stable` Environment, so approving or rejecting the deployment stays with its reviewers. The dispatched workflows run from the line's own copy, so a new line needs `auto-stable.yml`, `installation-validation.yml` and `publish.yml` on its `release/<N>` branch before it is added to `STABLE_LINES`; until then that line's job fails at dispatch. The detector reads the public `luminusos-workstation` package without logging in.
 
 1. Dispatch `publish.yml` on `main` with `channel=testing` and leave `candidate_run_id` and `validation_run_id` empty. A successful preparation produces the signed `release-candidate` artifact; it does not move channel tags or publish downloads. Scheduled testing follows the same preparation path.
 2. Run `installation-validation.yml` with that preparation's `candidate_run_id`. Retain the successful validation run ID.
 3. Resume `publish.yml` with the same channel and both `candidate_run_id` and `validation_run_id`. The workflow downloads and verifies the original candidate and matching validation instead of rebuilding them. It stages signed download evidence, preflights all three image references, promotes tags, and publishes downloads.
-4. Stable preparation runs `publish.yml` on `release/<Fedora>` with `channel=stable`. The input gate accepts it only on a numbered release branch, and the build metadata only for a release listed in `STABLE_LINES` on `main`. It builds core, workstation and the installer on that branch, stages them in the private `luminusos-candidates` repository, scans them against the `*-stable-<Fedora>.json` policies and signs a `release-candidate`. Validate it by dispatching `installation-validation.yml` on the same `release/<Fedora>` branch. Like testing, a stable build numbers its version from the stable tags present when it starts, so two candidates prepared before either is released share a number; promotion refuses to point an existing version tag at different bytes, so only the first one released can use that number.
-5. Resume `publish.yml` on the same `release/<Fedora>` branch with `channel=stable` and both run IDs. `release-evidence` verifies the candidate and validation, then writes the approval summary to its job summary and to the `stable-approval-summary` artifact: the image digests, the source commit and run, the Fedora base digest, and for each image the scan decision, the policy file and its SHA-256, every accepted exception with its owner and expiry, and every scan exclusion. It also requires the stable base-risk record (`shared/release/base-trust-risk-stable.json`) to be in force for that base. The `release-stable` job then waits in the `stable` Environment for a required reviewer. Read the summary before approving; rejecting the deployment, or never approving it, leaves every public tag, download and release untouched.
-6. After approval, `release-stable` rebuilds the summary from the same candidate and from the policy and risk records at the current tip of `release/<Fedora>` (the workflow code stays at the dispatched commit), and refuses to continue unless its SHA-256 equals the one shown before approval. A policy changed on the branch, a scan exclusion record changed, or any exception, exclusion or base-risk record that expired while waiting stops it before any write. Only then does it copy the approved digests to `<Fedora>.X`, `<Fedora>` and `latest`, publish the downloads, and create a full GitHub release (testing releases are pre-releases). Before any download or release write it checks the GitHub release and the published `SHA256SUMS` for that version: a rerun after a partial failure completes its own release by uploading only the missing assets, and a release or download set with other contents under the same version is refused before anything moves.
 
 The official publishing credentials (`COSIGN_PRIVATE_KEY`, `COSIGN_PASSWORD`, `R2_ACCESS_KEY_ID`, `R2_SECRET_ACCESS_KEY`, `SF_USER` and `SF_SSH_KEY`) are Environment secrets, not repository secrets. The testing `release` job reads them from `testing-publish`, which deploys only from `main`. `release-stable` reads them from `stable`, which deploys only from `release/<Fedora>` and requires a reviewer. No other job and no other workflow reads them, so a testing run cannot sign or publish stable content, and candidate preparation only ever has the isolated candidate key.
 
@@ -71,6 +74,97 @@ A bypassed execution cannot push candidate images or sign them with the official
 A bypassed execution never produces a signed `release-candidate`. It cannot be used for installation approval, channel promotion, stable preparation, or release publication through this workflow. To obtain a promotable candidate, run a new strict preparation and satisfy all ordinary gates; clearing a checkbox during resumption cannot rehabilitate a bypassed build.
 
 Configure the publication signing key, SourceForge credentials, and R2 credentials before resumption. GitHub release assets contain `SHA256SUMS`, its signature, and `evidence.tar.gz`; ISO and qcow2 downloads are published through R2 and SourceForge. Promotion and download publication span external services and are not an atomic transaction: inspect completed steps before retrying an interrupted release.
+
+## Stable release runbook
+
+[Prepare and validate](#prepare-and-validate) · [Approve](#approve) · [Reject](#reject) · [Resume](#resume) · [Revert](#revert) · [Risk exceptions](#risk-exceptions)
+
+### Prepare and validate
+
+**Scheduled.** Daily [Auto Stable](../.github/workflows/auto-stable.yml#L1-L59) runs on `main` and dispatches `auto-stable.yml` on each active `release/<Fedora>` branch. The [branch detector](../.github/scripts/workflow/stable_detect.py#L58-L106) compares the live `fedora-bootc:<Fedora>` digest with the base label on the public `luminusos-workstation:<Fedora>` tag. It requests preparation when those digests differ or the published image has no matching Git tag, unless a run that could carry a candidate is already in flight. Preparation pins the detected base digest. The [`main` run](../.github/scripts/workflow/stable_chain.py#L91-L145) waits for preparation, dispatches installation validation and then publication on the same branch, and stops when publication reaches the `stable` Environment. The schedule currently builds full releases, including ISO and qcow2; scheduled image-only updates are a later change.
+
+**Manual.** In Actions, choose **Image Publication** (`publish.yml`), select the active `release/<Fedora>` branch, set `channel=stable`, and leave `candidate_run_id` and `validation_run_id` blank. To run detection instead, dispatch **Auto Stable** on `main` to run the chain for all active lines. Dispatching Auto Stable directly on a release branch runs only detection and preparation; leave `orchestrator_run_id` blank and continue manually if it produces a candidate.
+
+1. Find the successful preparation run that uploaded `release-candidate`. Preparation signs core, workstation and installer images in the private `luminusos-candidates` package, scans them under stable policy, and binds the ISO, qcow2 and boot smoke evidence into the signed candidate.
+2. Dispatch **Installation Validation** (`installation-validation.yml`) on the same branch with `candidate_run_id` set to that preparation run ID. Wait for the `installation` job and run to succeed. It installs the candidate ISO with Sirius, boots the installed disk, and checks update, rollback and trust. Keep the validation run ID and its signed `installation-validation` artifact.
+3. [Resume publication](#resume) with those two IDs. The `release-evidence` job verifies their binding and uploads the approval summary. `release-stable` waits for a required reviewer in the `stable` GitHub Environment. Do not dispatch another publication for the same line while one is waiting.
+
+### Approve
+
+Only the repository owner approves stable deployments. Agents must never approve or publish stable, accept risks, or read secret values. Check that the `stable` Environment requires the owner as reviewer, allows only the active release branches and disallows admin bypass. These are GitHub settings, not implied by the workflow YAML.
+
+Before choosing **Review deployments** → **stable** → **Approve and deploy** in the publication run:
+
+1. Read `approval-summary.json` in the `stable-approval-summary` artifact and compare it with the run summary. Confirm the candidate run and source commit, version, Fedora base digest, and exact core, workstation and installer digests.
+2. Check the preparation run's `candidate-scans` against the summary. Confirm each scan decision and policy SHA-256, and review all applied exceptions (classification, scope, owner and UTC expiry), exclusions and the unsigned-base risk record. Do not approve missing, mismatched or expired evidence.
+3. Open the matching **Installation Validation** run. Confirm it ran on the same release line for that candidate, succeeded without skipping the required job, and produced signed `validation.json` and receipts in `installation-validation`. A boot smoke test is not installation validation.
+
+After approval, [`release-stable`](../.github/workflows/publish.yml#L635-L694) re-verifies the candidate evidence and regenerates the summary using the current branch tip's policy and risk records. A changed summary or an expired record blocks publication before public writes. Promotion copies the approved digests without rebuilding: core and workstation get version and Fedora-line tags, installer tags append `-iso`, and only `LATEST_RELEASE` moves `latest` on core and workstation. It publishes downloads to R2 and SourceForge and creates a normal GitHub release using the exact version as its tag (no `v` prefix).
+
+### Reject
+
+In the waiting publication run, choose **Review deployments** → **stable** → **Reject**, and record why. Verify that the promotion and download steps did not run. Rejecting a pending deployment does not undo writes from any earlier attempt.
+
+For a rejection check, record the following results before rejecting and repeat afterward. Set `version` to the candidate's build version from the summary (the value below is an example), and `fedora` to its Fedora line. These checks are read-only against all services.
+
+```bash
+repo=luminusOS/images
+fedora=45
+version=45.20261118.1
+for image in luminusos luminusos-workstation; do
+  for tag in "$version" "$fedora" latest; do
+    printf '%s:%s\n' "$image" "$tag"
+    skopeo inspect --format '{{.Digest}}' "docker://ghcr.io/luminusos/$image:$tag"
+  done
+done
+for tag in "$version-iso" "$fedora-iso"; do
+  printf 'luminusos-workstation:%s\n' "$tag"
+  skopeo inspect --format '{{.Digest}}' \
+    "docker://ghcr.io/luminusos/luminusos-workstation:$tag"
+done
+gh release view "$version" --repo "$repo" --json tagName,isDraft
+curl -sS -o /dev/null -w '%{http_code}\n' \
+  "https://download.luminusos.org/stable/$version/SHA256SUMS"
+```
+
+For a previously unpublished candidate, expect missing version tags, no GitHub release (including a draft when checked with repository access), and HTTP `404` for the checksum manifest. The Fedora-line and `latest` tag digests must be unchanged, or still absent. Authentication, networking and server errors do not prove absence.
+
+```bash
+# Before rejection:
+curl -sS -o stable-latest.before.json -w '%{http_code}\n' \
+  https://download.luminusos.org/stable/latest.json
+# After rejection:
+curl -sS -o stable-latest.after.json -w '%{http_code}\n' \
+  https://download.luminusos.org/stable/latest.json
+```
+
+Expect `404` both times if there was no index. If both responses are `200`, `cmp stable-latest.before.json stable-latest.after.json` should find no difference. If anything has changed, check for another publication or a previous partial attempt before attributing the change to this run.
+
+### Resume
+
+If validation succeeded but publication did not start or needs another attempt, dispatch `publish.yml` on the same release branch with both original run IDs. This fetches and verifies existing evidence rather than rebuilding; the new publication run still needs approval. Substitute the original numeric IDs:
+
+```bash
+gh workflow run publish.yml --repo luminusOS/images --ref release/45 \
+  -f channel=stable -f candidate_run_id=123456789 -f validation_run_id=123456790
+```
+
+- The scheduled chain checks the exact Git tag for the version before validation and again before publication, and skips candidates superseded by a newer successful Auto Stable candidate on that line. Builds choose their sequence number from existing Git tags, so overlapping builds can pick the same version. The publisher separately refuses to overwrite an OCI version tag with a different digest. If another candidate owns the version, prepare and validate a fresh candidate; do not delete tags to make room.
+- After a partial publication, inspect which destinations changed. Retry only the same candidate with its matching validation, and do not resume an older candidate after a newer release has advanced channel tags. Publication is not atomic across GHCR, SourceForge, R2 and GitHub.
+- Before moving image tags, the publisher preflights existing GitHub assets and the public versioned `SHA256SUMS`; conflicts detected by those checks fail before public writes. A retry reuses matching GitHub assets and uploads only missing ones. It does **not** publish an existing draft: the code returns after the existing-release check and any asset upload. If a draft remains after approved publication, the owner must reconcile its assets and other destinations before publishing it manually in GitHub. Do not treat the retry succeeding as proof that a draft became public.
+
+### Revert
+
+On an affected installed system with a previous deployment available, run `sudo bootc rollback` and reboot into that deployment. This is local recovery; it does not change the public stable channel or prevent it offering the bad version again.
+
+There is no automated withdrawal or channel rollback. The maintainer should identify the bad version and digests, warn users in the GitHub release notes not to install or update to that version, and provide the local rollback instructions. A warning or a GitHub-only withdrawal does not remove GHCR tags or mirrored downloads. Prepare a fixed release on the same release line, validate it and publish it as a new version through the normal approval gate. Check that the Fedora-line tags and, where applicable, `latest` and `stable/latest.json` identify the replacement. Do not move or delete tags by hand.
+
+### Risk exceptions
+
+- **Testing:** renew still-needed exceptions before **2026-12-16 00:00 UTC**. See `shared/release/exceptions/*-testing-45.json`, `shared/release/base-trust-risk.json` and `shared/release/flatpak-scan-risk.json`.
+- **Stable:** the current records expire **2026-12-18 00:00 UTC**. See `shared/release/exceptions/*-stable-45.json`, `shared/release/base-trust-risk-stable.json` and `shared/release/flatpak-scan-risk-stable.json`.
+
+Review renewals on the appropriate branch; do not carry testing exceptions into stable or extend records automatically. Update workflow policy hash pins when policy bytes change. If refreshed records change the signed scan evidence or approval summary, do not reuse the old approval; prepare and validate against the new policy.
 
 ## How Universal Blue (Bluefin) does it
 
@@ -118,6 +212,8 @@ Implications for LuminusOS:
 - **Matrix on one branch:** one pipeline builds every supported version. Cheaper, but version-specific differences pile up as conditionals. Rejected in favour of Fedora's own layout.
 
 ## Longer-term lifecycle decision
+
+This is the historical design, not the stable release procedure. The implemented branch names and scheduled workflow are described in the [stable release runbook](#stable-release-runbook).
 
 LuminusOS follows the **Fedora Atomic desktop model** with **one branch per Fedora release**, like Fedora's own Atomic desktop configuration.
 
