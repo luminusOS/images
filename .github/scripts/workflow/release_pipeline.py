@@ -1254,10 +1254,22 @@ def download(repository: str, run_id: int, name: str, output: Path) -> None:
 
 def binding(c: dict) -> dict:
     legacy_candidate(c)
-    return {k: c[k] for k in ("repository", "source_sha", "images", "artifacts")} | {
-        "source_run_id": c["run_id"],
-        "candidate_digest": c["images"]["workstation"].split("@", 1)[1],
-    }
+    return (
+        {k: c[k] for k in ("repository", "source_sha", "images", "artifacts")}
+        | {
+            "source_run_id": c["run_id"],
+            "candidate_digest": c["images"]["workstation"].split("@", 1)[1],
+        }
+        | kind_binding(c)
+    )
+
+
+def kind_binding(c: dict) -> dict:
+    # Full bindings keep their pre-migration bytes so existing receipts and
+    # evidence stay valid; image bindings also pin the published base.
+    if release_kind(c) == "full":
+        return {}
+    return {"release_kind": "image", "published_base": c["published_base"]}
 
 
 def timestamp(value: object) -> dt.datetime:
@@ -1601,6 +1613,7 @@ def main() -> int:
                 },
                 "images": c["images"],
                 "artifacts": c["artifacts"],
+                **kind_binding(c),
                 "gates": {gate: True for gate in (*required, "installation")},
                 "evidence": evidence,
             }

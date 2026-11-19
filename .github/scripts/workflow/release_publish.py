@@ -472,12 +472,8 @@ def prepare_gates(directory: Path) -> None:
 def prepare_results(directory: Path) -> None:
     pipeline = load_helper("release_pipeline")
     candidate = pipeline.candidate(directory / "candidate.json", Path(CANDIDATE_KEY))
-    candidate_digest = candidate["images"]["workstation"].split("@", 1)[1]
-    binding = {
-        key: candidate[key]
-        for key in ("repository", "source_sha", "images", "artifacts")
-    }
-    binding.update(source_run_id=candidate["run_id"], candidate_digest=candidate_digest)
+    binding = pipeline.binding(candidate)
+    candidate_digest = binding["candidate_digest"]
     results = {}
     for gate in pipeline.gates(pipeline.release_kind(candidate)):
         artifact = f"gates/{gate}.json"
@@ -515,9 +511,12 @@ def verify_release(candidate_path: Path, evidence_path: Path, key: Path) -> dict
     kind = pipeline.release_kind(candidate)
     pipeline.verify(evidence_path, key)
     evidence = json.loads(evidence_path.read_text(encoding="utf-8"))
+    kind_fields = pipeline.kind_binding(candidate)
     if (
         evidence.get("images") != candidate["images"]
         or evidence.get("artifacts") != candidate["artifacts"]
+        or {k: evidence[k] for k in ("release_kind", "published_base") if k in evidence}
+        != kind_fields
     ):
         raise ValueError("release evidence does not match candidate")
     workstation_digest = candidate["images"]["workstation"].split("@", 1)[1]
@@ -604,6 +603,7 @@ def promote(
         stage(candidate_path, evidence_path, directory, key)
     verify_staged_distribution(candidate_path, evidence_path, directory, candidate, key)
     release_preflight(candidate, directory, release_artifacts(directory, candidate))
+    pipeline = load_helper("release_pipeline")
     promotion = load_helper("promote_images")
     config = release_configuration(candidate["fedora_version"])
     if candidate["channel"] == "stable":
@@ -657,6 +657,7 @@ def promote(
             candidate["repository"],
             candidate["source_sha"],
             role,
+            release_kind=pipeline.release_kind(candidate),
         )
 
 

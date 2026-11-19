@@ -4,6 +4,7 @@ import importlib.util
 import json
 import sys
 import tempfile
+import types
 import unittest
 from pathlib import Path
 from unittest import mock
@@ -24,6 +25,7 @@ pipeline = load("release_pipeline")
 policy = load("release_policy")
 publish = load("release_publish")
 driver = load("validation_driver")
+promote_images = load("promote_images")
 
 OFFICIAL_SHA = hashlib.sha256(
     (ROOT / "shared/trust/etc/pki/containers/luminusos.pub").read_bytes()
@@ -580,6 +582,233 @@ class GateProfileTests(unittest.TestCase):
                 preflight.assert_not_called()
                 release.assert_not_called()
                 self.assertFalse(directory.exists())
+
+
+class BindingTests(unittest.TestCase):
+    def setUp(self):
+        temp = tempfile.TemporaryDirectory()
+        self.addCleanup(temp.cleanup)
+        self.directory = Path(temp.name)
+        self.fixture = Fixture(self.directory)
+
+    def other_base(self, image):
+        other = copy.deepcopy(image)
+        for base in other["published_base"].values():
+            base["index_digest"] = "sha256:" + "9" * 64
+        pipeline.validate_candidate(other, self.directory)
+        return other
+
+    def test_full_binding_keeps_its_pre_migration_fields(self):
+        full = self.fixture.full()
+        legacy = {k: v for k, v in full.items() if k != "release_kind"}
+        legacy["run_id"] = 44376008169
+        for document in (full, legacy):
+            with self.subTest(kind="release_kind" in document):
+                self.assertEqual(
+                    pipeline.binding(document),
+                    {
+                        "repository": document["repository"],
+                        "source_sha": document["source_sha"],
+                        "images": document["images"],
+                        "artifacts": document["artifacts"],
+                        "source_run_id": document["run_id"],
+                        "candidate_digest": document["images"]["workstation"].split(
+                            "@", 1
+                        )[1],
+                    },
+                )
+
+    def test_image_binding_pins_kind_and_published_base(self):
+        image = self.fixture.image()
+        result = pipeline.binding(image)
+        self.assertEqual(result["release_kind"], "image")
+        self.assertEqual(result["published_base"], image["published_base"])
+        self.assertNotEqual(result, pipeline.binding(self.other_base(image)))
+
+    def test_receipts_and_validation_are_not_shared_across_published_bases(self):
+        image = self.fixture.image()
+        other = self.other_base(image)
+        log = self.directory / "check.log"
+        log.write_text("observed")
+        receipts = ReceiptProfileTests.receipts(
+            types.SimpleNamespace(log=pipeline.digest(log)),
+            image,
+            pipeline.checks("image"),
+        )
+        pipeline.validate_receipts(receipts, self.directory, image)
+        with self.assertRaisesRegex(ValueError, "binding mismatch"):
+            pipeline.validate_receipts(receipts, self.directory, other)
+        validation = self.directory / "validation.json"
+        validation.write_text(
+            json.dumps(
+                {
+                    "version": 1,
+                    "binding": pipeline.binding(image),
+                    "runner_repository": "owner/repo",
+                    "runner_ref": "refs/heads/main",
+                    "runner_sha": "b" * 40,
+                    "validation_run_id": 9,
+                    "receipts": receipts,
+                }
+            )
+        )
+        with mock.patch.object(pipeline, "verify"):
+            pipeline.validate_validation(validation, Path("k"), image)
+            with self.assertRaisesRegex(ValueError, "validation candidate mismatch"):
+                pipeline.validate_validation(validation, Path("k"), other)
+
+    def test_release_evidence_is_not_shared_across_published_bases(self):
+        image = self.fixture.image()
+        other = self.other_base(image)
+        full = self.fixture.full()
+        evidence_path = self.directory / "release-evidence.json"
+
+        def verify(candidate, evidence):
+            evidence_path.write_text(json.dumps(evidence))
+            promotion = mock.Mock()
+            promotion.validate_candidate.return_value = []
+            with (
+                mock.patch.object(pipeline, "candidate", return_value=candidate),
+                mock.patch.object(pipeline, "verify"),
+                mock.patch.object(
+                    publish,
+                    "load_helper",
+                    side_effect=lambda name: (
+                        pipeline if name == "release_pipeline" else promotion
+                    ),
+                ),
+            ):
+                return publish.verify_release(
+                    Path("candidate.json"), evidence_path, Path("k")
+                )
+
+        def assembled(candidate):
+            return {
+                "images": candidate["images"],
+                "artifacts": candidate["artifacts"],
+                **pipeline.kind_binding(candidate),
+            }
+
+        verify(image, assembled(image))
+        for candidate, evidence in (
+            (other, assembled(image)),
+            (image, assembled(other)),
+            (
+                image,
+                {k: v for k, v in assembled(image).items() if k != "published_base"},
+            ),
+            (image, {k: v for k, v in assembled(image).items() if k != "release_kind"}),
+            (full, assembled(full) | {"published_base": image["published_base"]}),
+            (full, assembled(full) | {"release_kind": "image"}),
+        ):
+            with (
+                self.subTest(evidence=sorted(evidence)),
+                self.assertRaisesRegex(ValueError, "does not match candidate"),
+            ):
+                verify(candidate, evidence)
+
+    def test_prepare_results_uses_the_canonical_binding(self):
+        image = self.fixture.image()
+        for gate in pipeline.gates("image"):
+            name = f"gates/{gate}.json"
+            report = {
+                "gate": gate,
+                "conclusion": "success",
+                "repository": image["repository"],
+                "source_sha": image["source_sha"],
+                "run_id": image["run_id"],
+                "images": image["images"],
+                "artifacts": {"gates/quality.json": "0" * 64},
+            }
+            (self.directory / name).write_text(json.dumps(report))
+            image["artifacts"][name] = pipeline.digest(self.directory / name)
+        with (
+            mock.patch.object(pipeline, "candidate", return_value=image),
+            mock.patch.object(pipeline, "checked_file"),
+            mock.patch.object(publish, "load_helper", return_value=pipeline),
+        ):
+            publish.prepare_results(self.directory)
+        results = json.loads((self.directory / "results.json").read_text())
+        self.assertEqual(set(results), set(pipeline.gates("image")))
+        for result in results.values():
+            self.assertEqual(result["binding"], pipeline.binding(image))
+
+
+class PromotionKindTests(unittest.TestCase):
+    def evidence(self, gates, kind=None):
+        document = evidence(gates) | {
+            "repository": "owner/repo",
+            "images": {
+                role: "ghcr.io/owner/luminusos-candidates@sha256:" + "2" * 64
+                for role in ("core", "workstation")
+            },
+        }
+        if kind is not None:
+            document["release_kind"] = kind
+        return document
+
+    def promote(self, document, **kind):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            for item in document["evidence"].values():
+                (root / item["artifact"]).write_bytes(b"gate")
+                item["sha256"] = hashlib.sha256(b"gate").hexdigest()
+            manifest = root / "evidence.json"
+            manifest.write_text(json.dumps(document))
+            signature = root / "evidence.json.sig"
+            signature.write_text("sig")
+            digest = "sha256:" + "2" * 64
+
+            def command(argv, **_):
+                return mock.Mock(stdout=digest if argv[0] == "skopeo" else "")
+
+            with (
+                mock.patch.dict(
+                    promote_images.os.environ, {"GITHUB_REPOSITORY_OWNER": "owner"}
+                ),
+                mock.patch.object(promote_images, "inspect_version", return_value=None),
+                mock.patch.object(
+                    promote_images.subprocess, "run", side_effect=command
+                ) as run,
+            ):
+                try:
+                    promote_images.promote(
+                        f"ghcr.io/owner/luminusos-candidates@{digest}",
+                        digest,
+                        [
+                            "ghcr.io/owner/luminusos:testing-45.20261118.2",
+                            "ghcr.io/owner/luminusos:testing-45",
+                        ],
+                        promote_images.CANDIDATE_KEY,
+                        manifest,
+                        signature,
+                        "owner/repo",
+                        "a" * 40,
+                        "core",
+                        **kind,
+                    )
+                finally:
+                    self.calls = run.call_count
+
+    def test_promotion_checks_the_signed_candidate_kind(self):
+        full = policy.REQUIRED_GATES
+        image = policy.required_gates("image")
+        self.promote(self.evidence(full))
+        self.assertGreater(self.calls, 0)
+        self.promote(self.evidence(image, "image"), release_kind="image")
+        self.assertGreater(self.calls, 0)
+        for document, kind, message in (
+            (self.evidence(full, "image"), "image", "exactly"),
+            (self.evidence(image), "full", "boot"),
+            (self.evidence(image, "image"), "full", "kind"),
+            (self.evidence(full), "image", "kind"),
+        ):
+            with (
+                self.subTest(gates=sorted(document["gates"]), kind=kind),
+                self.assertRaisesRegex(ValueError, message),
+            ):
+                self.promote(document, release_kind=kind)
+            self.assertEqual(self.calls, 0)
 
 
 if __name__ == "__main__":
