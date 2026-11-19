@@ -457,17 +457,21 @@ jobs:
           name: workstation-qcow2
           path: dist
 
-      - name: Enable KVM for the runner user
+      - name: Enable KVM and vhost-vsock for the runner user
         run: |
-          echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' \
-            | sudo tee /etc/udev/rules.d/99-kvm4all.rules
+          printf '%s\n' \
+            'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' \
+            'KERNEL=="vhost-vsock", GROUP="kvm", MODE="0666"' \
+            | sudo tee /etc/udev/rules.d/99-luminus-vm.rules
+          sudo modprobe vhost_vsock
           sudo udevadm control --reload-rules
           sudo udevadm trigger --name-match=kvm
+          sudo udevadm trigger --name-match=vhost-vsock
 
       - name: Install QEMU
         run: |
           sudo apt-get update
-          sudo apt-get install -y qemu-system-x86 ovmf socat tesseract-ocr
+          sudo apt-get install -y qemu-system-x86 ovmf socat openssh-client tesseract-ocr
 
       - name: Boot installed system (qcow2)
         run: python3 .github/scripts/boot-test.py disk dist/luminusos-workstation-*.qcow2 boot-test/disk

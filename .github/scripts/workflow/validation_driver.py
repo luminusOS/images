@@ -672,6 +672,22 @@ def status(
     return argv, result, json.loads(result.stdout)
 
 
+FAILED_UNITS = vmlib.FAILED_UNITS
+
+
+def system_health(guest: Guest, prefix: str) -> tuple[list[str], str]:
+    """Require a fully started system: a degraded boot is a failed check."""
+    argv, state = guest.run(f"{prefix}-state", "systemctl is-system-running --wait")
+    log = transcript(argv, state)
+    if state.returncode != 0 or state.stdout.strip() != "running":
+        _, failed = guest.run(f"{prefix}-failed", FAILED_UNITS)
+        raise CheckFailed(
+            f"system is {state.stdout.strip()!r}, failed units: "
+            f"{failed.stdout.strip() or failed.stderr.strip()!r}"
+        )
+    return argv, log
+
+
 def first_boot(
     guest: Guest,
     receipts: Receipts,
@@ -682,13 +698,8 @@ def first_boot(
 ) -> str:
     started = now()
     log = []
-    argv, state = guest.run("first-boot-state", "systemctl is-system-running --wait")
-    log.append(transcript(argv, state))
-    if state.stdout.strip() != "running":
-        failed = guest.run("first-boot-failed", "systemctl --failed --no-legend")[1]
-        raise CheckFailed(
-            f"installed system is {state.stdout.strip()!r}: {failed.stdout}"
-        )
+    argv, health = system_health(guest, "first-boot")
+    log.append(health)
     status_argv, result, document = status(guest, "first-boot-bootc")
     log.append(transcript(status_argv, result))
     image = booted(document)
@@ -927,6 +938,7 @@ def digest_references(repository: str, index: str, manifest: str) -> tuple[str, 
 
 def base_boot(guest: Guest, receipts: Receipts, base: dict) -> None:
     started = now()
+    _, health = system_health(guest, "base-boot")
     argv, result, document = status(guest, "base-boot-bootc")
     image = booted(document)
     repository = base["reference"].rsplit(":", 1)[0]
@@ -950,7 +962,8 @@ def base_boot(guest: Guest, receipts: Receipts, base: dict) -> None:
         "base_boot",
         argv,
         started,
-        transcript(argv, result)
+        health
+        + transcript(argv, result)
         + identity(
             base["index_digest"], observed, base["config_digest"], image["version"]
         ),
