@@ -148,14 +148,14 @@ Expect `404` both times if there was no index. If both responses are `200`, `cmp
 
 ### Resume
 
-If validation succeeded but publication did not start or needs another attempt, first check that no publication is waiting on the same release branch. Substitute the candidate's branch for `release/45`:
+If validation succeeded but publication did not start or needs another attempt, first check that no `publish.yml` run on the same release branch is active. Substitute the candidate's branch for `release/45`:
 
 ```bash
 gh api --paginate 'repos/luminusOS/images/actions/workflows/publish.yml/runs?branch=release%2F45&per_page=100' \
-  --jq '.workflow_runs[] | select(.status == "waiting") | .html_url'
+  --jq '.workflow_runs[] | select(.status == "queued" or .status == "in_progress" or .status == "waiting" or .status == "pending" or .status == "requested") | .html_url'
 ```
 
-If the check returns a run URL, resolve the waiting deployment before dispatching another run. If the check fails, do not dispatch. Otherwise, dispatch `publish.yml` on the same release branch with both original run IDs. This fetches and verifies existing evidence rather than rebuilding; the new publication run still needs approval. Substitute the original numeric IDs:
+If the check returns a run URL, wait for that run to finish or resolve its waiting deployment before dispatching another run. If the check fails, do not dispatch. Otherwise, dispatch `publish.yml` on the same release branch with both original run IDs. This fetches and verifies existing evidence rather than rebuilding; the new publication run still needs approval. Substitute the original numeric IDs:
 
 ```bash
 gh workflow run publish.yml --repo luminusOS/images --ref release/45 \
@@ -165,7 +165,7 @@ gh workflow run publish.yml --repo luminusOS/images --ref release/45 \
 - The scheduled chain checks the exact Git tag for the version before validation and again before publication, and skips candidates superseded by a newer successful Auto Stable candidate on that line. Builds choose their sequence number from existing Git tags, so overlapping builds can pick the same version. The publisher separately refuses to overwrite an OCI version tag with a different digest. If another candidate owns the version, prepare and validate a fresh candidate; do not delete tags to make room.
 - After a partial publication, inspect which destinations changed. Retry only the same candidate with its matching validation, and do not resume an older candidate after a newer release has advanced channel tags. Publication is not atomic across GHCR, SourceForge, R2 and GitHub.
 - Before moving image tags, the publisher preflights existing GitHub assets and the public versioned `SHA256SUMS`; conflicts detected by those checks fail before public writes.
-- [`gh release create` with assets](https://cli.github.com/manual/gh_release_create) creates a draft, uploads the assets, then publishes it. An interruption before the last step can leave a draft. On retry, the [publisher](../.github/scripts/workflow/release_publish.py#L1064-L1091) reuses matching assets and uploads only missing ones, but does **not** publish the draft. If a draft remains after an approved retry, the owner must reconcile its assets and other destinations before publishing it manually in GitHub.
+- [`gh release create` with assets](https://cli.github.com/manual/gh_release_create) creates a draft, uploads the assets, then publishes it. An ordinary upload error deletes the draft, but a runner cancellation or a killed process before the last step can leave one. On retry, the [publisher](../.github/scripts/workflow/release_publish.py#L1064-L1091) reuses matching assets and uploads only missing ones, but does **not** publish the draft. If a draft remains after an approved retry, the owner must reconcile its assets and other destinations before publishing it manually in GitHub.
 
 ### Revert
 
