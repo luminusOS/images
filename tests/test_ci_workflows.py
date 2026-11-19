@@ -214,6 +214,7 @@ class ReleasePublisherTests(unittest.TestCase):
         promotion = types.SimpleNamespace(
             promote=unittest.mock.Mock(),
             public_repository=lambda role, repository: f"ghcr.io/org/{role}",
+            release_kind=lambda _: "full",
         )
         inspect = subprocess.CompletedProcess([], 0, stdout=digest)
         with (
@@ -269,7 +270,20 @@ class ReleasePublisherTests(unittest.TestCase):
                 (root / name).write_text(json.dumps(report), encoding="utf-8")
                 candidate["artifacts"][name] = release_publish.sha256(root / name)
             pipeline = types.SimpleNamespace(
-                candidate=lambda *_: candidate, checked_file=lambda *_: None
+                candidate=lambda *_: candidate,
+                checked_file=lambda *_: None,
+                release_kind=lambda _: "full",
+                gates=lambda _: release_publish.GATES,
+                binding=lambda c: (
+                    {
+                        key: c[key]
+                        for key in ("repository", "source_sha", "images", "artifacts")
+                    }
+                    | {
+                        "source_run_id": c["run_id"],
+                        "candidate_digest": c["images"]["workstation"].split("@", 1)[1],
+                    }
+                ),
             )
             with (
                 patch.object(release_publish, "load_helper", return_value=pipeline),
@@ -434,6 +448,8 @@ class ReleasePublisherTests(unittest.TestCase):
             candidate=lambda *_: candidate,
             verify=lambda *_: None,
             release_ref=lambda *_: "refs/heads/main",
+            release_kind=lambda _: "full",
+            kind_binding=lambda _: {},
         )
         promotion = types.SimpleNamespace(
             validate_candidate=lambda *_, **__: [],

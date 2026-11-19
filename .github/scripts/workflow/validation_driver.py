@@ -70,10 +70,11 @@ class Receipts:
     def __init__(self, directory: Path, candidate: dict):
         self.directory = directory
         self.binding = release_pipeline.binding(candidate)
+        self.checks = release_pipeline.checks(release_pipeline.release_kind(candidate))
         self.names: list[str] = []
 
     def write(self, name: str, command: list[str], started: str, log: str) -> None:
-        if name not in release_pipeline.CHECKS or name in self.names:
+        if name not in self.checks or name in self.names:
             raise CheckFailed(f"unexpected receipt {name}")
         data = log.encode()
         (self.directory / f"{name}.log").write_bytes(data)
@@ -561,7 +562,7 @@ def _validate(args, candidate, receipts, diagnostics, work) -> None:
         machine.kill()
         if registry is not None:
             terminate(registry)
-    missing = set(release_pipeline.CHECKS) - set(receipts.names)
+    missing = set(receipts.checks) - set(receipts.names)
     if missing:
         raise CheckFailed(f"checks not run: {sorted(missing)}")
 

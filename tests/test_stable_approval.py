@@ -363,6 +363,8 @@ class StableReleaseVerificationTests(unittest.TestCase):
             **evidence,
         }
         pipeline = mock.Mock()
+        pipeline.kind_binding.return_value = {}
+        pipeline.release_kind.return_value = "full"
         pipeline.release_ref.side_effect = lambda channel, fedora: (
             f"refs/heads/release/{fedora}"
         )
@@ -762,7 +764,8 @@ class ChannelDestinationTests(unittest.TestCase):
         }
         seen = {}
 
-        def record(image, digest, destinations, *args):
+        def record(image, digest, destinations, *args, release_kind):
+            self.assertEqual(release_kind, "full")
             role = args[-1]
             seen[role] = promote_images.destination_tags(
                 promote_images.public_repository(role, "owner/repo"),
@@ -771,7 +774,9 @@ class ChannelDestinationTests(unittest.TestCase):
             )
 
         promotion = mock.Mock(
-            promote=record, public_repository=promote_images.public_repository
+            promote=record,
+            public_repository=promote_images.public_repository,
+            release_kind=lambda _: "full",
         )
         with (
             mock.patch.dict(publish.os.environ, {"GITHUB_REPOSITORY_OWNER": "owner"}),
