@@ -100,6 +100,14 @@ def guest_checks(remote) -> list[str]:
     failed = remote("failed-units", vmlib.FAILED_UNITS, 120)
     if failed.returncode != 0 or failed.stdout.strip():
         problems.append(f"failed units: {failed.stdout.strip() or failed.returncode}")
+    if problems:
+        excerpt = vmlib.failed_unit_diagnostics(
+            lambda name, command: remote(name, command, 300),
+            "diagnostics",
+            failed.stdout,
+        )
+        if excerpt:
+            problems.append(f"failed unit journals:\n{excerpt}")
     home = remote("var-home-mount", HOME_MOUNT, 120)
     problems += (
         home_problems(home.stdout)
