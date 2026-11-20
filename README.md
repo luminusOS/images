@@ -39,6 +39,8 @@ For workflow changes, run the [workflow lint checks](CONTRIBUTING.md#workflow-li
 
 Images are delivered through OCI registries; releases require cosign signatures and validation evidence before promotion. Installed systems support atomic updates and rollback.
 
+Scheduled releases update core and workstation through `bootc upgrade`. ISO and qcow2 downloads are updated only by a manual full release. The first stable release of each Fedora line must be a full release.
+
 See the [release strategy](docs/release-strategy.md) for channels, signature verification, download checksums, and installation acceptance criteria. Shipping a trust policy alone does not establish that an installed system rejects untrusted updates.
 
 Stable candidates come from `release/<Fedora>` branches and wait for the repository owner's approval after installation validation. See the [stable release runbook](docs/release-strategy.md#stable-release-runbook) for release operations and [rollback](docs/release-strategy.md#revert).

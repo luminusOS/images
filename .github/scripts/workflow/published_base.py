@@ -36,6 +36,10 @@ DIGEST = re.compile(r"sha256:[0-9a-f]{64}\Z")
 FIRST_RELEASE = "first image release of a line needs a manual full release"
 
 
+class NoPublishedRelease(ValueError):
+    """No published release matches the requested channel and Fedora line."""
+
+
 def require(condition: object, message: str) -> None:
     if not condition:
         raise ValueError(message)
@@ -79,9 +83,10 @@ def newest_release(releases: list, repository: str, channel: str, fedora: str) -
         key = order(tag)
         require(key not in found, f"conflicting releases for {tag}")
         found[key] = release
-    require(
-        found, f"no published {channel} release of Fedora {fedora}: {FIRST_RELEASE}"
-    )
+    if not found:
+        raise NoPublishedRelease(
+            f"no published {channel} release of Fedora {fedora}: {FIRST_RELEASE}"
+        )
     newest = found[max(found)]
     author, url = newest.get("author"), newest.get("url")
     prefix = f"https://api.github.com/repos/{repository}/releases/"
