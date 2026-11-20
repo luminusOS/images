@@ -128,7 +128,7 @@ class ArtifactsInputTests(unittest.TestCase):
         call = PUBLISH["on"]["workflow_call"]["inputs"]["artifacts"]
         self.assertEqual(call, {"type": "string", "default": "auto"})
 
-    def test_scheduled_callers_explicitly_build_full(self) -> None:
+    def test_scheduled_callers_explicitly_build_images_only(self) -> None:
         for channel in ("testing", "stable"):
             with self.subTest(channel=channel):
                 path = ROOT / f".github/workflows/auto-{channel}.yml"
@@ -138,7 +138,7 @@ class ArtifactsInputTests(unittest.TestCase):
                     for job in jobs.values()
                     if job.get("uses") == "./.github/workflows/publish.yml"
                 ]
-                self.assertEqual(callers, ["full"])
+                self.assertEqual(callers, ["image"])
 
     def test_omitted_reusable_artifacts_input_resumes_signed_image(self) -> None:
         inputs = PUBLISH["on"]["workflow_call"]["inputs"]

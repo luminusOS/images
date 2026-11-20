@@ -1,6 +1,7 @@
 import importlib.util
 import json
 import re
+import subprocess
 import sys
 import unittest
 from pathlib import Path
@@ -9,6 +10,7 @@ from unittest import mock
 import yaml
 
 ROOT = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(ROOT / ".github/scripts/workflow"))
 SPEC = importlib.util.spec_from_file_location(
     "release_chain", ROOT / ".github/scripts/workflow/release_chain.py"
 )
@@ -44,6 +46,9 @@ class FakeGitHub:
     def candidate_version(self, run_id):
         return "45.20261117.1"
 
+    def scheduled_candidate_version(self, run: dict, workflow: str) -> str:
+        return self.candidate_version(run["id"])
+
     def tag_exists(self, tag):
         return tag in self.tags
 
@@ -65,6 +70,76 @@ def finished(conclusion, publication="success"):
 
 
 class ChainTests(unittest.TestCase):
+    def test_scheduled_candidate_requires_verified_image_before_any_dispatch(
+        self,
+    ) -> None:
+        producer = run(status="completed", head_sha="a" * 40)
+        signed = {
+            "repository": REPO,
+            "run_id": 100,
+            "source_sha": producer["head_sha"],
+            "channel": "testing",
+            "fedora_version": "45",
+            "build_version": "45.20261117.1",
+            "release_kind": "image",
+        }
+        for overrides, error in (
+            ({}, None),
+            ({"release_kind": "full"}, "must have release_kind=image; got full"),
+            ({"source_sha": "b" * 40}, "candidate run mismatch"),
+            ({"channel": "stable"}, "candidate's release line"),
+            ({"release_kind": "other"}, "invalid release kind"),
+        ):
+            with (
+                self.subTest(overrides=overrides),
+                mock.patch.object(chain.release_pipeline, "download") as download,
+                mock.patch.object(
+                    chain.release_pipeline, "candidate", return_value=signed | overrides
+                ) as verify,
+            ):
+                github = chain.GitHub(REPO)
+                github.artifact_names = mock.Mock(return_value=["release-candidate"])
+                github.tag_exists = mock.Mock(return_value=False)
+                github.candidate_runs_after = mock.Mock(return_value=[])
+                github.dispatch = mock.Mock(side_effect=[200, 201])
+                if error:
+                    with self.assertRaisesRegex(ValueError, error):
+                        chain.advance(
+                            producer, REPO, github, wait_for=finished("success")
+                        )
+                    github.dispatch.assert_not_called()
+                else:
+                    self.assertEqual(
+                        chain.advance(
+                            producer, REPO, github, wait_for=finished("success")
+                        ),
+                        201,
+                    )
+                repo, run_id, name, directory = download.call_args.args
+                self.assertEqual((repo, run_id, name), (REPO, 100, "release-candidate"))
+                verify.assert_called_once_with(
+                    directory / "candidate.json",
+                    chain.release_pipeline.CANDIDATE_PUBLIC_KEY,
+                    legacy_only=True,
+                )
+
+    def test_manual_auto_testing_preserves_the_existing_chain(self) -> None:
+        github = FakeGitHub()
+        github.scheduled_candidate_version = mock.Mock(
+            side_effect=subprocess.CalledProcessError(1, "cosign")
+        )
+        self.assertEqual(
+            chain.advance(
+                run(event="workflow_dispatch"),
+                REPO,
+                github,
+                wait_for=finished("success"),
+            ),
+            201,
+        )
+        github.scheduled_candidate_version.assert_not_called()
+        self.assertNotIn("artifacts", github.dispatched[1][1])
+
     def test_candidate_is_validated_then_published_with_both_run_ids(self):
         github = FakeGitHub()
         waited = []

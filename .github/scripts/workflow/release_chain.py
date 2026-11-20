@@ -16,7 +16,10 @@ import subprocess
 import sys
 import tempfile
 import time
+import zipfile
 from pathlib import Path
+
+import release_pipeline
 
 AUTO_TESTING = ".github/workflows/auto-testing.yml"
 POLL_SECONDS = 60
@@ -100,6 +103,38 @@ class GitHub:
             raise ValueError(f"candidate {run_id} has no valid version label")
         return version
 
+    def scheduled_candidate_version(self, run: dict, workflow: str) -> str:
+        run_id = run["id"]
+        producer = release_pipeline.authorize_run(
+            run | {"path": run["path"].split("@", 1)[0]},
+            self.repository,
+            run_id,
+            {workflow},
+        )
+        with tempfile.TemporaryDirectory() as temp:
+            directory = Path(temp) / "candidate"
+            release_pipeline.download(
+                self.repository, run_id, "release-candidate", directory
+            )
+            signed = release_pipeline.candidate(
+                directory / "candidate.json",
+                release_pipeline.CANDIDATE_PUBLIC_KEY,
+                legacy_only=True,
+            )
+        release_pipeline.require(
+            signed["repository"] == self.repository
+            and signed["run_id"] == run_id
+            and signed["source_sha"] == producer["head_sha"],
+            "candidate run mismatch",
+        )
+        release_pipeline.require_line(signed, producer)
+        kind = release_pipeline.release_kind(signed)
+        if kind != "image":
+            raise ValueError(
+                f"scheduled candidate {run_id} must have release_kind=image; got {kind}"
+            )
+        return signed["build_version"]
+
     def tag_exists(self, tag: str) -> bool:
         refs = self.api(f"git/matching-refs/tags/{tag}")
         return any(item.get("ref") == f"refs/tags/{tag}" for item in refs)
@@ -178,7 +213,11 @@ def advance(
     if "release-candidate" not in github.artifact_names(candidate):
         print(f"run {candidate} produced no release candidate; nothing to do")
         return None
-    version = github.candidate_version(candidate)
+    version = (
+        github.scheduled_candidate_version(run, AUTO_TESTING)
+        if run["event"] == "schedule"
+        else github.candidate_version(candidate)
+    )
     if version_taken(version, github):
         return None
     validation = github.dispatch(
@@ -221,7 +260,13 @@ def main() -> int:
     repository = os.environ["GITHUB_REPOSITORY"]
     try:
         advance(event["workflow_run"], repository, GitHub(repository))
-    except (KeyError, ValueError, subprocess.CalledProcessError) as error:
+    except (
+        KeyError,
+        ValueError,
+        OSError,
+        subprocess.CalledProcessError,
+        zipfile.BadZipFile,
+    ) as error:
         print(f"testing release chain failed: {error}", file=sys.stderr)
         return 1
     return 0

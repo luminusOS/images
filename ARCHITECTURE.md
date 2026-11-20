@@ -562,7 +562,7 @@ The workflow helpers separate three responsibilities:
 
 New editions based on core or workstation should declare their actual parent through explicit job dependencies and verified archive handoffs. Keep edition-specific Containerfiles and build arguments explicit; do not route unrelated edition operations through core reuse or installer helpers. No additional edition definitions or generic dependency engine are needed for the current two editions.
 
-`publish.yml` owns publication, signing and promotion, not the read-only build workflow. Each channel builds its own candidate from its source line, `main` for testing and `release/<fedora>` for stable, and promotion preserves that candidate's validated digests. The quality, automatic testing and installation-validation workflows retain their existing triggers, permissions and evidence gates. `testing-release-chain.yml` connects them for testing: after a successful Auto Testing candidate it dispatches validation, waits for it and dispatches publication, without holding any signing secret.
+`publish.yml` owns publication, signing and promotion, not the read-only build workflow. Each channel builds candidates on its own source line, `main` for testing and `release/<fedora>` for stable. Scheduled releases prepare only core and workstation OCI images for `bootc upgrade`. The chains verify the signed kind before advancing a scheduled candidate. Installation validation upgrades a disposable disk built from the published base, and promotion preserves the validated digests. A manual `publish.yml` dispatch with `artifacts=full` adds the installer, ISO and qcow2; only full publication writes downloads or updates the download index. See the [release strategy](docs/release-strategy.md).
 
 ## Local QEMU Testing
 
@@ -653,7 +653,7 @@ Release metadata lives in `config/releases.env` on `main` and is read by every b
 
 `auto-testing` checks the Fedora base on `main`. Automatic builds are candidates, not evidence that a release has passed installation or update tests. `python3 tools/release-notes.py` compares `rpm -qa` of the previous and new image for release notes.
 
-`auto-stable.yml` checks for Fedora base changes and carries candidates built on protected `release/<fedora>` branches through private staging, stable scans and installation validation. Publication stops at the `stable` GitHub Environment. The repository owner reviews the approval summary before approving; `release-stable` rechecks that summary before copying the validated digests with `skopeo copy --all --preserve-digests`. See the [stable release runbook](docs/release-strategy.md#stable-release-runbook) for approval, rejection, resumption and recovery.
+`auto-stable.yml` checks for Fedora base changes and carries image candidates built on protected `release/<fedora>` branches through private staging, stable scans and installation validation. Lines without a published stable release fail before preparation and need a manual full release. Publication stops at the `stable` GitHub Environment. The repository owner reviews the approval summary before approving; `release-stable` rechecks that summary before copying the validated digests with `skopeo copy --all --preserve-digests`. See the [stable release runbook](docs/release-strategy.md#stable-release-runbook) for approval, rejection, resumption and recovery.
 
 ### Image signatures
 
