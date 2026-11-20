@@ -13,21 +13,17 @@ nothing here can publish stable.
 
 from __future__ import annotations
 
-import importlib.util
 import json
 import os
 import re
 import subprocess
 import sys
 import time
+import zipfile
 from pathlib import Path
 
-HERE = Path(__file__).resolve().parent
-SPEC = importlib.util.spec_from_file_location(
-    "release_chain_for_stable", HERE / "release_chain.py"
-)
-release_chain = importlib.util.module_from_spec(SPEC)
-SPEC.loader.exec_module(release_chain)
+import release_chain
+from stable_detect import require_published_base
 
 AUTO_STABLE = ".github/workflows/auto-stable.yml"
 LINE = re.compile(r"release/([1-9][0-9]*)")
@@ -94,6 +90,7 @@ def advance(
     lines: set[str],
     github,
     *,
+    scheduled: bool,
     wait_for=release_chain.wait,
     wait_for_gate=wait_for_approval,
     clock=time.monotonic,
@@ -109,7 +106,11 @@ def advance(
     if "release-candidate" not in github.artifact_names(candidate):
         print(f"run {candidate} produced no release candidate; nothing to do")
         return None
-    version = github.candidate_version(candidate)
+    version = (
+        github.scheduled_candidate_version(run, AUTO_STABLE)
+        if scheduled
+        else github.candidate_version(candidate)
+    )
     if version_taken(version, github):
         return None
     validation = github.dispatch(
@@ -152,6 +153,7 @@ def run_line(
     github,
     orchestrator: int,
     *,
+    scheduled: bool,
     wait_for=release_chain.wait,
     wait_for_gate=wait_for_approval,
     clock=time.monotonic,
@@ -163,6 +165,7 @@ def run_line(
     """
     if line not in lines:
         raise ValueError(f"release/{line} is not an active stable line")
+    require_published_base(repository, line)
     deadline = clock() + release_chain.BUDGET_SECONDS
     run_id = github.dispatch(
         "auto-stable.yml", {"orchestrator_run_id": str(orchestrator)}, f"release/{line}"
@@ -176,6 +179,7 @@ def run_line(
         repository,
         lines,
         github,
+        scheduled=scheduled,
         wait_for=wait_for,
         wait_for_gate=wait_for_gate,
         clock=clock,
@@ -198,8 +202,16 @@ def main(argv: list[str]) -> int:
             repository,
             release_chain.GitHub(repository),
             int(os.environ["GITHUB_RUN_ID"]),
+            # The child is always workflow_dispatch, even for a scheduled parent.
+            scheduled=os.environ["GITHUB_EVENT_NAME"] == "schedule",
         )
-    except (KeyError, ValueError, OSError, subprocess.CalledProcessError) as error:
+    except (
+        KeyError,
+        ValueError,
+        OSError,
+        subprocess.CalledProcessError,
+        zipfile.BadZipFile,
+    ) as error:
         print(f"stable release chain failed: {error}", file=sys.stderr)
         return 1
     return 0

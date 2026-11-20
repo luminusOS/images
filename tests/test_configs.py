@@ -5,6 +5,8 @@ import tomllib
 import unittest
 from pathlib import Path
 
+import yaml
+
 ROOT = Path(__file__).resolve().parents[1]
 SYSTEM = ROOT / "editions/workstation/files/system"
 INSTALLER = ROOT / "editions/workstation/files/installer"
@@ -114,10 +116,32 @@ class ConfigurationTests(unittest.TestCase):
             ("30-esp.conf", "vfat"),
         ):
             self.assertIn(f"Format={fs}", text(repart / name).splitlines())
-        disk = text(SYSTEM / "usr/lib/image-builder/bootc/disk.yaml")
-        self.assertRegex(disk, r'type: "ext4"[\s\S]*?mountpoint: "/boot"')
-        for path in ("/", "/home", "/var"):
-            self.assertIn(f'mountpoint: "{path}"', disk)
+        disk_text = text(SYSTEM / "usr/lib/image-builder/bootc/disk.yaml")
+        self.assertRegex(disk_text, r'type: "ext4"[\s\S]*?mountpoint: "/boot"')
+        disk = yaml.safe_load(disk_text)
+        self.assertEqual(disk["mount_configuration"], "units")
+        partitions = disk["partition_table"]["partitions"]
+        btrfs = [p for p in partitions if p.get("payload_type") == "btrfs"]
+        self.assertEqual(len(btrfs), 1)
+        # A separate var subvolume starts empty and unlabeled and hides the
+        # /var bootc prepared; /home is a symlink to var/home. Both live in
+        # the root subvolume's ostree stateroot instead.
+        self.assertEqual(
+            btrfs[0]["payload"]["subvolumes"], [{"name": "root", "mountpoint": "/"}]
+        )
+        mountpoints = [
+            p["payload"].get("mountpoint")
+            for p in partitions
+            if p.get("payload_type") == "filesystem"
+        ]
+        self.assertEqual(sorted(mountpoints), ["/boot", "/boot/efi"])
+        for path in ("/var", "/var/home", "/home"):
+            self.assertNotRegex(
+                disk_text,
+                re.compile(
+                    rf'^\s*mountpoint:\s*"?{re.escape(path)}/?"?\s*$', re.MULTILINE
+                ),
+            )
         flatpaks = text(ROOT / "shared/flatpaks").splitlines()
         self.assertEqual(flatpaks, sorted(set(flatpaks)))
         for path in ("etc/sirius", "var/lib/AccountsService/users/liveuser"):

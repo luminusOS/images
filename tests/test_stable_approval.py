@@ -363,6 +363,8 @@ class StableReleaseVerificationTests(unittest.TestCase):
             **evidence,
         }
         pipeline = mock.Mock()
+        pipeline.kind_binding.return_value = {}
+        pipeline.release_kind.return_value = "full"
         pipeline.release_ref.side_effect = lambda channel, fedora: (
             f"refs/heads/release/{fedora}"
         )
@@ -429,7 +431,10 @@ class GitHubReleaseTests(unittest.TestCase):
                         1, "gh", stderr="release not found"
                     )
                 view = {
+                    "isDraft": release.get("draft", False),
                     "isPrerelease": release["prerelease"],
+                    "targetCommitish": release.get("target", "a" * 40),
+                    "name": release.get("name", "LuminusOS 45"),
                     "assets": [{"name": name} for name in release["assets"]],
                 }
                 return mock.Mock(stdout=json.dumps(view))
@@ -493,6 +498,79 @@ class GitHubReleaseTests(unittest.TestCase):
             )
         )
 
+    def writes(self, calls):
+        return [
+            c[2]
+            for c in calls
+            if c[:3]
+            in (
+                ["gh", "release", "create"],
+                ["gh", "release", "upload"],
+                ["gh", "release", "edit"],
+            )
+        ]
+
+    def test_interrupted_create_leaves_a_draft_that_a_retry_publishes(self):
+        for channel in ("stable", "testing"):
+            with self.subTest(channel=channel):
+                draft = {
+                    "draft": True,
+                    "prerelease": channel == "testing",
+                    "assets": {"SHA256SUMS": b"SHA256SUMS"},
+                }
+                calls = self.release(channel, draft)
+                self.assertEqual(self.writes(calls), ["upload", "edit"])
+                edit = next(c for c in calls if c[:3] == ["gh", "release", "edit"])
+                self.assertEqual(
+                    edit,
+                    [
+                        "gh",
+                        "release",
+                        "edit",
+                        "45.20261120.1",
+                        "--draft=false",
+                        f"--prerelease={str(channel == 'testing').lower()}",
+                    ],
+                )
+
+    def test_complete_draft_is_published_and_published_release_left_alone(self):
+        assets = {
+            "SHA256SUMS": b"SHA256SUMS",
+            "SHA256SUMS.sig": b"any valid signature",
+            "evidence.tar.gz": self.bundle,
+        }
+        calls = self.release(
+            "stable", {"draft": True, "prerelease": False, "assets": assets}
+        )
+        self.assertEqual(self.writes(calls), ["edit"])
+        calls = self.release(
+            "stable", {"draft": False, "prerelease": False, "assets": assets}
+        )
+        self.assertEqual(self.writes(calls), [])
+
+    def test_draft_with_other_contents_or_identity_is_refused_before_writes(self):
+        for draft in (
+            {"draft": True, "prerelease": False, "assets": {"SHA256SUMS": b"other"}},
+            {"draft": True, "prerelease": True, "assets": {}},
+            {"draft": True, "prerelease": False, "assets": {"x.iso": b"x"}},
+            {"draft": True, "prerelease": False, "assets": {}, "target": "b" * 40},
+            {"draft": True, "prerelease": False, "assets": {}, "name": "Other"},
+            {"draft": None, "prerelease": False, "assets": {}},
+            {"draft": False, "prerelease": False, "assets": {}, "target": "b" * 40},
+        ):
+            calls = []
+            with (
+                self.subTest(draft=draft),
+                mock.patch.object(
+                    publish.subprocess, "run", side_effect=self.gh(draft, calls)
+                ),
+                self.assertRaisesRegex(ValueError, "already exists"),
+            ):
+                publish.github_release(
+                    self.files, "45.20261120.1", "a" * 40, "LuminusOS 45", "stable"
+                )
+            self.assertEqual(self.writes(calls), [])
+
     def test_retry_accepts_new_valid_signatures_over_the_same_content(self):
         def bundle(signature, content="{}"):
             source = self.directory / f"bundle-{signature}"
@@ -521,7 +599,14 @@ class GitHubReleaseTests(unittest.TestCase):
             mock.patch.object(publish, "verify_blob") as verify,
         ):
             self.assertEqual(
-                publish.check_release(self.files, "45.20261120.1", "stable"), []
+                publish.check_release(
+                    self.files,
+                    "45.20261120.1",
+                    "stable",
+                    source_sha="a" * 40,
+                    title="LuminusOS 45",
+                ),
+                [],
             )
         self.assertEqual(verify.call_count, 2)
         changed = published | {
@@ -536,7 +621,13 @@ class GitHubReleaseTests(unittest.TestCase):
             ),
             self.assertRaises(ValueError),
         ):
-            publish.check_release(self.files, "45.20261120.1", "stable")
+            publish.check_release(
+                self.files,
+                "45.20261120.1",
+                "stable",
+                source_sha="a" * 40,
+                title="LuminusOS 45",
+            )
         self.assertEqual(
             publish.bundle_content(bundle("a")), publish.bundle_content(bundle("b"))
         )
@@ -569,7 +660,13 @@ class GitHubReleaseTests(unittest.TestCase):
                 ),
                 mock.patch.object(publish, "verify_blob", side_effect=verify) as blob,
             ):
-                publish.check_release(self.files, "45.20261120.1", "stable")
+                publish.check_release(
+                    self.files,
+                    "45.20261120.1",
+                    "stable",
+                    source_sha="a" * 40,
+                    title="LuminusOS 45",
+                )
             return blob
 
         blob = check(bundle(both))
@@ -630,7 +727,13 @@ class GitHubReleaseTests(unittest.TestCase):
                 ),
                 self.assertRaisesRegex(ValueError, "already exists"),
             ):
-                publish.check_release(self.files, "45.20261120.1", "stable")
+                publish.check_release(
+                    self.files,
+                    "45.20261120.1",
+                    "stable",
+                    source_sha="a" * 40,
+                    title="LuminusOS 45",
+                )
             self.assertFalse(
                 any(
                     c[:3] in (["gh", "release", "create"], ["gh", "release", "upload"])
@@ -699,6 +802,7 @@ class GitHubReleaseTests(unittest.TestCase):
             "channel": "stable",
             "build_version": "45.20261120.1",
             "fedora_version": "45",
+            "source_sha": "a" * 40,
             "images": {},
         }
         promotion = mock.Mock()
@@ -762,7 +866,8 @@ class ChannelDestinationTests(unittest.TestCase):
         }
         seen = {}
 
-        def record(image, digest, destinations, *args):
+        def record(image, digest, destinations, *args, release_kind):
+            self.assertEqual(release_kind, "full")
             role = args[-1]
             seen[role] = promote_images.destination_tags(
                 promote_images.public_repository(role, "owner/repo"),
@@ -771,7 +876,9 @@ class ChannelDestinationTests(unittest.TestCase):
             )
 
         promotion = mock.Mock(
-            promote=record, public_repository=promote_images.public_repository
+            promote=record,
+            public_repository=promote_images.public_repository,
+            release_kind=lambda _: "full",
         )
         with (
             mock.patch.dict(publish.os.environ, {"GITHUB_REPOSITORY_OWNER": "owner"}),

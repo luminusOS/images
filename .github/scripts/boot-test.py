@@ -8,12 +8,30 @@ import signal
 import socket
 import subprocess
 import sys
+import tempfile
 import time
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT / "tools"))
+sys.path.insert(0, str(ROOT / ".github/scripts/workflow"))
+import install_feasibility as vmlib
 from qemu_common import resolve_ovmf
+
+HEALTH = "systemctl is-system-running --wait"
+FINDMNT = "findmnt -J -o TARGET,SOURCE,FSTYPE,OPTIONS --target"
+STORAGE = (("sysroot", "/sysroot"), ("var", "/var"), ("var-home", "/var/home"))
+HOME_LINK = "readlink -f /home"
+RANDOM_SEED = "systemctl show -p Result -p ActiveState systemd-random-seed.service"
+LABELS = "ls -ldZ /var /var/home /var/lib/systemd"
+RELABEL = "restorecon -n -v /var /var/home /var/lib/systemd"
+# findmnt shows a bind mount from a Btrfs subvolume as device[path]. /var is
+# the ostree stateroot directory inside the root subvolume; the stateroot name
+# and the root subvolume path are not pinned. The pre-fix layouts mounted
+# separate var or home subvolumes, which show as device[/var] or device[/home].
+SOURCE = re.compile(r"(?P<device>/dev/[^\[\]\s]+)(?:\[(?P<path>/[^\[\]]*)\])?\Z")
+STATEROOT_VAR = re.compile(r"(?:/[^\[\]]*)?/ostree/deploy/[^/\[\]]+/var\Z")
+OLD_SUBVOLUMES = ("/var", "/home")
 
 
 def count_colors(path):
@@ -60,6 +78,179 @@ def screendump(socket_path, image_path):
                     break
 
 
+def mount_of(result) -> tuple[dict | None, str | None]:
+    if result.returncode != 0:
+        return None, f"findmnt exited {result.returncode}"
+    try:
+        mounts = json.loads(result.stdout).get("filesystems") or []
+    except (json.JSONDecodeError, AttributeError):
+        return None, "findmnt did not return JSON"
+    if len(mounts) != 1:
+        return None, f"findmnt returned {len(mounts)} filesystems"
+    return mounts[0], None
+
+
+def storage_problems(results: dict) -> list[str]:
+    """Check /var and /var/home come from the root filesystem, not old subvolumes.
+
+    results maps "sysroot", "var" and "var-home" to findmnt --target results.
+    """
+    problems = []
+    mounts = {}
+    for name, path in STORAGE:
+        mount, error = mount_of(results[name])
+        if error:
+            problems.append(f"{path}: {error}")
+            continue
+        source = SOURCE.fullmatch(str(mount.get("source", "")))
+        if mount.get("fstype") != "btrfs" or source is None:
+            problems.append(
+                f"{path} is on {mount.get('source')!r} ({mount.get('fstype')!r}),"
+                " want the root Btrfs filesystem"
+            )
+            continue
+        mounts[name] = (mount, source)
+    if problems:
+        return problems
+    sysroot, sysroot_source = mounts["sysroot"]
+    var, var_source = mounts["var"]
+    home, home_source = mounts["var-home"]
+    for path, source in (("/var", var_source), ("/var/home", home_source)):
+        if source["path"] in OLD_SUBVOLUMES:
+            problems.append(
+                f"{path} is the separate {source['path'][1:]} subvolume"
+                f" {source.group(0)!r}"
+            )
+    if problems:
+        return problems
+    if sysroot.get("target") != "/sysroot":
+        problems.append(f"/sysroot is not mounted: {sysroot.get('target')!r}")
+    if var.get("target") != "/var":
+        problems.append(f"/var is not a mount point: {var.get('target')!r}")
+    if var_source["device"] != sysroot_source["device"]:
+        problems.append(
+            f"/var is on {var_source['device']}, the root filesystem is"
+            f" {sysroot_source['device']}"
+        )
+    prefix = sysroot_source["path"] or ""
+    path = var_source["path"] or ""
+    if not (
+        path.startswith(prefix + "/")
+        and STATEROOT_VAR.fullmatch(path.removeprefix(prefix))
+    ):
+        problems.append(f"/var is {var_source.group(0)!r}, not the ostree stateroot")
+    if (home.get("target"), home_source.group(0)) != ("/var", var_source.group(0)):
+        problems.append(
+            f"/var/home is a separate mount {home.get('target')!r}"
+            f" from {home_source.group(0)!r}"
+        )
+    return problems
+
+
+def unit_problems(result) -> list[str]:
+    properties = dict(
+        line.split("=", 1) for line in result.stdout.splitlines() if "=" in line
+    )
+    if result.returncode != 0 or (
+        properties.get("Result"),
+        properties.get("ActiveState"),
+    ) != ("success", "active"):
+        return [
+            (
+                "systemd-random-seed.service did not succeed in this boot:"
+                f" {result.stdout.strip() or result.returncode!r}"
+            )
+        ]
+    return []
+
+
+def guest_checks(remote) -> list[str]:
+    """Return why the booted disk is unhealthy; an empty list means it passed.
+
+    remote(name, command, timeout) runs a command in the guest and returns a
+    CompletedProcess.
+    """
+    problems = []
+    state = remote("is-system-running", HEALTH, 900)
+    if state.returncode != 0 or state.stdout.strip() != "running":
+        problems.append(f"system is {state.stdout.strip()!r} ({state.returncode})")
+    failed = remote("failed-units", vmlib.FAILED_UNITS, 120)
+    if failed.returncode != 0 or failed.stdout.strip():
+        problems.append(f"failed units: {failed.stdout.strip() or failed.returncode}")
+    if problems:
+        excerpt = vmlib.failed_unit_diagnostics(
+            lambda name, command: remote(name, command, 300),
+            "diagnostics",
+            failed.stdout,
+        )
+        if excerpt:
+            problems.append(f"failed unit journals:\n{excerpt}")
+    problems += storage_problems(
+        {
+            name: remote(f"{name}-mount", f"{FINDMNT} {path}", 120)
+            for name, path in STORAGE
+        }
+    )
+    link = remote("home-link", HOME_LINK, 120)
+    if link.returncode != 0 or link.stdout.strip() != "/var/home":
+        problems.append(f"/home resolves to {link.stdout.strip()!r}")
+    problems += unit_problems(remote("random-seed", RANDOM_SEED, 120))
+    labels = remote("labels", LABELS, 120)
+    if (
+        labels.returncode != 0
+        or labels.stderr.strip()
+        or len(labels.stdout.splitlines()) != 3
+        or "unlabeled_t" in labels.stdout
+    ):
+        problems.append(
+            "cannot confirm SELinux labels:"
+            f" {(labels.stdout + labels.stderr).strip() or labels.returncode!r}"
+        )
+    relabel = remote("restorecon", RELABEL, 300)
+    if relabel.returncode != 0 or relabel.stdout.strip() or relabel.stderr.strip():
+        problems.append(
+            "SELinux labels differ from policy:"
+            f" {(relabel.stdout + relabel.stderr).strip() or relabel.returncode!r}"
+        )
+    return problems
+
+
+def check_guest(vm) -> None:
+    vmlib.wait_for_ssh(vm, timeout=900)
+
+    def remote(name, command, timeout):
+        return vmlib.remote(vm, name, command, timeout=timeout)
+
+    problems = guest_checks(remote)
+    (vm.output / "guest-checks.json").write_text(
+        json.dumps({"passed": not problems, "problems": problems}, indent=1) + "\n"
+    )
+    if problems:
+        raise RuntimeError("installed disk is unhealthy: " + "; ".join(problems))
+    print(
+        "Installed disk: running, no failed units, random seed saved,"
+        " /var from the root subvolume, labels match policy"
+    )
+
+
+def disk_vm(outdir: Path, keys: Path, image: Path, code: Path, variables: Path):
+    if not os.access("/dev/vhost-vsock", os.R_OK | os.W_OK):
+        raise RuntimeError("vhost-vsock is not usable by the runner user")
+    key = keys / "ssh-key"
+    subprocess.run(
+        ["ssh-keygen", "-q", "-t", "ed25519", "-N", "", "-f", str(key)], check=True
+    )
+    return vmlib.VM(
+        cid=3 + os.getpid() % 10000,
+        disk=image,
+        key=key,
+        public_key=key.with_suffix(".pub").read_text().strip(),
+        output=outdir,
+        code=code,
+        variables=variables,
+    )
+
+
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("mode", choices=("iso", "disk"))
@@ -70,6 +261,7 @@ def main():
         parser.error(f"image does not exist: {args.image}")
     args.outdir.mkdir(parents=True, exist_ok=True)
     proc = None
+    keys = None
     old_term = signal.getsignal(signal.SIGTERM)
     signal.signal(signal.SIGTERM, lambda *_: (_ for _ in ()).throw(KeyboardInterrupt()))
     try:
@@ -103,11 +295,19 @@ def main():
             if os.access("/dev/kvm", os.W_OK)
             else ["-cpu", "max"]
         )
-        command += (
-            ["-cdrom", str(args.image), "-boot", "d"]
-            if args.mode == "iso"
-            else ["-snapshot", "-drive", f"file={args.image},format=qcow2,if=virtio"]
-        )
+        vm = None
+        if args.mode == "iso":
+            command += ["-cdrom", str(args.image), "-boot", "d"]
+        else:
+            # The key lives outside the uploaded evidence directory.
+            keys = Path(tempfile.mkdtemp(prefix="boot-test-key-"))
+            vm = disk_vm(args.outdir, keys, args.image, code, variables)
+            command += [
+                "-snapshot",
+                "-drive",
+                f"file={args.image},format=qcow2,if=virtio",
+            ]
+            command += vmlib.vsock_ssh_argv(vm)
         proc = subprocess.Popen(command, start_new_session=True)
         shot = None
         final_screenshot_ok = False
@@ -143,8 +343,15 @@ def main():
                     )
                     else "OCR: expected wording not found (advisory only)"
                 )
+        if vm is not None:
+            check_guest(vm)
         return int(colors < 64)
-    except (OSError, ValueError, RuntimeError) as error:
+    except (
+        OSError,
+        ValueError,
+        RuntimeError,
+        subprocess.SubprocessError,
+    ) as error:
         print(f"boot-test: {error}", file=sys.stderr)
         return 1
     except KeyboardInterrupt:
@@ -159,6 +366,8 @@ def main():
             except subprocess.TimeoutExpired:
                 os.killpg(proc.pid, signal.SIGKILL)
                 proc.wait()
+        if keys is not None:
+            shutil.rmtree(keys, ignore_errors=True)
         signal.signal(signal.SIGTERM, old_term)
 
 

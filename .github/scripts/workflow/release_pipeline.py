@@ -20,7 +20,25 @@ from pathlib import Path, PurePosixPath
 CANDIDATE_PUBLIC_KEY = (
     Path(__file__).resolve().parents[3] / "shared/release/candidate.pub"
 )
+OFFICIAL_PUBLIC_KEY = (
+    Path(__file__).resolve().parents[3]
+    / "shared/trust/etc/pki/containers/luminusos.pub"
+)
 
+RELEASE_KINDS = ("full", "image")
+# Candidates signed before release_kind existed; only these may omit the field,
+# and they are always full releases.
+PRE_MIGRATION_RUNS = frozenset({44376008169, 44361788031})
+PUBLIC_IMAGES = {"core": "luminusos", "workstation": "luminusos-workstation"}
+PUBLISHED_BASE_FIELDS = {
+    "reference",
+    "index_digest",
+    "manifest_digest",
+    "config_digest",
+    "version",
+    "release_evidence_sha256",
+    "official_key_sha256",
+}
 CHECKS = (
     "sirius_install",
     "first_boot",
@@ -35,7 +53,28 @@ CHECKS = (
     "no_tcp_ssh",
     "secure_boot",
 )
+IMAGE_CHECKS = (
+    "base_boot",
+    "upgrade_from_published",
+    *(name for name in CHECKS if name not in ("sirius_install", "live_isolation")),
+)
+LEGACY_FIELDS = frozenset(
+    {
+        "version",
+        "repository",
+        "source_sha",
+        "run_id",
+        "channel",
+        "version_tag",
+        "build_version",
+        "fedora_version",
+        "fedora_bootc_digest",
+        "images",
+        "artifacts",
+    }
+)
 GATES = ("quality", "boot", "signature", "sbom", "vulnerability")
+IMAGE_GATES = tuple(gate for gate in GATES if gate != "boot")
 SHA = re.compile(r"[0-9a-f]{64}\Z")
 COMMIT = re.compile(r"[0-9a-f]{40}\Z")
 DIGEST = re.compile(r"sha256:[0-9a-f]{64}\Z")
@@ -112,6 +151,30 @@ def check_phase(env) -> None:
             line.group(1) in main_stable_lines(),
             "release line is not an active stable line on main",
         )
+
+
+def requested_kind(env) -> str:
+    """Return the kind a new candidate is built as, or "" when resuming.
+
+    "auto" builds new candidates as image releases and takes a resumed
+    candidate's kind from its signature; an explicit kind on a resume is
+    only checked against the signed one by check_kind.
+    """
+    requested = env.get("ARTIFACTS", "")
+    require(requested in ("auto", *RELEASE_KINDS), "invalid artifacts input")
+    if env.get("CANDIDATE", ""):
+        return ""
+    return "image" if requested == "auto" else requested
+
+
+def check_kind(env) -> None:
+    requested = env.get("ARTIFACTS", "")
+    signed = env.get("SIGNED", "")
+    require(signed in RELEASE_KINDS, "signed candidate has no release kind")
+    require(
+        requested in ("auto", signed),
+        f"artifacts={requested} conflicts with the signed {signed} candidate",
+    )
 
 
 def require(condition: object, message: str) -> None:
@@ -308,10 +371,19 @@ def validate_candidate(
         and re.fullmatch(r"sha256:[0-9a-f]{64}", c["fedora_bootc_digest"]),
         "invalid bootc digest",
     )
+    kind = release_kind(c)
+    require(
+        set(c)
+        == LEGACY_FIELDS
+        | ({"release_kind"} if "release_kind" in c else set())
+        | ({"published_base"} if kind == "image" else set()),
+        "invalid candidate fields",
+    )
     images = c.get("images")
     require(
         isinstance(images, dict)
-        and set(images) == {"core", "workstation", "installer"},
+        and set(images)
+        == {"core", "workstation"} | ({"installer"} if kind == "full" else set()),
         "invalid images",
     )
     owner = repo.split("/")[0].lower()
@@ -332,6 +404,103 @@ def validate_candidate(
     )
     for name, value in artifacts.items():
         checked_file(directory, name, value)
+    suffixes = {PurePosixPath(name).suffix.lower() for name in artifacts}
+    if kind == "full":
+        require({".iso", ".qcow2"} <= suffixes, "full release needs ISO and qcow2")
+        return
+    require(
+        not any(installer_artifact(name) for name in artifacts),
+        "image release carries installer or disk artifacts",
+    )
+    validate_published_base(c, owner)
+
+
+def installer_artifact(name: str) -> bool:
+    return (
+        PurePosixPath(name).suffix.lower() in (".iso", ".qcow2")
+        or name.startswith(("boot/", "scan/installer/"))
+        or name == "gates/boot.json"
+    )
+
+
+def release_kind(c: dict) -> str:
+    if "release_kind" not in c:
+        require(
+            type(c.get("run_id")) is int and c["run_id"] in PRE_MIGRATION_RUNS,
+            "missing release kind",
+        )
+        return "full"
+    kind = c["release_kind"]
+    require(isinstance(kind, str) and kind in RELEASE_KINDS, "invalid release kind")
+    return kind
+
+
+def checks(kind: str) -> tuple[str, ...]:
+    require(kind in RELEASE_KINDS, "invalid release kind")
+    return CHECKS if kind == "full" else IMAGE_CHECKS
+
+
+def gates(kind: str) -> tuple[str, ...]:
+    require(kind in RELEASE_KINDS, "invalid release kind")
+    return GATES if kind == "full" else IMAGE_GATES
+
+
+def version_order(value: object) -> tuple[int, int, int]:
+    match = isinstance(value, str) and re.fullmatch(
+        r"(?:testing-)?([1-9][0-9]*)\.([0-9]{8})(?:\.([1-9][0-9]*))?", value
+    )
+    require(match, "invalid release version")
+    date = match.group(2)
+    try:
+        dt.date(int(date[:4]), int(date[4:6]), int(date[6:]))
+    except ValueError as exc:
+        raise ValueError("invalid release version date") from exc
+    return int(match.group(1)), int(date), int(match.group(3) or 0)
+
+
+def validate_published_base(c: dict, owner: str) -> None:
+    fedora = c["fedora_version"]
+    prefix = "testing-" if c["channel"] == "testing" else ""
+    candidate_order = version_order(c["version_tag"])
+    require(
+        c["version_tag"] == prefix + c["build_version"]
+        and c["version_tag"].startswith(f"{prefix}{fedora}."),
+        "candidate version does not match its channel line",
+    )
+    official = digest(OFFICIAL_PUBLIC_KEY)
+    bases = object_fields(c.get("published_base"), set(PUBLIC_IMAGES), "published base")
+    for edition, base in bases.items():
+        object_fields(base, PUBLISHED_BASE_FIELDS, f"{edition} published base")
+        require(
+            base["reference"]
+            == f"ghcr.io/{owner}/{PUBLIC_IMAGES[edition]}:{prefix}{fedora}",
+            f"invalid {edition} published base reference",
+        )
+        for field in ("index_digest", "manifest_digest", "config_digest"):
+            matches(base[field], DIGEST, f"{edition} published base {field}")
+        matches(
+            base["release_evidence_sha256"],
+            SHA,
+            f"{edition} published base release_evidence_sha256",
+        )
+        require(
+            base["official_key_sha256"] == official,
+            f"{edition} published base is not bound to the official key",
+        )
+        require(
+            isinstance(base["version"], str)
+            and base["version"].startswith(f"{prefix}{fedora}."),
+            f"{edition} published base version is not on the candidate's line",
+        )
+        require(
+            version_order(base["version"]) < candidate_order,
+            f"{edition} published base is not older than the candidate",
+        )
+    require(
+        len({(b["version"], b["release_evidence_sha256"]) for b in bases.values()})
+        == 1,
+        "published bases come from different releases",
+    )
 
 
 def object_fields(value: object, fields: set[str], name: str) -> dict:
@@ -806,21 +975,15 @@ def create_candidate(metadata: Path, directory: Path, output: Path, key: Path) -
         not output.is_symlink() and not Path(str(output) + ".sig").is_symlink(),
         "symlink candidate destination",
     )
-    c = load(metadata)
+    c = {"release_kind": "full"} | load(metadata)
+    require(
+        set(c)
+        == (LEGACY_FIELDS - {"artifacts"})
+        | {"release_kind"}
+        | ({"published_base"} if c["release_kind"] == "image" else set()),
+        "invalid metadata fields",
+    )
     legacy_candidate(c)
-    fields = {
-        "version",
-        "repository",
-        "source_sha",
-        "run_id",
-        "channel",
-        "version_tag",
-        "build_version",
-        "fedora_version",
-        "fedora_bootc_digest",
-        "images",
-    }
-    require(set(c) == fields, "invalid metadata fields")
     require(
         c.get("repository") == os.environ.get("GITHUB_REPOSITORY"),
         "untrusted producer repository",
@@ -891,7 +1054,7 @@ def candidate_outputs(c: dict, path: Path) -> None:
                 "fedora_bootc_digest",
             )
         }
-        | {"candidate_file": str(path)}
+        | {"release_kind": release_kind(c), "candidate_file": str(path)}
     )
     if os.environ.get("GITHUB_OUTPUT"):
         require(
@@ -1118,10 +1281,22 @@ def download(repository: str, run_id: int, name: str, output: Path) -> None:
 
 def binding(c: dict) -> dict:
     legacy_candidate(c)
-    return {k: c[k] for k in ("repository", "source_sha", "images", "artifacts")} | {
-        "source_run_id": c["run_id"],
-        "candidate_digest": c["images"]["workstation"].split("@", 1)[1],
-    }
+    return (
+        {k: c[k] for k in ("repository", "source_sha", "images", "artifacts")}
+        | {
+            "source_run_id": c["run_id"],
+            "candidate_digest": c["images"]["workstation"].split("@", 1)[1],
+        }
+        | kind_binding(c)
+    )
+
+
+def kind_binding(c: dict) -> dict:
+    # Full bindings keep their pre-migration bytes so existing receipts and
+    # evidence stay valid; image bindings also pin the published base.
+    if release_kind(c) == "full":
+        return {}
+    return {"release_kind": "image", "published_base": c["published_base"]}
 
 
 def timestamp(value: object) -> dt.datetime:
@@ -1139,15 +1314,17 @@ def timestamp(value: object) -> dt.datetime:
 
 def validate_receipts(receipts: object, base: Path, c: dict) -> None:
     legacy_candidate(c)
+    required = checks(release_kind(c))
     require(
-        isinstance(receipts, list) and len(receipts) == len(CHECKS), "missing receipts"
+        isinstance(receipts, list) and len(receipts) == len(required),
+        "missing receipts",
     )
     names = set()
     for r in receipts:
         require(isinstance(r, dict), "invalid receipt")
         name = r.get("name")
         require(
-            isinstance(name, str) and name in CHECKS and name not in names,
+            isinstance(name, str) and name in required and name not in names,
             "invalid or duplicate receipt",
         )
         names.add(name)
@@ -1202,6 +1379,7 @@ def legacy_candidate(c: dict) -> None:
     require(
         type(c.get("version")) is int and c["version"] == 1, "invalid candidate version"
     )
+    release_kind(c)
 
 
 def main() -> int:
@@ -1247,6 +1425,8 @@ def main() -> int:
         "--workflow", default=".github/workflows/installation-validation.yml"
     )
     sub.add_parser("check-phase")
+    sub.add_parser("resolve-kind")
+    sub.add_parser("check-kind")
     e = sub.add_parser("assemble-evidence")
     for x in ("candidate", "validation", "results", "output", "public-key"):
         e.add_argument("--" + x, required=True, type=Path)
@@ -1254,6 +1434,15 @@ def main() -> int:
     try:
         if a.action == "check-phase":
             check_phase(os.environ)
+            return 0
+        if a.action == "check-kind":
+            check_kind(os.environ)
+            return 0
+        if a.action == "resolve-kind":
+            kind = requested_kind(os.environ)
+            with open(os.environ["GITHUB_OUTPUT"], "a", encoding="utf-8") as stream:
+                stream.write(f"release_kind={kind}\n")
+            print(json.dumps({"release_kind": kind}))
             return 0
         require(
             a.public_key.resolve() == CANDIDATE_PUBLIC_KEY.resolve(),
@@ -1405,11 +1594,12 @@ def main() -> int:
         else:
             c = candidate(a.candidate, a.public_key, legacy_only=True)
             validation = validate_validation(a.validation, a.public_key, c)
+            required = gates(release_kind(c))
             results = load(a.results)
-            require(set(results) == set(GATES), "missing or extra gate results")
+            require(set(results) == set(required), "missing or extra gate results")
             evidence = {}
             a.output.parent.mkdir(parents=True, exist_ok=True)
-            for gate in GATES:
+            for gate in required:
                 item = results[gate]
                 require(
                     isinstance(item, dict)
@@ -1461,7 +1651,8 @@ def main() -> int:
                 },
                 "images": c["images"],
                 "artifacts": c["artifacts"],
-                "gates": {gate: True for gate in (*GATES, "installation")},
+                **kind_binding(c),
+                "gates": {gate: True for gate in (*required, "installation")},
                 "evidence": evidence,
             }
             write(a.output, value)

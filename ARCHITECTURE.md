@@ -430,18 +430,18 @@ flowchart TD
     ESP["512 MiB<br/>vfat ESP<br/>/boot/efi"]
     Boot["1–2 GiB<br/>ext4<br/>/boot"]
     Root["remaining space<br/>Btrfs"]
-    RootSubvol["root subvolume<br/>/"]
-    HomeSubvol["home subvolume<br/>/home"]
-    VarSubvol["var subvolume<br/>/var"]
+    RootSubvol["root subvolume<br/>/ (sysroot)"]
+    Var["ostree stateroot var<br/>/var, /var/home"]
 
     Disk --> BIOS
     Disk --> ESP
     Disk --> Boot
     Disk --> Root
     Root --> RootSubvol
-    Root --> HomeSubvol
-    Root --> VarSubvol
+    RootSubvol --> Var
 ```
+
+The Btrfs partition has a single `root` subvolume. `/var` (and `/var/home`, which `/home` links to) is the ostree stateroot directory inside it, bind-mounted by the boot. Like the Sirius templates, which create no subvolumes, it has no separate `var` or `home` subvolume: a new `var` subvolume mounted at `/var` starts empty with an unlabeled root and hides the `/var` bootc prepared, so first-boot services such as `systemd-random-seed` are denied by SELinux.
 
 ## Live-To-Installed Transition
 
@@ -530,7 +530,7 @@ sudo image-builder build \
   qcow2
 ```
 
-The direct qcow2 artifact uses `/usr/lib/image-builder/bootc/disk.yaml`. It keeps the root/home/var deployment on Btrfs, but `/boot` is ext4 because image-builder qcow2 generation does not support Btrfs for `/boot`.
+The direct qcow2 artifact uses `/usr/lib/image-builder/bootc/disk.yaml`. It keeps root, `/var` and home on the single Btrfs `root` subvolume, but `/boot` is ext4 because image-builder qcow2 generation does not support Btrfs for `/boot`.
 
 ```mermaid
 flowchart TD
@@ -562,7 +562,7 @@ The workflow helpers separate three responsibilities:
 
 New editions based on core or workstation should declare their actual parent through explicit job dependencies and verified archive handoffs. Keep edition-specific Containerfiles and build arguments explicit; do not route unrelated edition operations through core reuse or installer helpers. No additional edition definitions or generic dependency engine are needed for the current two editions.
 
-`publish.yml` owns publication, signing and promotion, not the read-only build workflow. Each channel builds its own candidate from its source line, `main` for testing and `release/<fedora>` for stable, and promotion preserves that candidate's validated digests. The quality, automatic testing and installation-validation workflows retain their existing triggers, permissions and evidence gates. `testing-release-chain.yml` connects them for testing: after a successful Auto Testing candidate it dispatches validation, waits for it and dispatches publication, without holding any signing secret.
+`publish.yml` owns publication, signing and promotion, not the read-only build workflow. Each channel builds candidates on its own source line, `main` for testing and `release/<fedora>` for stable. Scheduled releases prepare only core and workstation OCI images for `bootc upgrade`. The chains verify the signed kind before advancing a scheduled candidate. Installation validation upgrades a disposable disk built from the published base, and promotion preserves the validated digests. A manual `publish.yml` dispatch with `artifacts=full` adds the installer, ISO and qcow2; only full publication writes downloads or updates the download index. See the [release strategy](docs/release-strategy.md).
 
 ## Local QEMU Testing
 
@@ -638,7 +638,7 @@ Package changes must be made in the Containerfiles or build scripts and delivere
 
 Updates are downloaded automatically. `bootc-fetch-apply-updates.timer` (1 hour after boot, then every 8 hours) is enabled, and a drop-in replaces `bootc upgrade --apply` with `bootc upgrade`. The new image is staged and takes effect on the next reboot, so the desktop is never restarted by an update. The service is skipped while any NetworkManager device reports a metered connection.
 
-Installed systems track the channel named by `UPDATE_CHANNEL` in `config/versions.env`, for both local builds and the `publish` workflow. It is `testing` until a stable release exists:
+Installed systems track the channel named by `UPDATE_CHANNEL` in the build's `config/versions.env`, for both local builds and the `publish` workflow:
 
 | `UPDATE_CHANNEL` | `target_imgref` |
 | --- | --- |
@@ -653,7 +653,7 @@ Release metadata lives in `config/releases.env` on `main` and is read by every b
 
 `auto-testing` checks the Fedora base on `main`. Automatic builds are candidates, not evidence that a release has passed installation or update tests. `python3 tools/release-notes.py` compares `rpm -qa` of the previous and new image for release notes.
 
-Stable images are built on the protected `release/<fedora>` branch as their own candidates, staged privately and scanned against the `*-stable-<fedora>.json` policies. Promotion copies the validated candidate with `skopeo copy --all --preserve-digests`, never rebuilding it, so a stable tag always has the digest that passed installation validation.
+`auto-stable.yml` checks for Fedora base changes and carries image candidates built on protected `release/<fedora>` branches through private staging, stable scans and installation validation. Lines without a published stable release fail before preparation and need a manual full release. Publication stops at the `stable` GitHub Environment. The repository owner reviews the approval summary before approving; `release-stable` rechecks that summary before copying the validated digests with `skopeo copy --all --preserve-digests`. See the [stable release runbook](docs/release-strategy.md#stable-release-runbook) for approval, rejection, resumption and recovery.
 
 ### Image signatures
 
@@ -686,7 +686,7 @@ flowchart TD
 When changing this repository, keep these points aligned:
 
 - `Justfile`, `README.md`, `ARCHITECTURE.md`, and `AGENTS.md` must agree on active commands and supported editions.
-- `disk.yaml` must keep root/home/var Btrfs with `/boot` ext4 (image-builder compatibility) and describe the same storage layout as the Sirius repart templates; image-builder takes the filesystem from `disk.yaml`, not from `--bootc-default-fs`.
+- `disk.yaml` must keep root, `/var` and home on one Btrfs `root` subvolume with `/boot` ext4 (image-builder compatibility) and describe the same storage layout as the Sirius repart templates; image-builder takes the filesystem from `disk.yaml`, not from `--bootc-default-fs`.
 - Live-only files belong under `editions/workstation/files/installer/`; the normal workstation Containerfile may consume only `files/system/` and shared branding assets.
 - Changes to `live-installer` must consider the Wayland session file, GNOME session file, GNOME Shell mode JSON, systemd user drop-in, and Aurora Shell metadata.
 - If the install flow changes, update `/etc/sirius/distro.toml` / `sirius.toml` and this document.

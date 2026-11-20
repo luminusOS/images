@@ -9,6 +9,7 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import re
 import shutil
 import signal
 import subprocess
@@ -23,6 +24,22 @@ from qemu_common import resolve_ovmf
 
 GIB = 1024**3
 TARGET_DISK = "/dev/vda"
+FAILED_UNITS = "systemctl --failed --no-legend --plain --no-pager"
+# Unit names reach a guest shell, so anything outside this set is skipped.
+UNIT_NAME = re.compile(r"[A-Za-z0-9][A-Za-z0-9@._:-]*\Z")
+MAX_DIAGNOSED_UNITS = 10
+JOURNAL_EXCERPT_LINES = 10
+BOOT_DIAGNOSTICS = (
+    (
+        "avc",
+        (
+            "journalctl -b --no-pager -o short-monotonic _TRANSPORT=audit"
+            " | grep -E 'avc|denied' | tail -200"
+        ),
+    ),
+    ("systemd-state", "ls -laZ /var/lib/systemd"),
+    ("mounts", "findmnt -o TARGET,SOURCE,FSTYPE,OPTIONS"),
+)
 
 
 class ProbeError(RuntimeError):
@@ -38,6 +55,47 @@ class VM:
     output: Path
     code: Path
     variables: Path
+
+
+def failed_unit_names(listing: str) -> list[str]:
+    names = (line.split()[0] for line in listing.splitlines() if line.split())
+    return [name for name in names if UNIT_NAME.fullmatch(name)]
+
+
+def failed_unit_diagnostics(run, prefix: str, listing: str) -> str:
+    """Record why failed units failed; return a short journal excerpt.
+
+    run(name, command) runs a guest command, records its output and returns a
+    CompletedProcess. Diagnostics only explain a failure that is already
+    certain, so their own errors are reported in the excerpt, never raised.
+    """
+
+    def attempt(name: str, command: str):
+        try:
+            return run(name, command), None
+        except (subprocess.SubprocessError, OSError, RuntimeError) as error:
+            return None, f"{type(error).__name__}: {error}"
+
+    excerpts = []
+    units = failed_unit_names(listing)[:MAX_DIAGNOSED_UNITS]
+    for number, unit in enumerate(units, 1):
+        attempt(
+            f"{prefix}-unit-{number}-status",
+            f"systemctl status --no-pager -l -- {unit}",
+        )
+        journal, error = attempt(
+            f"{prefix}-unit-{number}-journal",
+            f"journalctl -b --no-pager -o short-monotonic -u {unit}",
+        )
+        lines = (
+            journal.stdout.splitlines()[-JOURNAL_EXCERPT_LINES:]
+            if journal is not None
+            else [f"journal unavailable: {error}"]
+        )
+        excerpts.append("\n".join([f"--- {unit}", *lines]))
+    for name, command in BOOT_DIAGNOSTICS:
+        attempt(f"{prefix}-{name}", command)
+    return "\n".join(excerpts)
 
 
 def install_request(target_disk: str) -> str:
@@ -56,6 +114,17 @@ def install_request(target_disk: str) -> str:
             "partition_plan": None,
         }
     )
+
+
+def vsock_ssh_argv(vm: VM) -> list[str]:
+    return [
+        "-device",
+        f"vhost-vsock-pci,guest-cid={vm.cid}",
+        # systemd imports SMBIOS type 11 credentials; tmpfiles provisions this one
+        # as root's authorized_keys, so neither image has to change.
+        "-smbios",
+        f"type=11,value=io.systemd.credential:ssh.authorized_keys.root={vm.public_key}",
+    ]
 
 
 def qemu_argv(vm: VM, *, iso: Path | None) -> list[str]:
@@ -80,12 +149,7 @@ def qemu_argv(vm: VM, *, iso: Path | None) -> list[str]:
         f"if=pflash,format=raw,file={vm.variables}",
         "-drive",
         f"file={vm.disk},format=qcow2,if=virtio",
-        "-device",
-        f"vhost-vsock-pci,guest-cid={vm.cid}",
-        # systemd imports SMBIOS type 11 credentials; tmpfiles provisions this one
-        # as root's authorized_keys, so neither image has to change.
-        "-smbios",
-        f"type=11,value=io.systemd.credential:ssh.authorized_keys.root={vm.public_key}",
+        *vsock_ssh_argv(vm),
         "-no-reboot",
     ]
     if iso is not None:

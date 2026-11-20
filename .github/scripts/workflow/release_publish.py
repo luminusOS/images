@@ -183,6 +183,8 @@ def approval_summary(
     }
     roles = {}
     for role, (edition, scope) in SCAN_SCOPES.items():
+        if role not in candidate["images"]:
+            continue
         name = f"scan/{role}/scan-evidence.json"
         path = directory / name
         if candidate["artifacts"].get(name) != sha256(path):
@@ -238,20 +240,20 @@ def approval_summary(
             ),
             "exclusions": exclusions,
         }
+    described = (
+        "repository",
+        "source_sha",
+        "run_id",
+        "channel",
+        "build_version",
+        "fedora_version",
+        "fedora_bootc_digest",
+        "images",
+    )
+    if candidate.get("release_kind") == "image":
+        described += ("release_kind", "published_base")
     return {
-        "candidate": {
-            field: candidate[field]
-            for field in (
-                "repository",
-                "source_sha",
-                "run_id",
-                "channel",
-                "build_version",
-                "fedora_version",
-                "fedora_bootc_digest",
-                "images",
-            )
-        },
+        "candidate": {field: candidate[field] for field in described},
         "base_risk": {
             "record": record_path.name,
             "sha256": sha256(record_path),
@@ -279,6 +281,11 @@ def summary_markdown(summary: dict, digest: str) -> str:
         "",
         f"- Source: `{c['repository']}` at `{c['source_sha']}` (run {c['run_id']})",
         f"- Fedora {c['fedora_version']} base: `{c['fedora_bootc_digest']}`",
+        *(
+            f"- Image-only release upgrading {edition} from "
+            f"`{base['reference']}` {base['version']} (`{base['index_digest']}`)"
+            for edition, base in c.get("published_base", {}).items()
+        ),
         (
             f"- Base signature risk: accepted by {summary['base_risk']['owner']} "
             f"until {summary['base_risk']['expires_at']}"
@@ -378,12 +385,21 @@ def write(path: Path, data: object) -> None:
 def prepare_gates(directory: Path) -> None:
     if os.environ.get("SECURITY_FINDINGS_BYPASS", "false") != "false":
         raise ValueError("security bypass cannot authorize release gates")
-    for name in ("QUALITY_RESULT", "BOOT_RESULT", "SCAN_RESULT"):
+    kind = os.environ.get("RELEASE_KIND", "full")
+    pipeline = load_helper("release_pipeline")
+    gates = pipeline.gates(kind)
+    full = kind == "full"
+    jobs = ("QUALITY_RESULT", "BOOT_RESULT", "SCAN_RESULT")
+    for name in jobs if full else ("QUALITY_RESULT", "SCAN_RESULT"):
         if os.environ.get(name) != "success":
             raise ValueError(f"required job did not succeed: {name}")
-    images = {
-        name: os.environ[name.upper()] for name in ("core", "workstation", "installer")
-    }
+    roles = ("core", "workstation", "installer") if full else ("core", "workstation")
+    if not full and any(
+        (directory / path).exists()
+        for path in ("boot", "scan/installer", "gates/boot.json")
+    ):
+        raise ValueError("image releases cannot record boot or installer gates")
+    images = {name: os.environ[name.upper()] for name in roles}
     files = {}
     for name, image in images.items():
         subprocess.run(
@@ -422,7 +438,7 @@ def prepare_gates(directory: Path) -> None:
         }:
             raise ValueError("incomplete scan outputs")
         files[scan.relative_to(directory).as_posix()] = sha256(scan)
-    for mode in ("iso", "disk"):
+    for mode in ("iso", "disk") if full else ():
         log = directory / "boot" / mode / "serial.log"
         screenshots = sorted((directory / "boot" / mode).glob("screen-*.ppm"))
         if (
@@ -435,7 +451,7 @@ def prepare_gates(directory: Path) -> None:
             files[log.relative_to(directory).as_posix()] = sha256(log)
         screen = screenshots[-1]
         files[screen.relative_to(directory).as_posix()] = sha256(screen)
-    for gate in GATES:
+    for gate in gates:
         write(
             directory / "gates" / f"{gate}.json",
             {
@@ -456,14 +472,10 @@ def prepare_gates(directory: Path) -> None:
 def prepare_results(directory: Path) -> None:
     pipeline = load_helper("release_pipeline")
     candidate = pipeline.candidate(directory / "candidate.json", Path(CANDIDATE_KEY))
-    candidate_digest = candidate["images"]["workstation"].split("@", 1)[1]
-    binding = {
-        key: candidate[key]
-        for key in ("repository", "source_sha", "images", "artifacts")
-    }
-    binding.update(source_run_id=candidate["run_id"], candidate_digest=candidate_digest)
+    binding = pipeline.binding(candidate)
+    candidate_digest = binding["candidate_digest"]
     results = {}
-    for gate in GATES:
+    for gate in pipeline.gates(pipeline.release_kind(candidate)):
         artifact = f"gates/{gate}.json"
         actual = sha256(directory / artifact)
         if candidate["artifacts"].get(artifact) != actual:
@@ -496,11 +508,15 @@ def verify_release(candidate_path: Path, evidence_path: Path, key: Path) -> dict
     pipeline = load_helper("release_pipeline")
     promotion = load_helper("promote_images")
     candidate = pipeline.candidate(candidate_path, key)
+    kind = pipeline.release_kind(candidate)
     pipeline.verify(evidence_path, key)
     evidence = json.loads(evidence_path.read_text(encoding="utf-8"))
+    kind_fields = pipeline.kind_binding(candidate)
     if (
         evidence.get("images") != candidate["images"]
         or evidence.get("artifacts") != candidate["artifacts"]
+        or {k: evidence[k] for k in ("release_kind", "published_base") if k in evidence}
+        != kind_fields
     ):
         raise ValueError("release evidence does not match candidate")
     workstation_digest = candidate["images"]["workstation"].split("@", 1)[1]
@@ -512,16 +528,20 @@ def verify_release(candidate_path: Path, evidence_path: Path, key: Path) -> dict
         expected_ref=pipeline.release_ref(
             candidate["channel"], candidate["fedora_version"]
         ),
+        release_kind=kind,
     )
     if errors:
         raise ValueError("release evidence rejected: " + "; ".join(errors))
-    promotion.verify_evidence_artifacts(evidence, evidence_path.parent)
-    boot_report = candidate_path.parent / "gates" / "boot.json"
-    if candidate["artifacts"].get("gates/boot.json") != sha256(boot_report):
-        raise ValueError("boot report is not signed by candidate")
-    gate = json.loads(boot_report.read_text(encoding="utf-8"))
-    for path, expected in gate["artifacts"].items():
-        pipeline.checked_file(candidate_path.parent, path, expected)
+    promotion.verify_evidence_artifacts(evidence, evidence_path.parent, kind)
+    if kind == "full":
+        boot_report = candidate_path.parent / "gates" / "boot.json"
+        if candidate["artifacts"].get("gates/boot.json") != sha256(boot_report):
+            raise ValueError("boot report is not signed by candidate")
+        gate = json.loads(boot_report.read_text(encoding="utf-8"))
+        for path, expected in gate["artifacts"].items():
+            pipeline.checked_file(candidate_path.parent, path, expected)
+    elif (candidate_path.parent / "gates" / "boot.json").exists():
+        raise ValueError("image release must not record a boot gate")
     build_version = candidate["build_version"]
     if not re.fullmatch(r"[0-9]+\.[0-9]{8}(?:\.[0-9]+)?", build_version):
         raise ValueError("invalid release build version")
@@ -575,6 +595,7 @@ def promote(
     expected_channel: str | None = None,
 ) -> None:
     candidate = verify_release(candidate_path, evidence_path, key)
+    require_full_release(candidate)
     if expected_channel is not None and candidate["channel"] != expected_channel:
         raise ValueError("requested channel does not match candidate")
     release_artifacts(candidate_path.parent, candidate)
@@ -582,10 +603,16 @@ def promote(
         stage(candidate_path, evidence_path, directory, key)
     verify_staged_distribution(candidate_path, evidence_path, directory, candidate, key)
     release_preflight(candidate, directory, release_artifacts(directory, candidate))
-    promotion = load_helper("promote_images")
     config = release_configuration(candidate["fedora_version"])
     if candidate["channel"] == "stable":
         check_fedora_ga(candidate["fedora_version"])
+    verify_registry_images(candidate, key)
+    promote_roles(
+        candidate, evidence_path, key, config, ("core", "workstation", "installer")
+    )
+
+
+def verify_registry_images(candidate: dict, key: Path) -> None:
     for image in candidate["images"].values():
         subprocess.run(
             ["cosign", "verify", "--key", str(key), image],
@@ -600,16 +627,21 @@ def promote(
         ).stdout.strip()
         if actual != image.split("@", 1)[1]:
             raise ValueError("registry digest does not match candidate")
+
+
+def promote_roles(
+    candidate: dict, evidence_path: Path, key: Path, config: dict, roles: tuple
+) -> None:
+    pipeline = load_helper("release_pipeline")
+    promotion = load_helper("promote_images")
     channel = candidate["channel"]
-    version = (
-        candidate["version_tag"] if channel == "testing" else candidate["build_version"]
-    )
+    version = release_version(candidate)
     branch = (
         f"testing-{candidate['fedora_version']}"
         if channel == "testing"
         else candidate["fedora_version"]
     )
-    for role in ("core", "workstation", "installer"):
+    for role in roles:
         image = candidate["images"][role]
         _, digest = image.split("@", 1)
         repository = promotion.public_repository(role, candidate["repository"])
@@ -635,7 +667,109 @@ def promote(
             candidate["repository"],
             candidate["source_sha"],
             role,
+            release_kind=pipeline.release_kind(candidate),
         )
+
+
+def kind_of(candidate: dict) -> str:
+    # Callers pass candidates verify_release returned, which has already
+    # enforced release_pipeline.release_kind on them.
+    return candidate.get("release_kind", "full")
+
+
+def require_full_release(candidate: dict) -> None:
+    if kind_of(candidate) != "full":
+        raise ValueError("image candidates are published with publish-image")
+
+
+def release_version(candidate: dict) -> str:
+    return (
+        candidate["version_tag"]
+        if candidate["channel"] == "testing"
+        else candidate["build_version"]
+    )
+
+
+def recheck_published_base(candidate: dict) -> None:
+    """Require the line to still serve the base the candidate was validated on.
+
+    A rerun of this candidate may find its own earlier promotion on the line
+    tags, and later its own release; anything else, such as a newer release
+    or a moved tag, makes the candidate stale.
+    """
+    base = load_helper("published_base")
+    repository = candidate["repository"]
+    channel = candidate["channel"]
+    fedora = candidate["fedora_version"]
+    pinned = candidate["published_base"]
+    try:
+        if base.resolve(repository, channel, fedora) == pinned:
+            return
+        cause = None
+    except (ValueError, OSError, tarfile.TarError, subprocess.CalledProcessError) as e:
+        cause = e
+    if not resumed_promotion(candidate, base):
+        raise ValueError("stale image candidate: published base changed") from cause
+
+
+def resumed_promotion(candidate: dict, base) -> bool:
+    pinned = candidate["published_base"]
+    repository = candidate["repository"]
+    channel = candidate["channel"]
+    try:
+        version, _, evidence_sha = base.release_evidence(
+            repository, channel, candidate["fedora_version"]
+        )
+        ours = version == release_version(candidate)
+        if not ours and any(
+            (item["version"], item["release_evidence_sha256"])
+            != (version, evidence_sha)
+            for item in pinned.values()
+        ):
+            return False
+        line = base.line_tag(channel, candidate["fedora_version"])
+        for edition in base.EDITIONS:
+            current = base.line_digest(base.image_repository(repository, edition), line)
+            if current == candidate["images"][edition].split("@", 1)[1]:
+                continue
+            if ours or current != pinned[edition]["index_digest"]:
+                return False
+    except (ValueError, OSError, tarfile.TarError, subprocess.CalledProcessError):
+        return False
+    return True
+
+
+def publish_image(
+    candidate_path: Path,
+    evidence_path: Path,
+    key: Path,
+    directory: Path,
+    expected_channel: str,
+) -> None:
+    """Promote an image-only candidate and publish its evidence-only release."""
+    candidate = verify_release(candidate_path, evidence_path, key)
+    if kind_of(candidate) != "image":
+        raise ValueError("full candidates are published with promote and publish")
+    if candidate["channel"] != expected_channel:
+        raise ValueError("requested channel does not match candidate")
+    release_artifacts(candidate_path.parent, candidate)
+    if not (directory / "SHA256SUMS").exists():
+        stage(candidate_path, evidence_path, directory, key)
+    verify_staged_distribution(candidate_path, evidence_path, directory, candidate, key)
+    files = release_preflight(candidate, directory, [])
+    config = release_configuration(candidate["fedora_version"])
+    if candidate["channel"] == "stable":
+        check_fedora_ga(candidate["fedora_version"])
+    verify_registry_images(candidate, key)
+    recheck_published_base(candidate)
+    promote_roles(candidate, evidence_path, key, config, ("core", "workstation"))
+    github_release(
+        files,
+        release_version(candidate),
+        candidate["source_sha"],
+        title_of(candidate),
+        candidate["channel"],
+    )
 
 
 def canonical_artifact_name(path: Path, candidate: dict) -> str:
@@ -658,6 +792,10 @@ def release_artifacts(directory: Path, candidate: dict) -> list[Path]:
         f"luminusos-workstation-{version}.qcow2",
     }
     images = [p for p in directory.iterdir() if p.suffix in {".iso", ".qcow2"}]
+    if kind_of(candidate) == "image":
+        if images:
+            raise ValueError("image release must not contain ISO or qcow2")
+        return []
     if {p.name for p in images} != expected or any(
         not p.is_file() or p.is_symlink() for p in images
     ):
@@ -695,14 +833,16 @@ def stage(
         raise ValueError("distribution directory has unexpected files")
     directory.mkdir(parents=True, exist_ok=True)
     names = {"candidate.json", "candidate.json.sig"}
-    boot_gate = json.loads(
-        (candidate_path.parent / "gates" / "boot.json").read_text(encoding="utf-8")
-    )
-    screenshot_paths = {
-        candidate_path.parent / name
-        for name in boot_gate["artifacts"]
-        if name.endswith(".ppm")
-    }
+    screenshot_paths = set()
+    if kind_of(candidate) == "full":
+        boot_gate = json.loads(
+            (candidate_path.parent / "gates" / "boot.json").read_text(encoding="utf-8")
+        )
+        screenshot_paths = {
+            candidate_path.parent / name
+            for name in boot_gate["artifacts"]
+            if name.endswith(".ppm")
+        }
     for source in candidate_path.parent.rglob("*"):
         if source.is_symlink():
             raise ValueError("symlink in candidate artifact")
@@ -744,6 +884,7 @@ def stage(
 
 def publish_downloads(candidate_path: Path, directory: Path, key: Path) -> None:
     candidate = verify_release(candidate_path, directory / "release-evidence.json", key)
+    require_full_release(candidate)
     channel = candidate["channel"]
     version = (
         candidate["version_tag"] if channel == "testing" else candidate["build_version"]
@@ -812,7 +953,7 @@ def publish_downloads(candidate_path: Path, directory: Path, key: Path) -> None:
         release_files,
         version,
         candidate["source_sha"],
-        f"LuminusOS {candidate['build_version']}",
+        title_of(candidate),
         channel,
     )
 
@@ -834,13 +975,33 @@ def release_preflight(candidate: dict, directory: Path, artifacts) -> dict[str, 
     }
     release_notes(files["notes.md"], candidate, version, artifacts)
     evidence_bundle(directory, artifacts, files["evidence.tar.gz"])
-    check_release(files, version, channel)
-    check_downloads(files["SHA256SUMS"], channel, version)
+    check_release(
+        files,
+        version,
+        channel,
+        source_sha=candidate["source_sha"],
+        title=title_of(candidate),
+    )
+    if kind_of(candidate) == "full":
+        check_downloads(files["SHA256SUMS"], channel, version)
     return files
+
+
+def title_of(candidate: dict) -> str:
+    return f"LuminusOS {candidate['build_version']}"
 
 
 def release_notes(path: Path, candidate: dict, version: str, artifacts) -> None:
     channel = candidate["channel"]
+    if kind_of(candidate) == "image":
+        lines = [
+            f"LuminusOS {candidate['build_version']}",
+            "",
+            "Image-only update: installed systems receive it through `bootc upgrade`.",
+            "Installation media stay at the latest full release.",
+        ]
+        path.write_text("\n".join(lines) + "\n", encoding="utf-8")
+        return
     lines = [
         f"LuminusOS {candidate['build_version']}",
         "",
@@ -887,7 +1048,14 @@ RELEASE_ASSETS = ("SHA256SUMS", "SHA256SUMS.sig", "evidence.tar.gz")
 def existing_release(version: str) -> dict | None:
     try:
         view = subprocess.run(
-            ["gh", "release", "view", version, "--json", "isPrerelease,assets"],
+            [
+                "gh",
+                "release",
+                "view",
+                version,
+                "--json",
+                "isDraft,isPrerelease,assets,targetCommitish,name",
+            ],
             check=True,
             capture_output=True,
             text=True,
@@ -960,15 +1128,29 @@ def bundle_signatures(data: bytes) -> set[str]:
     return names
 
 
-def check_release(files: dict[str, Path], version: str, channel: str) -> list[str]:
+def check_release(
+    files: dict[str, Path],
+    version: str,
+    channel: str,
+    *,
+    source_sha: str,
+    title: str,
+) -> list[str]:
     """Return the assets still missing from a release this run may resume.
 
-    A rerun after a partial failure may find its own release; anything else
-    under the tag is a conflict and is never overwritten.
+    A rerun after a partial failure may find its own release, published or
+    left as a draft; anything else under the tag is a conflict and is never
+    overwritten.
     """
     release = existing_release(version)
     if release is None:
         return list(RELEASE_ASSETS)
+    if (
+        release.get("targetCommitish") != source_sha
+        or release.get("name") != title
+        or not isinstance(release.get("isDraft"), bool)
+    ):
+        raise ValueError(f"release {version} already exists with other contents")
     names = [asset["name"] for asset in release.get("assets", [])]
     if release.get("isPrerelease") is not (channel == "testing") or not set(
         names
@@ -1033,12 +1215,34 @@ def check_downloads(sums: Path, channel: str, version: str) -> None:
 def github_release(
     files: dict[str, Path], version: str, source_sha: str, title: str, channel: str
 ) -> None:
-    missing = check_release(files, version, channel)
-    if existing_release(version) is not None:
+    missing = check_release(files, version, channel, source_sha=source_sha, title=title)
+    release = existing_release(version)
+    if release is not None:
+        if (
+            release.get("targetCommitish") != source_sha
+            or release.get("name") != title
+            or not isinstance(release.get("isDraft"), bool)
+        ):
+            raise ValueError(f"release {version} already exists with other contents")
         if missing:
             subprocess.run(
                 ["gh", "release", "upload", version]
                 + [str(files[name]) for name in missing],
+                check=True,
+            )
+        # gh creates a draft while it uploads and publishes it last, so an
+        # interrupted create leaves a draft that published history (and the
+        # next image candidate's base) never sees.
+        if release["isDraft"]:
+            subprocess.run(
+                [
+                    "gh",
+                    "release",
+                    "edit",
+                    version,
+                    "--draft=false",
+                    f"--prerelease={str(channel == 'testing').lower()}",
+                ],
                 check=True,
             )
         return
@@ -1072,6 +1276,7 @@ def main() -> None:
             "promote",
             "publish",
             "publish-downloads",
+            "publish-image",
             "verify-release",
         ),
     )
@@ -1103,6 +1308,29 @@ def main() -> None:
             args.output,
             args.expect_sha256,
             args.policy_ref,
+        )
+        return
+    if args.action == "publish-image":
+        if not (
+            args.candidate
+            and args.evidence
+            and args.public_key
+            and args.channel
+            and args.output_directory
+        ):
+            parser.error(
+                "publish-image needs candidate, evidence, key, channel and directory"
+            )
+        if sha256(args.evidence) != sha256(
+            args.output_directory / "release-evidence.json"
+        ):
+            raise ValueError("publication evidence does not match requested evidence")
+        publish_image(
+            args.candidate,
+            args.evidence,
+            args.public_key,
+            args.output_directory,
+            args.channel,
         )
         return
     if args.action in (

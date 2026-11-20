@@ -34,12 +34,21 @@ class FakeGuest:
 
     def run(self, name, command, **_kwargs):
         self.commands[name] = command
+        if name not in self.results and diagnostic(command):
+            return ["ssh", "root@vsock", command], done("")
         return ["ssh", "root@vsock", command], self.results[name]
+
+
+def diagnostic(command):
+    return command.startswith(
+        ("systemctl status ", "journalctl ", "ls -laZ ", "findmnt -o ")
+    )
 
 
 def candidate():
     return {
         "version": 1,
+        "release_kind": "full",
         "run_id": 12,
         "repository": "Org/repo",
         "source_sha": "a" * 40,
@@ -166,6 +175,8 @@ class DriverTests(unittest.TestCase):
         wrong_version["status"]["booted"]["image"]["version"] = "45.20261105.1"
         for name, result in (
             ("first-boot-state", done("degraded\n", 1)),
+            ("first-boot-state", done("running\n", 1)),
+            ("first-boot-state", done("degraded\n", 0)),
             ("first-boot-bootc", done(json.dumps(wrong_version))),
             ("first-boot-mounts", done(mounts(boot="vfat"))),
             (

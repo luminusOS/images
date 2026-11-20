@@ -18,8 +18,23 @@ import subprocess
 import sys
 from pathlib import Path
 
+import published_base
+
 ACTIVE = ("queued", "in_progress", "waiting", "pending", "requested")
 DIGEST = re.compile(r"sha256:[0-9a-f]{64}")
+
+
+def require_published_base(repository: str, fedora: str) -> None:
+    try:
+        published_base.newest_release(
+            published_base.list_releases(repository), repository, "stable", fedora
+        )
+    except published_base.NoPublishedRelease as error:
+        raise ValueError(
+            f"{error}; start preparation with: gh workflow run publish.yml "
+            f"--repo {repository} --ref release/{fedora} "
+            "-f channel=stable -f artifacts=full"
+        ) from None
 
 
 def gh(path: str) -> dict:
@@ -133,6 +148,7 @@ def main() -> int:
         if not line or line.group(1) not in stable_lines():
             raise ValueError(f"{ref} is not an active stable line")
         fedora = line.group(1)
+        require_published_base(os.environ["GITHUB_REPOSITORY"], fedora)
         owner = os.environ["GITHUB_REPOSITORY_OWNER"].lower()
         live = subprocess.check_output(
             [sys.executable, "tools/fedora-bootc-digest.py", fedora], text=True
