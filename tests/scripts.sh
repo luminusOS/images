@@ -41,6 +41,8 @@ expect_failure "config-value rejects unknown keys" \
 
 expect_contains "package adapter maps ISO type" "bootc-generic-iso" \
   env IMAGE_BUILDER_DRY_RUN=1 "${ROOT}/tools/package-artifact.sh" iso image.test out.iso
+expect_contains "package adapter uses the ISO manifest before OSBuild" "image-builder manifest" \
+  env IMAGE_BUILDER_DRY_RUN=1 "${ROOT}/tools/package-artifact.sh" iso image.test out.iso
 expect_contains "package adapter maps qcow2 type" "qcow2" \
   env IMAGE_BUILDER_DRY_RUN=1 "${ROOT}/tools/package-artifact.sh" qcow2 image.test out.qcow2
 expect_failure "package adapter rejects unknown formats" \
