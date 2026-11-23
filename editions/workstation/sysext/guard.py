@@ -16,6 +16,7 @@ import shutil
 import stat
 import subprocess
 import sys
+from pathlib import Path
 
 KEPT_ROOTS = ("/usr", "/opt")
 STRIPPED = ("/usr/lib/sysimage",)
@@ -72,12 +73,30 @@ DENIED_PREFIXES = (
 NSS_PATTERNS = ("/usr/lib*/libnss_*",)
 
 UNIT_DEPENDENCY_KEYS = {
-    "Requires", "Requisite", "Wants", "BindsTo", "PartOf", "Upholds", "After",
-    "Before", "Conflicts", "OnFailure", "OnSuccess", "PropagatesReloadTo",
-    "ReloadPropagatedFrom", "PropagatesStopTo", "StopPropagatedFrom",
+    "Requires",
+    "Requisite",
+    "Wants",
+    "BindsTo",
+    "PartOf",
+    "Upholds",
+    "After",
+    "Before",
+    "Conflicts",
+    "OnFailure",
+    "OnSuccess",
+    "PropagatesReloadTo",
+    "ReloadPropagatedFrom",
+    "PropagatesStopTo",
+    "StopPropagatedFrom",
     "JoinsNamespaceOf",
 }
-UNIT_FORBIDDEN_INSTALL_KEYS = {"RequiredBy", "UpheldBy", "Alias", "Also", "DefaultInstance"}
+UNIT_FORBIDDEN_INSTALL_KEYS = {
+    "RequiredBy",
+    "UpheldBy",
+    "Alias",
+    "Also",
+    "DefaultInstance",
+}
 EXEC_KEY_RE = re.compile(r"^Exec[A-Za-z]*$")
 UDEV_EXEC_RE = re.compile(r'(?:RUN|PROGRAM|IMPORT\{program\})\+?=+"([^"]*)"')
 LUMINUS_NAME_RE = re.compile(r"luminusos-([a-z][a-z0-9]*)-")
@@ -153,12 +172,19 @@ class Guard:
     def same(self, path, bst, fst):
         if stat.S_IFMT(bst.st_mode) != stat.S_IFMT(fst.st_mode):
             return "retyped"
-        if (bst.st_mode, bst.st_uid, bst.st_gid) != (fst.st_mode, fst.st_uid, fst.st_gid):
+        if (bst.st_mode, bst.st_uid, bst.st_gid) != (
+            fst.st_mode,
+            fst.st_uid,
+            fst.st_gid,
+        ):
             return "mode or owner changed"
-        if stat.S_ISLNK(fst.st_mode) and os.readlink(self.b(path)) != os.readlink(self.f(path)):
+        if stat.S_ISLNK(fst.st_mode) and os.readlink(self.b(path)) != os.readlink(
+            self.f(path)
+        ):
             return "link target changed"
         if stat.S_ISREG(fst.st_mode) and (
-            bst.st_size != fst.st_size or self.digest(self.b(path)) != self.digest(self.f(path))
+            bst.st_size != fst.st_size
+            or self.digest(self.b(path)) != self.digest(self.f(path))
         ):
             return "content changed"
         return None
@@ -196,30 +222,44 @@ class Guard:
                 return "directory outside the unit allowlist"
             name = os.path.basename(path)
             own_unit = name.startswith(self.unit_prefix) and name.endswith(".service")
-            if os.path.dirname(path) == systemd + "/system" and own_unit and stat.S_ISREG(st.st_mode):
+            if (
+                os.path.dirname(path) == systemd + "/system"
+                and own_unit
+                and stat.S_ISREG(st.st_mode)
+            ):
                 return None
             if os.path.dirname(path) == wants and own_unit and stat.S_ISLNK(st.st_mode):
                 target = self.resolve(self.final, path)
                 if target == f"{systemd}/system/{name}":
                     return None
-                return "wants link must point to the feature's own unit of the same name"
+                return (
+                    "wants link must point to the feature's own unit of the same name"
+                )
             return f"only {systemd}/system/{self.unit_prefix}*.service and their luminusos-features.target.wants links are allowed"
         if path == "/usr/lib/udev" or path.startswith("/usr/lib/udev/"):
-            if path in ("/usr/lib/udev", "/usr/lib/udev/rules.d") and stat.S_ISDIR(st.st_mode):
+            if path in ("/usr/lib/udev", "/usr/lib/udev/rules.d") and stat.S_ISDIR(
+                st.st_mode
+            ):
                 return None
-            if fnmatch.fnmatchcase(path, f"/usr/lib/udev/rules.d/70-luminusos-{uid}-*.rules") and stat.S_ISREG(st.st_mode):
+            if fnmatch.fnmatchcase(
+                path, f"/usr/lib/udev/rules.d/70-luminusos-{uid}-*.rules"
+            ) and stat.S_ISREG(st.st_mode):
                 return None
             return f"only /usr/lib/udev/rules.d/70-luminusos-{uid}-*.rules is allowed"
         if path == "/usr/lib/modprobe.d" or path.startswith("/usr/lib/modprobe.d/"):
             if path == "/usr/lib/modprobe.d" and stat.S_ISDIR(st.st_mode):
                 return None
-            if path == f"/usr/lib/modprobe.d/luminusos-{uid}.conf" and stat.S_ISREG(st.st_mode):
+            if path == f"/usr/lib/modprobe.d/luminusos-{uid}.conf" and stat.S_ISREG(
+                st.st_mode
+            ):
                 return None
             return f"only /usr/lib/modprobe.d/luminusos-{uid}.conf is allowed"
         if path == "/usr/lib/sysusers.d" or path.startswith("/usr/lib/sysusers.d/"):
             if path == "/usr/lib/sysusers.d" and stat.S_ISDIR(st.st_mode):
                 return None
-            if path == f"/usr/lib/sysusers.d/luminusos-{uid}.conf" and stat.S_ISREG(st.st_mode):
+            if path == f"/usr/lib/sysusers.d/luminusos-{uid}.conf" and stat.S_ISREG(
+                st.st_mode
+            ):
                 return None
             return f"only /usr/lib/sysusers.d/luminusos-{uid}.conf is allowed"
         for prefix in DENIED_PREFIXES:
@@ -235,7 +275,7 @@ class Guard:
                 self.error(path, f"names another feature (luminusos-{other}-*)")
 
     def check_unit(self, path):
-        text = open(self.f(path), encoding="utf-8", errors="replace").read()
+        text = Path(self.f(path)).read_text(encoding="utf-8", errors="replace")
         self.check_names(path, text)
         section = None
         for raw in text.splitlines():
@@ -251,7 +291,8 @@ class Guard:
             if key in UNIT_DEPENDENCY_KEYS:
                 for token in value.split():
                     if token.startswith("luminusos-") and not (
-                        token.startswith(self.unit_prefix) or token == "luminusos-features.target"
+                        token.startswith(self.unit_prefix)
+                        or token == "luminusos-features.target"
                     ):
                         self.error(path, f"{key}= names {token}")
             if EXEC_KEY_RE.match(key):
@@ -262,11 +303,15 @@ class Guard:
             if section == "Install":
                 if key in UNIT_FORBIDDEN_INSTALL_KEYS:
                     self.error(path, f"[Install] {key}= is not allowed")
-                if key == "WantedBy" and any(t != "luminusos-features.target" for t in value.split()):
-                    self.error(path, "WantedBy= may only name luminusos-features.target")
+                if key == "WantedBy" and any(
+                    t != "luminusos-features.target" for t in value.split()
+                ):
+                    self.error(
+                        path, "WantedBy= may only name luminusos-features.target"
+                    )
 
     def check_rule(self, path):
-        text = open(self.f(path), encoding="utf-8", errors="replace").read()
+        text = Path(self.f(path)).read_text(encoding="utf-8", errors="replace")
         self.check_names(path, text)
         for command in UDEV_EXEC_RE.findall(text):
             for token in command.split():
@@ -284,13 +329,17 @@ class Guard:
                 continue
             mode = st.st_mode
             if not (stat.S_ISREG(mode) or stat.S_ISDIR(mode) or stat.S_ISLNK(mode)):
-                self.error(path, "only regular files, directories and symlinks are allowed")
+                self.error(
+                    path, "only regular files, directories and symlinks are allowed"
+                )
                 continue
             if stat.S_ISREG(mode) and mode & (stat.S_ISUID | stat.S_ISGID):
                 self.error(path, "setuid or setgid file")
             if stat.S_ISREG(mode):
                 try:
-                    os.getxattr(self.f(path), "security.capability", follow_symlinks=False)
+                    os.getxattr(
+                        self.f(path), "security.capability", follow_symlinks=False
+                    )
                     self.error(path, "file capabilities are not allowed")
                 except OSError:
                     pass
@@ -305,7 +354,11 @@ class Guard:
                 target = self.resolve(self.final, path)
                 if target is None:
                     self.error(path, "symlink loop")
-                elif target not in own and self.kept(target) and self.lstat(self.b(target)) is not None:
+                elif (
+                    target not in own
+                    and self.kept(target)
+                    and self.lstat(self.b(target)) is not None
+                ):
                     self.error(path, f"symlink points into base content ({target})")
             if any(fnmatch.fnmatchcase(path, p) for p in MERGED_CACHES) and not any(
                 fnmatch.fnmatchcase(path, p) for p in MERGED_CACHE_EXCEPTIONS
@@ -321,12 +374,20 @@ class Guard:
                 self.check_rule(path)
             kept.append(path)
         if self.manifest["udev_trigger"] and not has_rule:
-            self.errors.append("FEATURE_UDEV_TRIGGER is set but the feature ships no udev rule")
-        if not any(not stat.S_ISDIR(os.lstat(self.f(p)).st_mode) for p in kept if self.lstat(self.f(p))):
+            self.errors.append(
+                "FEATURE_UDEV_TRIGGER is set but the feature ships no udev rule"
+            )
+        if not any(
+            not stat.S_ISDIR(os.lstat(self.f(p)).st_mode)
+            for p in kept
+            if self.lstat(self.f(p))
+        ):
             self.errors.append("the feature adds no files")
         dropped = sorted(p for p in diff.get("added") or [] if p.startswith("/etc/"))
         if dropped:
-            self.warnings.append(f"dropped {len(dropped)} /etc path(s), first: {dropped[0]}")
+            self.warnings.append(
+                f"dropped {len(dropped)} /etc path(s), first: {dropped[0]}"
+            )
         return kept
 
     def stage(self, kept, dest):
@@ -376,7 +437,9 @@ def write_release(dest, args):
         "EXTENSION_RELOAD_MANAGER=1",
     ]
     if args.manifest["udev_trigger"]:
-        lines.append('LUMINUSOS_UDEV_TRIGGER="' + " ".join(args.manifest["udev_trigger"]) + '"')
+        lines.append(
+            'LUMINUSOS_UDEV_TRIGGER="' + " ".join(args.manifest["udev_trigger"]) + '"'
+        )
     path = f"{rel_dir}/extension-release.luminusos-{fid}_{version}"
     with open(path, "w", encoding="utf-8") as fh:
         fh.write("\n".join(lines) + "\n")
@@ -400,20 +463,24 @@ def pack(dest, args, guard):
     raw_size = os.path.getsize(raw)
     if raw_size > expanded_limit:
         os.unlink(raw)
-        sys.exit(f"guard: {name}.raw is {raw_size} bytes, over the expanded budget of {expanded_limit}")
+        sys.exit(
+            f"guard: {name}.raw is {raw_size} bytes, over the expanded budget of {expanded_limit}"
+        )
     subprocess.run([args.xz, "-T0", "-k", "-f", raw], check=True)
     xz_size = os.path.getsize(xz)
     if xz_size > compressed_limit:
         os.unlink(raw)
         os.unlink(xz)
-        sys.exit(f"guard: {name}.raw.xz is {xz_size} bytes, over the compressed budget of {compressed_limit}")
+        sys.exit(
+            f"guard: {name}.raw.xz is {xz_size} bytes, over the compressed budget of {compressed_limit}"
+        )
     nodes = {}
     for top, dirs, files in os.walk(dest):
         for n in dirs + files:
             full = os.path.join(top, n)
             mode = os.lstat(full).st_mode
             kind = "d" if stat.S_ISDIR(mode) else "l" if stat.S_ISLNK(mode) else "f"
-            nodes[full[len(dest):]] = kind
+            nodes[full[len(dest) :]] = kind
     meta = {
         "format": 1,
         "id": fid,
@@ -435,7 +502,11 @@ def pack(dest, args, guard):
     with open(f"{args.out}/{name}.json", "w", encoding="utf-8") as fh:
         json.dump(meta, fh, indent=2, sort_keys=True)
         fh.write("\n")
-    print(json.dumps({k: meta[k] for k in ("raw", "raw_bytes", "raw_xz_bytes", "raw_sha256")}))
+    print(
+        json.dumps(
+            {k: meta[k] for k in ("raw", "raw_bytes", "raw_xz_bytes", "raw_sha256")}
+        )
+    )
 
 
 def main():

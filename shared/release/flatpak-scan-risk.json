@@ -1,0 +1,12 @@
+{
+  "schema_version": 1,
+  "kind": "flatpak-preinstall-scan-exclusion",
+  "excluded_path": "/var/lib/flatpak",
+  "editions": ["workstation"],
+  "component_scopes": ["workstation_payload", "installer_live"],
+  "owner": "leandromqrs",
+  "accepted_at": "2026-11-16T00:00:00Z",
+  "expires_at": "2026-12-16T00:00:00Z",
+  "reason": "Preinstalled Flatpaks include essential applications and must remain available for offline installations; their vulnerability findings are temporarily excluded from release scanning.",
+  "follow_up": "replace with exact per-finding exceptions"
+}

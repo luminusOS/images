@@ -1,0 +1,94 @@
+name: VM capability probe
+
+on:
+  workflow_dispatch:
+    inputs:
+      probe_mode:
+        description: Capability probe or static vsock inventory
+        type: choice
+        required: true
+        default: kvm
+        options:
+          - kvm
+          - vsock-inventory
+
+permissions:
+  contents: read
+
+jobs:
+  probe:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Install probe tooling
+        if: ${{ inputs.probe_mode == 'kvm' }}
+        timeout-minutes: 8
+        run: |
+          set -euo pipefail
+          output="${RUNNER_TEMP}/vm-capability-probe"
+          mkdir -p "$output"
+          df -B1 "$output" >"$output/disk-before-apt.stdout" 2>"$output/disk-before-apt.stderr"
+          { sudo apt-get update; } >"$output/apt-update.stdout" 2>"$output/apt-update.stderr"
+          {
+            sudo apt-get install --no-install-recommends -y qemu-system-x86 ovmf swtpm
+          } >"$output/apt-install.stdout" 2>"$output/apt-install.stderr"
+      - name: Record capabilities, not guest validation
+        if: ${{ !cancelled() }}
+        timeout-minutes: 2
+        env:
+          PROBE_MODE: ${{ inputs.probe_mode }}
+        run: |
+          set -euo pipefail
+          case "$PROBE_MODE" in
+            kvm) probe_args=() ;;
+            vsock-inventory) probe_args=(--vsock-inventory-only) ;;
+            *) exit 2 ;;
+          esac
+          output="${RUNNER_TEMP}/vm-capability-probe"
+          mkdir -p "$output"
+          {
+            id
+            uid="$(id -u)"
+            test "$uid" -ne 0
+            passwd_entry="$(getent passwd "$uid")"
+            printf '%s\n' "$passwd_entry"
+            user="${passwd_entry%%:*}"
+            test "$(id -u "$user")" = "$uid"
+            group_entry="$(getent group kvm)"
+            printf '%s\n' "$group_entry"
+            IFS=: read -r group_name _ gid _ <<< "$group_entry"
+            test "$group_name" = kvm
+            test -n "$gid"
+            test -x /usr/sbin/runuser
+            /usr/sbin/runuser --version
+            sudo -n -l
+            helper=(
+              sudo -n -- /usr/sbin/runuser -u "$user" -g kvm --
+              /usr/bin/env -i PATH=/usr/bin:/bin LANG=C.UTF-8
+            )
+            "${helper[@]}" /usr/bin/id
+            actual_uid="$("${helper[@]}" /usr/bin/id -u)"
+            actual_gid="$("${helper[@]}" /usr/bin/id -g)"
+            printf 'Expected UID=%s GID=%s; actual UID=%s GID=%s\n' \
+              "$uid" "$gid" "$actual_uid" "$actual_gid"
+            test "$actual_uid" = "$uid"
+            test "$actual_gid" = "$gid"
+          } >"$output/runner-identity.stdout" 2>"$output/runner-identity.stderr"
+          {
+            "${helper[@]}" \
+              GITHUB_SHA="$GITHUB_SHA" GITHUB_REF="$GITHUB_REF" \
+              GITHUB_RUN_ID="$GITHUB_RUN_ID" ImageVersion="${ImageVersion:-}" \
+              /usr/bin/python3 .github/scripts/ci-vm-probe.py "$output" \
+              --expected-uid "$uid" "${probe_args[@]}"
+          } >"$output/launcher.stdout" 2>"$output/launcher.stderr"
+      - name: Preserve evidence including failures
+        if: always()
+        timeout-minutes: 3
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: vm-capability-probe-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/vm-capability-probe/
+          if-no-files-found: error

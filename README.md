@@ -1,88 +1,52 @@
 <div align="center">
-  <img src="editions/workstation/assets/logo.png" width="160" />
-</div>
+  <img src="editions/workstation/assets/logo.png" width="128" alt="Luminus OS logo" />
 
 # Luminus OS
 
-An immutable operating system built on [Fedora bootc](https://containers.github.io/bootc/), with atomic updates, OCI container delivery, and a GNOME workstation packaged as installable artifacts.
+An immutable Fedora bootc desktop with GNOME, atomic updates, and rollback.
 
-## Editions
+[Downloads](https://github.com/luminusOS/images/releases) · [Build locally](#build-locally) · [Documentation](#documentation)
 
-| Edition | Description | Output |
-| --- | --- | --- |
-| **core** | Minimal base for downstream Luminus images | `luminusos:<tag>` container image |
-| **workstation** | GNOME desktop for PCs and notebooks | Container image, installable ISO (Sirius), qcow2 |
+</div>
 
-Planned editions (not active build targets yet): **mobile**, **cast**, **play**, **education**. Planning notes live under `editions/`.
+## Images
 
-## Quick Start
+- **Workstation** — GNOME desktop for PCs and notebooks, available as an installer ISO, qcow2 disk, and OCI image (`ghcr.io/luminusos/luminusos-workstation`). The ISO uses the Sirius installer.
+- **Core** — shared base for Luminus OS images (`ghcr.io/luminusos/luminusos`).
 
-```bash
-just build workstation        # build the desktop image
-just build sysext dummy       # build a hardware feature extension for it
-just package workstation iso  # produce the installer ISO
-just qemu iso                 # boot it in QEMU/KVM
-```
+> [!IMPORTANT]
+> Testing releases are pre-releases. Use a disposable VM to evaluate them before installing on hardware, and back up your data.
 
-See [CONTRIBUTING.md](CONTRIBUTING.md) for prerequisites, faster iteration flags, packaging, and QEMU testing.
+## Build locally
 
-### Offline hardware feature lab ISO
+Use a Linux host with Buildah and sudo access; QEMU/KVM is needed for VM testing. Install `just` (CI uses 1.46.0), Python 3.11+, and `jq`. See the [development guide](CONTRIBUTING.md) for Python dependencies and build options.
 
-1. Use a local workstation image whose embedded trusted keyring verifies the feature snapshot. Export the exact image named in the signed descriptor with `skopeo copy --preserve-digests docker://REGISTRY/IMAGE@sha256:DIGEST oci:.test/payload.oci:latest`. Export from a registry that retains the original compressed blobs: exporting from `containers-storage:` can require recompression and change the digest.
-2. Put the raw payloads, `SHA256SUMS.raw`, `release.json`, and both detached signatures in `.test/installer-inputs/sysext/`. Do not copy signing keys into the build context.
-3. Put the locally built Sirius RPM in `.test/installer-inputs/sirius-installer.rpm`. Set `SIRIUS_RPM_VERSION` to its RPM version and `SIRIUS_SHA256` to the RPM file's SHA-256. Run `INSTALLER_FEATURES=1 SIRIUS_LOCAL_RPM=1 just build workstation-iso`.
-
-The build checks the OCI manifest and blobs, live version, signatures, and raw files. The snapshot must contain exactly the features that the live installer can discover, excluding the probe. The snapshot goes into the live root only. These flags do not enable hosted release integration.
-
-## Versioning
-
-Every build has a channel-neutral version, `{FEDORA_VERSION}.{YYYYMMDD}`, written to `/usr/lib/os-release`. The channel only appears in image tags:
-
-| Channel | Dated tag | Fedora tag | Channel tag | GitHub release |
-| --- | --- | --- | --- | --- |
-| testing | `testing-45.20260923` | `testing-45` | `testing` | `testing-45.20260923` (pre-release) |
-| stable | `45.20260923` | `45` | `latest` | `v45.20260923` |
-
-Tags apply to both `ghcr.io/luminusos/luminusos` and `ghcr.io/luminusos/luminusos-workstation`.
-
-`config/releases.env` on `main` lists the Fedora releases LuminusOS builds (`SUPPORTED_RELEASES`) and the newest one (`LATEST_RELEASE`). Every branch reads it from `main`. Builds of unsupported releases fail. Only `LATEST_RELEASE` moves the floating `testing` and `latest` tags, so they never go back to an older release. Stable promotion is refused until Fedora itself has released that version, i.e. until `quay.io/fedora/fedora-bootc:latest` reaches it.
-
-Published images are signed with cosign and installed systems refuse unsigned updates. Verify manually with:
+Fedora Toolbox is supported with a dedicated Buildah store on the shared home filesystem; see [toolbox storage setup](CONTRIBUTING.md#builds-inside-fedora-toolbox).
 
 ```bash
-cosign verify --key editions/workstation/files/system/etc/pki/containers/luminusos.pub ghcr.io/luminusos/luminusos-workstation:testing
+git clone https://github.com/luminusOS/images.git
+cd images
+just build workstation
+just package workstation iso
+just qemu iso
 ```
 
-### Release pipeline
+For a directly bootable VM disk, use `just package workstation qcow2`. To build only the shared base, use `just build core`.
 
-1. **Testing containers**: `auto-testing` checks daily whether the Fedora base image changed. When it did, it builds and signs new containers (no ISO/qcow2) and publishes a pre-release `testing-<fedora>.<YYYYMMDD>.<n>` with generated notes: major package versions, commits since the previous release and the `bootc switch` command. Run it manually with `force` to rebuild without a base change.
-2. **Testing ISO**: run the `publish` workflow with `channel=testing`. It builds new images, packages and boot-tests the ISO/qcow2, and publishes a pre-release.
-3. **Stable**: after validating a testing build, run `publish` with `channel=stable` and `promote_version=45.20260923` (or `45.20260923.2` for an `auto-testing` build). Stable never rebuilds; it copies the `testing-45.20260923` images to the stable tags with identical digests, then repackages, boot-tests and publishes a normal release.
+For workflow changes, run the [workflow lint checks](CONTRIBUTING.md#workflow-lint), including ShellCheck and Pyflakes.
 
-Installed systems follow `UPDATE_CHANNEL` in `config/versions.env` (it sets the Sirius `target_imgref`), independent of which channel an ISO was published on. It stays `testing` until the first stable release exists; switch it to `stable` to make new installs track `luminusos-workstation:{FEDORA_VERSION}`.
+## Updates and trust
 
-## Rebasing to Luminus OS
+Images are delivered through OCI registries; releases require cosign signatures and validation evidence before promotion. Installed systems support atomic updates and rollback.
 
-Rebase an existing bootc-capable Fedora Atomic system:
+Scheduled releases update core and workstation through `bootc upgrade`. ISO and qcow2 downloads are updated only by a manual full release. The first stable release of each Fedora line must be a full release.
 
-```bash
-bootc switch ghcr.io/luminusos/luminusos-workstation:testing
-```
+See the [release strategy](docs/release-strategy.md) for channels, signature verification, download checksums, and installation acceptance criteria. Shipping a trust policy alone does not establish that an installed system rejects untrusted updates.
 
-## CI & Releases
-
-| Workflow | Trigger | What it does |
-| --- | --- | --- |
-| `ci` | Push to `main`, PRs | Lint, unit/config tests, workflow lint |
-| `build-containers` | Push/PR on `main` and `f*`, or manual | Validation build of `core` and `workstation`. It never publishes |
-| `auto-testing` | Daily, or manual | Builds, signs and pushes testing containers (no ISO/qcow2) and publishes a pre-release with generated notes, only when the Fedora base digest changed |
-| `publish` | Manual | `testing`: builds, pushes, packages and boot-tests ISO/qcow2, publishes a pre-release. `stable`: promotes an existing testing build, repackages, boot-tests, publishes a release |
-
-ISO and qcow2 downloads are hosted at `download.luminusos.org` on Cloudflare R2. Each channel retains its latest published artifact release; previous R2 versions are removed after the new files and metadata are published. SourceForge remains a backup, and GitHub Releases carry download links and SHA256 checksums. Older GitHub release links to R2 expire when that channel is updated.
-
-The publish workflow requires GitHub Actions secrets `R2_ACCESS_KEY_ID` and `R2_SECRET_ACCESS_KEY` for an R2 API token with object read and write access to the `luminus-downloads` bucket. The scheduled container-only releases do not change downloadable artifacts.
+Stable candidates come from `release/<Fedora>` branches and wait for the repository owner's approval after installation validation. See the [stable release runbook](docs/release-strategy.md#stable-release-runbook) for release operations and [rollback](docs/release-strategy.md#revert).
 
 ## Documentation
 
-- [ARCHITECTURE.md](ARCHITECTURE.md): image layering, installer flow, storage layout, CI internals
-- [CONTRIBUTING.md](CONTRIBUTING.md): local builds, tests, packaging, contribution policies
+- [Architecture](ARCHITECTURE.md) — image layers, Sirius installation, and storage layout.
+- [Development guide](CONTRIBUTING.md) — local builds, packaging, tests, and QEMU workflows.
+- [Release strategy](docs/release-strategy.md) — candidate validation and promotion without rebuilding approved payloads.

@@ -21,27 +21,38 @@ Do not add other edition scaffolding unless the package set, target devices, ins
 - Install to a QEMU disk: `just qemu install`
 - Boot the installed QEMU disk: `just qemu run`
 - Build only the workstation ISO root image for debugging: `just build workstation-iso`
-- Build one hardware feature extension for the local workstation image: `just build sysext <feature>`
-- Run the hardware feature container lab (podman): `bash tests/sysext-lab.sh`
+- Verify the hardware feature build and runtime contracts: `bash tests/sysext-lab.sh` (rootless Podman)
 
 Use `QEMU_RESET_DISK=1 just qemu iso` when the installer test needs a fresh disk.
 
+`QEMU_TPM=1` and `QEMU_SECURE_BOOT=1` independently enable optional local VM features; neither is required by Sirius. They require swtpm or enrolled Secure Boot firmware respectively. Keep the same disk path to preserve per-VM TPM/NVRAM state, and do not reset NVRAM with these options. Requested features must fail explicitly when prerequisites are unavailable. Verify security state inside the guest rather than inferring it from flags.
+
 ## Script Conventions
 
-- Build helper scripts use `.sh` extensions.
+- Repository-owned automation uses Python scripts with `.py` extensions and explicit `python3` entrypoints.
 - Shared data/config inputs live in `shared/`.
-- Do not add shared shell scripts unless there is a concrete cross-edition need that cannot live in `core`.
-- Edition scripts live under their edition, for example `editions/workstation/build.sh`.
+- Prefer the Python standard library and subprocess argument lists; do not use `shell=True` for repository automation.
+- Do not add shared helpers unless there is a concrete cross-edition need that cannot live in `core`.
+- Edition scripts live under their edition, for example `editions/workstation/build.py`.
 - Containerfiles may call edition scripts through a `/ctx` bind mount.
-- Hardware feature manifests live in `editions/workstation/features/<id>/feature.env`; their build, guard and release tools live in `editions/workstation/sysext/`. The contract is in `../docs/images/2026-11-15-hardware-features-sysext-plan.md`.
+- The hardware feature build and container lab retain their existing Bash entry points. Keep their fixture metadata in `editions/workstation/features/`.
+- Hardware-feature manifests and build helpers live under
+  `editions/workstation/features/` and `editions/workstation/sysext/`.
+  Run the isolated container lab with `bash tests/sysext-lab.sh`.
 
 ## Installer Notes
 
 The workstation ISO uses Sirius (the LuminusOS installer, consumed as a prebuilt RPM from its GitHub release) and installs the embedded workstation image from container storage. ISO packaging uses `luminusos-workstation:<tag>-iso` as the live root and `luminusos-workstation:<tag>` as the installed payload. The live ISO itself is not booted as a bootc deployment.
 
-The Sirius ISO install path should use Btrfs for Linux filesystems. Keep `/usr/lib/image-builder/bootc/disk.yaml` (which controls the image-builder filesystem layout and overrides `--bootc-default-fs`) aligned with the Sirius repart templates in `files/installer/usr/share/sirius/repart.d/`. Root, home, and var stay on Btrfs. `/boot` must remain ext4 because image-builder cannot generate a qcow2 with a Btrfs `/boot`. The ISO boot menu is configured through `/usr/lib/image-builder/bootc/iso.yaml`.
+The Sirius ISO install path should use Btrfs for Linux filesystems. Keep `/usr/lib/image-builder/bootc/disk.yaml` (which controls the image-builder filesystem layout and overrides `--bootc-default-fs`) aligned with the Sirius repart templates in `files/installer/usr/share/sirius/repart.d/`. Root, home, and var stay on Btrfs. The qcow2 layout has one `root` subvolume, and neither it nor the Sirius templates use separate `var` or `home` subvolumes. `/boot` must remain ext4 because image-builder cannot generate a qcow2 with a Btrfs `/boot`. The ISO boot menu is configured through `/usr/lib/image-builder/bootc/iso.yaml`.
 
 Sirius is configured through `/etc/sirius/distro.toml` and `/etc/sirius/sirius.toml`, installed only into the ISO live root by `editions/workstation/Containerfile.installer`. The installed workstation payload should not ship Sirius.
+
+## Stable Releases
+
+Scheduled releases publish OCI updates only. To prepare ISO and qcow2 downloads, or to bootstrap a stable Fedora line, dispatch `publish.yml` with `artifacts=full`.
+
+Follow the [stable release runbook](docs/release-strategy.md#stable-release-runbook). Stable candidates come from `release/<Fedora>` and stop at the `stable` GitHub Environment. Only the repository owner approves. Agents must never approve or publish stable, accept risk exceptions, or read secret values.
 
 ## Cleanup Rules
 

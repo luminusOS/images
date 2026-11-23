@@ -15,5 +15,3 @@ shared/bootc-image-builder.toml
 .test/*
 !.test/payload.oci
 !.test/payload.oci/**
-!.test/installer-inputs
-!.test/installer-inputs/**

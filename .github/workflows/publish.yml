@@ -1,58 +1,336 @@
-name: Publish
+name: Image Publication
 
 "on":
   workflow_dispatch:
     inputs:
+      inert_r2_probe:
+        description: "Upload an inert private R2 handoff payload only"
+        type: boolean
+        default: false
       channel:
-        description: "testing builds a new release; stable promotes an existing testing build"
+        description: "testing builds from main; stable builds from its release/<Fedora> line"
         type: choice
         options: [testing, stable]
         default: testing
-      promote_version:
-        description: "Stable only: testing build to promote, e.g. 45.20260923 or 45.20260923.2"
-        default: ""
       fedora_version:
         description: "Fedora version (blank uses config/versions.env)"
         default: ""
       sirius_version:
         description: "Sirius release (blank uses config/versions.env)"
         default: ""
-      sirius_sha256:
-        description: "SHA256 of the Sirius release RPM (required with sirius_version)"
-        default: ""
       skip_flatpaks:
         description: "Skip Flatpak preinstall (faster test builds)"
         default: "0"
+      validation_run_id:
+        description: "Protected installation validation run for a previously prepared candidate"
+        default: ""
+      candidate_run_id:
+        description: "Prepared candidate run to resume; blank prepares a new candidate"
+        default: ""
+      artifacts:
+        description: "auto: image for a new candidate, the signed kind on resume; image: OCI images only; full: also installer, ISO and qcow2"
+        type: choice
+        options: [auto, image, full]
+        default: auto
+  workflow_call:
+    inputs:
+      detected_fedora_version: {type: string, default: "__not_supplied__"}
+      detected_base_digest: {type: string, default: "__not_supplied__"}
+      channel: {type: string, default: testing}
+      fedora_version: {type: string, default: ""}
+      sirius_version: {type: string, default: ""}
+      skip_flatpaks: {type: string, default: "0"}
+      validation_run_id: {type: string, default: ""}
+      candidate_run_id: {type: string, default: ""}
+      artifacts: {type: string, default: auto}
+      build_sequence: {type: boolean, default: false}
+      force_core: {type: boolean, default: false}
+      security_findings_bypass: {type: boolean, default: false}
+    secrets:
+      R2_INERT_HANDOFF_ACCESS_KEY_ID:
+        description: "Dedicated inert R2 producer credential; probe uses the inert-r2-handoff environment"
+        required: false
+      R2_INERT_HANDOFF_SECRET_ACCESS_KEY:
+        description: "Dedicated inert R2 producer credential; probe uses the inert-r2-handoff environment"
+        required: false
+      CANDIDATE_COSIGN_PRIVATE_KEY:
+        description: "Isolated candidate signing key; read from the candidate-staging environment"
+        required: false
+      CANDIDATE_COSIGN_PASSWORD:
+        description: "Isolated candidate signing key; read from the candidate-staging environment"
+        required: false
+      COSIGN_PRIVATE_KEY: {required: false}
+      COSIGN_PASSWORD: {required: false}
+      R2_ACCESS_KEY_ID: {required: false}
+      R2_SECRET_ACCESS_KEY: {required: false}
+      SF_USER: {required: false}
+      SF_SSH_KEY: {required: false}
 
+permissions:
+  contents: read
+
+env:
+  SECURITY_FINDINGS_BYPASS: ${{ inputs.security_findings_bypass || false }}
+  BYPASS_CHANNEL: ${{ inputs.channel }}
+  BYPASS_CANDIDATE: ${{ inputs.candidate_run_id }}
+  BYPASS_VALIDATION: ${{ inputs.validation_run_id }}
+
+# Each channel and line serializes only with itself: a stable run waiting
+# days for approval must not queue another line or testing, or let GitHub
+# cancel a run already pending.
 concurrency:
-  group: publish
+  group: ${{ github.event_name == 'workflow_dispatch' && inputs.inert_r2_probe == true && format('luminus-inert-r2-{0}', github.repository) || format('luminus-release-{0}-{1}-{2}', github.repository, inputs.channel, github.ref_name) }}
   cancel-in-progress: false
 
 jobs:
-  containers:
-    name: Build and push containers
-    # The signing key is available to this workflow, and only main may use it.
-    if: github.ref == 'refs/heads/main'
+  r2-producer-probe:
+    name: r2-producer-probe
+    if: ${{ github.event_name == 'workflow_dispatch' && inputs.inert_r2_probe == true && github.ref == 'refs/heads/main' && github.repository_id == '1118572971' }}
+    environment: inert-r2-handoff
+    runs-on: ubuntu-26.04
+    timeout-minutes: 10
     permissions:
       contents: read
-      packages: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          persist-credentials: false
+      - name: Upload inert R2 handoff payload
+        env:
+          INERT_R2_PROBE: "true"
+          R2_PROBE_ACCESS_KEY_ID: ${{ secrets.R2_INERT_HANDOFF_ACCESS_KEY_ID }}
+          R2_PROBE_SECRET_ACCESS_KEY: ${{ secrets.R2_INERT_HANDOFF_SECRET_ACCESS_KEY }}
+        run: python3 .github/scripts/workflow/inert_r2_probe.py upload
+      - name: Record inert R2 handoff identity
+        env:
+          INERT_R2_PROBE: "true"
+          R2_PROBE_ACCESS_KEY_ID: ${{ secrets.R2_INERT_HANDOFF_ACCESS_KEY_ID }}
+          R2_PROBE_SECRET_ACCESS_KEY: ${{ secrets.R2_INERT_HANDOFF_SECRET_ACCESS_KEY }}
+        run: python3 .github/scripts/workflow/inert_r2_probe.py record
+
+  inputs:
+    if: ${{ !(github.event_name == 'workflow_dispatch' && inputs.inert_r2_probe == true) }}
+    runs-on: ubuntu-26.04
+    permissions:
+      contents: read
+    outputs:
+      release_kind: ${{ steps.kind.outputs.release_kind }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with: {persist-credentials: false}
+      - name: Authorize diagnostic security bypass
+        run: python3 .github/scripts/workflow/supply_chain.py validate-bypass
+      - name: Validate phase inputs
+        env:
+          CANDIDATE: ${{ inputs.candidate_run_id }}
+          VALIDATION: ${{ inputs.validation_run_id }}
+          CHANNEL: ${{ inputs.channel }}
+          FEDORA: ${{ inputs.fedora_version }}
+        run: python3 .github/scripts/workflow/release_pipeline.py check-phase
+      - name: Resolve release kind
+        id: kind
+        env:
+          ARTIFACTS: ${{ inputs.artifacts }}
+          CANDIDATE: ${{ inputs.candidate_run_id }}
+        run: python3 .github/scripts/workflow/release_pipeline.py resolve-kind
+
+  quality:
+    if: ${{ !(github.event_name == 'workflow_dispatch' && inputs.inert_r2_probe == true) }}
+    name: Validate source
+    permissions:
+      contents: read
+    uses: ./.github/workflows/ci.yml
+
+  containers:
+    name: Build candidate images
+    needs: [quality, inputs]
+    # Candidate signing keys reach only a channel's own source line: main for
+    # testing, release/<Fedora> for stable. check-phase pins the exact line.
+    if: ((inputs.channel == 'testing' && github.ref == 'refs/heads/main') || (inputs.channel == 'stable' && startsWith(github.ref, 'refs/heads/release/'))) && !(github.event_name == 'workflow_dispatch' && inputs.inert_r2_probe == true) && inputs.candidate_run_id == '' && inputs.validation_run_id == ''
+    permissions:
+      contents: read
+      packages: read
+      actions: read
     uses: ./.github/workflows/containers.yml
     with:
       channel: ${{ inputs.channel }}
-      promote_version: ${{ inputs.promote_version }}
+      candidate_id: ${{ github.run_id }}-${{ github.run_attempt }}
       fedora_version: ${{ inputs.fedora_version }}
+      detected_fedora_version: ${{ contains(github.workflow_ref, '/.github/workflows/publish.yml@') && '__not_supplied__' || inputs.detected_fedora_version }}
+      detected_base_digest: ${{ contains(github.workflow_ref, '/.github/workflows/publish.yml@') && '__not_supplied__' || inputs.detected_base_digest }}
       sirius_version: ${{ inputs.sirius_version }}
-      sirius_sha256: ${{ inputs.sirius_sha256 }}
       skip_flatpaks: ${{ inputs.skip_flatpaks }}
-      build_installer: true
-      publish: true
-      builder_mode: registry
-    secrets: inherit
+      build_installer: ${{ needs.inputs.outputs.release_kind == 'full' }}
+      publish: false
+      builder_mode: local
+      # An image candidate always takes a sequence so its version sorts above
+      # an unsequenced release of the same day.
+      build_sequence: ${{ inputs.build_sequence || needs.inputs.outputs.release_kind == 'image' }}
+      force_core: ${{ inputs.force_core || false }}
+
+  publish-images:
+    name: Publish candidate containers
+    needs: [inputs, containers]
+    if: ${{ !(github.event_name == 'workflow_dispatch' && inputs.inert_r2_probe == true) && !inputs.security_findings_bypass && ((inputs.channel == 'testing' && github.ref == 'refs/heads/main') || (inputs.channel == 'stable' && startsWith(github.ref, 'refs/heads/release/'))) }}
+    runs-on: ubuntu-26.04
+    environment: candidate-staging
+    permissions:
+      contents: read
+      packages: write
+    outputs:
+      core_candidate: ${{ steps.candidates.outputs.core }}
+      workstation_candidate: ${{ steps.candidates.outputs.workstation }}
+      installer_candidate: ${{ steps.candidates.outputs.installer }}
+    steps:
+      - uses: docker/setup-docker-action@3f1ab1ab0e29231562e4db4ca600c1a49653bac6 # v5.7.0
+        with:
+          daemon-config: '{"features":{"containerd-snapshotter":true}}'
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: sigstore/cosign-installer@756fe2d284c7292c4e9b62c8a28f1e5629c59532 # v4.1.3
+        with:
+          cosign-release: v2.5.3
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        if: needs.inputs.outputs.release_kind == 'full'
+        with:
+          name: installer-image
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: core-image
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: workstation-image
+      - name: Load verified core archive
+        env:
+          IMAGE: ${{ needs.containers.outputs.core_image }}
+          ARCHIVE: core-image.tar
+          ARCHIVE_SHA256: ${{ needs.containers.outputs.core_archive_sha256 }}
+          IMAGE_ID: ${{ needs.containers.outputs.core_image_id }}
+        run: python3 .github/scripts/workflow/image_archive.py load
+      - name: Load verified workstation archive
+        env:
+          IMAGE: ${{ needs.containers.outputs.workstation_image }}
+          ARCHIVE: workstation-image.tar
+          ARCHIVE_SHA256: ${{ needs.containers.outputs.workstation_archive_sha256 }}
+          IMAGE_ID: ${{ needs.containers.outputs.workstation_image_id }}
+        run: python3 .github/scripts/workflow/image_archive.py load
+      - name: Load verified installer archive
+        if: needs.inputs.outputs.release_kind == 'full'
+        env:
+          IMAGE: ${{ needs.containers.outputs.workstation_iso_image }}
+          ARCHIVE: installer-image.tar
+          ARCHIVE_SHA256: ${{ needs.containers.outputs.installer_archive_sha256 }}
+          IMAGE_ID: ${{ needs.containers.outputs.installer_image_id }}
+        run: python3 .github/scripts/workflow/image_archive.py load
+      - uses: docker/login-action@8aa5831fb8d48d8f76594c7ddde61ae58019f550 # v4.8.0
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - name: Push candidate images
+        id: candidates
+        env:
+          CORE_IMAGE: ${{ needs.containers.outputs.core_image }}
+          WORKSTATION_IMAGE: ${{ needs.containers.outputs.workstation_image }}
+          INSTALLER_IMAGE: ${{ needs.containers.outputs.workstation_iso_image }}
+          RELEASE_KIND: ${{ needs.inputs.outputs.release_kind }}
+          CANDIDATE_COSIGN_PRIVATE_KEY: ${{ secrets.CANDIDATE_COSIGN_PRIVATE_KEY }}
+          COSIGN_PASSWORD: ${{ secrets.CANDIDATE_COSIGN_PASSWORD }}
+        run: |
+          repository="ghcr.io/${GITHUB_REPOSITORY_OWNER,,}/luminusos-candidates"
+          candidate="${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
+          core="$repository:core-candidate-$candidate"
+          workstation="$repository:workstation-candidate-$candidate"
+          docker tag "$CORE_IMAGE" "$core"
+          docker tag "$WORKSTATION_IMAGE" "$workstation"
+          set -- "$core" "$workstation"
+          if [ "$RELEASE_KIND" = full ]; then
+            installer="$repository:workstation-iso-candidate-$candidate"
+            docker tag "$INSTALLER_IMAGE" "$installer"
+            set -- "$@" "$installer"
+          fi
+          python3 .github/scripts/workflow/sign_candidates.py "$@"
+
+  scan-candidates:
+    name: Scan staged candidates
+    needs: [inputs, containers, publish-images]
+    if: ${{ needs.publish-images.result == 'success' }}
+    runs-on: ubuntu-26.04
+    permissions:
+      contents: read
+      packages: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: sigstore/cosign-installer@756fe2d284c7292c4e9b62c8a28f1e5629c59532 # v4.1.3
+        with:
+          cosign-release: v2.5.3
+      - uses: docker/login-action@8aa5831fb8d48d8f76594c7ddde61ae58019f550 # v4.8.0
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - name: Verify staged candidate signatures
+        env:
+          CORE: ${{ needs.publish-images.outputs.core_candidate }}
+          WORKSTATION: ${{ needs.publish-images.outputs.workstation_candidate }}
+          INSTALLER: ${{ needs.publish-images.outputs.installer_candidate }}
+          RELEASE_KIND: ${{ needs.inputs.outputs.release_kind }}
+        run: |
+          set -- "$CORE" "$WORKSTATION"
+          if [ "$RELEASE_KIND" = full ]; then set -- "$@" "$INSTALLER"; fi
+          for image in "$@"; do
+            cosign verify --key shared/release/candidate.pub "$image" > /dev/null
+          done
+      - name: Install pinned scanners
+        run: |
+          python3 .github/scripts/workflow/install_tools.py --destination "$HOME/.local/bin"
+          echo "$HOME/.local/bin" >> "$GITHUB_PATH"
+      - name: Inspect staged testing candidates
+        id: inspect-testing
+        if: inputs.channel == 'testing'
+        env:
+          CORE: ${{ needs.publish-images.outputs.core_candidate }}
+          WORKSTATION: ${{ needs.publish-images.outputs.workstation_candidate }}
+          INSTALLER: ${{ needs.publish-images.outputs.installer_candidate }}
+          FEDORA: ${{ needs.containers.outputs.fedora_version }}
+          RELEASE_KIND: ${{ needs.inputs.outputs.release_kind }}
+        run: |
+          python3 .github/scripts/workflow/supply_chain.py inspect --image "$CORE" --output scan/core --source-sha "$GITHUB_SHA" --syft-version 1.34.2 --grype-version 0.101.1 --channel testing --fedora "$FEDORA" --edition core --component-scope core_payload --exceptions shared/release/exceptions/core-core_payload-testing-45.json --policy-sha256 b74bff8a94702538811e252d965959866ebd092bb0e58e041da2eaef9f7f53fd
+          python3 .github/scripts/workflow/supply_chain.py inspect --image "$WORKSTATION" --output scan/workstation --source-sha "$GITHUB_SHA" --syft-version 1.34.2 --grype-version 0.101.1 --channel testing --fedora "$FEDORA" --edition workstation --component-scope workstation_payload --exceptions shared/release/exceptions/workstation-workstation_payload-testing-45.json --policy-sha256 c7743c17b0962866b65d1f35f944a933ddf6d61666f26eed4f8ac46659cf53e7 --scan-exclusion shared/release/flatpak-scan-risk.json
+          if [ "$RELEASE_KIND" = full ]; then
+            python3 .github/scripts/workflow/supply_chain.py inspect --image "$INSTALLER" --output scan/installer --source-sha "$GITHUB_SHA" --syft-version 1.34.2 --grype-version 0.101.1 --channel testing --fedora "$FEDORA" --edition workstation --component-scope installer_live --exceptions shared/release/exceptions/workstation-installer_live-testing-45.json --policy-sha256 68491f6a0586b03bb7be2b44db147cc419822832918c5b3bbbf90a8b49be3dcc --scan-exclusion shared/release/flatpak-scan-risk.json
+          fi
+      - name: Inspect staged stable candidates
+        id: inspect-stable
+        if: inputs.channel == 'stable'
+        env:
+          CORE: ${{ needs.publish-images.outputs.core_candidate }}
+          WORKSTATION: ${{ needs.publish-images.outputs.workstation_candidate }}
+          INSTALLER: ${{ needs.publish-images.outputs.installer_candidate }}
+          FEDORA: ${{ needs.containers.outputs.fedora_version }}
+          RELEASE_KIND: ${{ needs.inputs.outputs.release_kind }}
+        run: |
+          # Every edition is scanned so one report shows all blocking findings.
+          status=0
+          python3 .github/scripts/workflow/supply_chain.py inspect --image "$CORE" --output scan/core --source-sha "$GITHUB_SHA" --syft-version 1.34.2 --grype-version 0.101.1 --channel stable --fedora "$FEDORA" --edition core --component-scope core_payload --exceptions shared/release/exceptions/core-core_payload-stable-45.json --policy-sha256 6abe439dd64f725ac641e220143d33409f418e583853cb0bdeb8c22bb5413dd1 || status=1
+          python3 .github/scripts/workflow/supply_chain.py inspect --image "$WORKSTATION" --output scan/workstation --source-sha "$GITHUB_SHA" --syft-version 1.34.2 --grype-version 0.101.1 --channel stable --fedora "$FEDORA" --edition workstation --component-scope workstation_payload --exceptions shared/release/exceptions/workstation-workstation_payload-stable-45.json --policy-sha256 6f7f176673760197e987c66fef0a6c583788dcf76cc301fa416e446a392df8c7 --scan-exclusion shared/release/flatpak-scan-risk-stable.json || status=1
+          if [ "$RELEASE_KIND" = full ]; then
+            python3 .github/scripts/workflow/supply_chain.py inspect --image "$INSTALLER" --output scan/installer --source-sha "$GITHUB_SHA" --syft-version 1.34.2 --grype-version 0.101.1 --channel stable --fedora "$FEDORA" --edition workstation --component-scope installer_live --exceptions shared/release/exceptions/workstation-installer_live-stable-45.json --policy-sha256 33dadb69bbcf0045c092a14bba3c733df310981aa76b614303cb64c577107383 --scan-exclusion shared/release/flatpak-scan-risk-stable.json || status=1
+          fi
+          exit "$status"
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        if: always() && (steps.inspect-testing.outcome != 'skipped' || steps.inspect-stable.outcome != 'skipped')
+        with:
+          name: candidate-scans
+          path: scan/
+          if-no-files-found: error
 
   iso:
     name: Package ISO
-    needs: [containers]
-    runs-on: ubuntu-latest
+    needs: [inputs, containers, publish-images]
+    if: ${{ !(github.event_name == 'workflow_dispatch' && inputs.inert_r2_probe == true) && (always() && inputs.candidate_run_id == '' && needs.inputs.outputs.release_kind == 'full' && needs.containers.result == 'success' && needs.publish-images.result == 'success') }}
+    runs-on: ubuntu-24.04
     timeout-minutes: 180
     permissions:
       contents: read
@@ -74,21 +352,21 @@ jobs:
 
       - name: Build ISO from prebuilt containers
         env:
-          # The ISO live root stays in the private candidate repository.
-          WORKSTATION_ISO_IMAGE: ${{ needs.containers.outputs.workstation_iso_image }}
+          NAMESPACE: ${{ needs.containers.outputs.image_namespace }}
           VERSION_TAG: ${{ needs.containers.outputs.version_tag }}
+          ISO_IMAGE: ${{ needs.publish-images.outputs.installer_candidate }}
           GHCR_USER: ${{ github.actor }}
           GHCR_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          set -euxo pipefail
+          set -euo pipefail
           sudo podman run --rm --privileged \
             --security-opt label=type:unconfined_t \
             -v "$PWD:/work" -w /work \
-            -e WORKSTATION_ISO_IMAGE="${WORKSTATION_ISO_IMAGE}" \
+            -e WORKSTATION_ISO_IMAGE="${ISO_IMAGE}" \
             -e OUTPUT_NAME="luminusos-workstation-${VERSION_TAG}.iso" \
             -e GHCR_USER="${GHCR_USER}" -e GHCR_TOKEN="${GHCR_TOKEN}" \
             "quay.io/fedora/fedora:${{ needs.containers.outputs.fedora_version }}" \
-            bash .github/scripts/ci-package.sh iso
+            sh -c 'dnf -y install python3 && exec python3 .github/scripts/ci-package.py iso'
 
       - name: Upload ISO artifact
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
@@ -100,8 +378,9 @@ jobs:
 
   qcow2:
     name: Package qcow2
-    needs: [containers]
-    runs-on: ubuntu-latest
+    needs: [inputs, containers, publish-images]
+    if: ${{ !(github.event_name == 'workflow_dispatch' && inputs.inert_r2_probe == true) && (always() && inputs.candidate_run_id == '' && needs.inputs.outputs.release_kind == 'full' && needs.containers.result == 'success' && needs.publish-images.result == 'success') }}
+    runs-on: ubuntu-24.04
     timeout-minutes: 180
     permissions:
       contents: read
@@ -125,18 +404,19 @@ jobs:
         env:
           NAMESPACE: ${{ needs.containers.outputs.image_namespace }}
           VERSION_TAG: ${{ needs.containers.outputs.version_tag }}
+          WORKSTATION_IMAGE: ${{ needs.publish-images.outputs.workstation_candidate }}
           GHCR_USER: ${{ github.actor }}
           GHCR_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          set -euxo pipefail
+          set -euo pipefail
           sudo podman run --rm --privileged \
             --security-opt label=type:unconfined_t \
             -v "$PWD:/work" -w /work \
-            -e WORKSTATION_IMAGE="ghcr.io/${NAMESPACE}/luminusos-workstation:${VERSION_TAG}" \
+            -e WORKSTATION_IMAGE="${WORKSTATION_IMAGE}" \
             -e OUTPUT_NAME="luminusos-workstation-${VERSION_TAG}.qcow2" \
             -e GHCR_USER="${GHCR_USER}" -e GHCR_TOKEN="${GHCR_TOKEN}" \
             "quay.io/fedora/fedora:${{ needs.containers.outputs.fedora_version }}" \
-            bash .github/scripts/ci-package.sh qcow2
+            sh -c 'dnf -y install python3 && exec python3 .github/scripts/ci-package.py qcow2'
 
       - name: Upload qcow2 artifact
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
@@ -147,9 +427,10 @@ jobs:
           if-no-files-found: error
 
   boot-test:
+    if: ${{ !(github.event_name == 'workflow_dispatch' && inputs.inert_r2_probe == true) && !cancelled() && needs.iso.result == 'success' && needs.qcow2.result == 'success' }}
     name: Boot smoke test
-    needs: [containers, iso, qcow2]
-    runs-on: ubuntu-latest
+    needs: [iso, qcow2]
+    runs-on: ubuntu-26.04
     timeout-minutes: 90
     steps:
       - name: Checkout
@@ -169,29 +450,34 @@ jobs:
       - name: Download artifacts
         uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
+          name: workstation-iso
           path: dist
-          pattern: workstation-*
-          merge-multiple: true
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333
+        with:
+          name: workstation-qcow2
+          path: dist
 
-      - name: Enable KVM for the runner user
+      - name: Enable KVM and vhost-vsock for the runner user
         run: |
-          echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' \
-            | sudo tee /etc/udev/rules.d/99-kvm4all.rules
+          printf '%s\n' \
+            'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' \
+            'KERNEL=="vhost-vsock", GROUP="kvm", MODE="0666"' \
+            | sudo tee /etc/udev/rules.d/99-luminus-vm.rules
+          sudo modprobe vhost_vsock
           sudo udevadm control --reload-rules
           sudo udevadm trigger --name-match=kvm
+          sudo udevadm trigger --name-match=vhost-vsock
 
       - name: Install QEMU
         run: |
           sudo apt-get update
-          sudo apt-get install -y qemu-system-x86 qemu-utils ovmf socat tesseract-ocr libguestfs-tools
+          sudo apt-get install -y qemu-system-x86 ovmf socat openssh-client tesseract-ocr
 
       - name: Boot installed system (qcow2)
-        env:
-          BOOT_TEST_EXPECTED_DIGEST: ${{ needs.containers.outputs.workstation_digest }}
-        run: .github/scripts/boot-test.sh disk dist/luminusos-workstation-*.qcow2 boot-test/disk
+        run: python3 .github/scripts/boot-test.py disk dist/luminusos-workstation-*.qcow2 boot-test/disk
 
       - name: Boot live ISO
-        run: .github/scripts/boot-test.sh iso dist/luminusos-workstation-*.iso boot-test/iso
+        run: python3 .github/scripts/boot-test.py iso dist/luminusos-workstation-*.iso boot-test/iso
 
       - name: Upload boot evidence
         if: always()
@@ -201,88 +487,312 @@ jobs:
           path: boot-test/
           if-no-files-found: warn
 
-  release:
-    name: Publish release
-    needs: [containers, iso, qcow2, boot-test]
-    runs-on: ubuntu-latest
+  prepare-candidate:
+    name: Bind candidate artifacts
+    needs: [quality, inputs, containers, publish-images, scan-candidates, iso, qcow2, boot-test]
+    # Image candidates skip the installer, disk and boot jobs by design; any
+    # other outcome of those jobs, or a full candidate without them, stops here.
+    if: >-
+      ${{ !cancelled() &&
+      !(github.event_name == 'workflow_dispatch' && inputs.inert_r2_probe == true) &&
+      !inputs.security_findings_bypass &&
+      ((inputs.channel == 'testing' && github.ref == 'refs/heads/main') ||
+      (inputs.channel == 'stable' && startsWith(github.ref, 'refs/heads/release/'))) &&
+      inputs.candidate_run_id == '' &&
+      needs.inputs.result == 'success' &&
+      needs.quality.result == 'success' &&
+      needs.containers.result == 'success' &&
+      needs.publish-images.result == 'success' &&
+      needs.scan-candidates.result == 'success' &&
+      ((needs.inputs.outputs.release_kind == 'full' && needs.iso.result == 'success' &&
+      needs.qcow2.result == 'success' && needs.boot-test.result == 'success') ||
+      (needs.inputs.outputs.release_kind == 'image' && needs.iso.result == 'skipped' &&
+      needs.qcow2.result == 'skipped' && needs.boot-test.result == 'skipped')) }}
+    runs-on: ubuntu-26.04
+    environment: candidate-staging
     permissions:
-      contents: write
+      contents: read
+      packages: read
     steps:
-      - name: Checkout
-        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-
-      - name: Download artifacts
-        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          path: dist
-          merge-multiple: true
-          pattern: workstation-*
-
-      - name: Build release notes with checksum table
-        shell: bash
-        run: |
-          set -euo pipefail
-          cd dist
-          {
-            echo "LuminusOS ${{ needs.containers.outputs.version_tag }}"
-            echo
-            echo "## Workstation"
-            echo
-            printf "Container: \`%s\`\n" "ghcr.io/${{ needs.containers.outputs.image_namespace }}/luminusos-workstation:${{ needs.containers.outputs.version_tag }}"
-            if [ -n "${{ needs.containers.outputs.fedora_bootc_digest }}" ]; then
-              echo
-              printf "Base: \`%s\`\n" "quay.io/fedora/fedora-bootc:${{ needs.containers.outputs.fedora_version }}@${{ needs.containers.outputs.fedora_bootc_digest }}"
-            fi
-            echo
-            echo "### Downloads (Cloudflare R2; SourceForge backup)"
-            echo
-            echo "| File | Size | SHA256 |"
-            echo "| --- | --- | --- |"
-            for f in luminusos-workstation-*; do
-              size="$(du -h "$f" | cut -f1)"
-              sha="$(sha256sum "$f" | cut -d' ' -f1)"
-              echo "| [${f}](https://download.luminusos.org/${{ inputs.channel }}/${{ needs.containers.outputs.version_tag }}/${f}) | ${size} | \`${sha}\` |"
-            done
-          } > notes.md
-
-      - name: Upload artifacts to SourceForge
+          persist-credentials: false
+      - uses: sigstore/cosign-installer@756fe2d284c7292c4e9b62c8a28f1e5629c59532 # v4.1.3
+        with:
+          cosign-release: v2.5.3
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        if: needs.inputs.outputs.release_kind == 'full'
+        with:
+          name: workstation-iso
+          path: candidate
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        if: needs.inputs.outputs.release_kind == 'full'
+        with:
+          name: workstation-qcow2
+          path: candidate
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: candidate-scans
+          path: candidate/scan
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        if: needs.inputs.outputs.release_kind == 'full'
+        with:
+          name: boot-test
+          path: candidate/boot
+      - uses: docker/login-action@8aa5831fb8d48d8f76594c7ddde61ae58019f550
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - name: Install published base tools
+        if: needs.inputs.outputs.release_kind == 'image'
+        run: sudo apt-get update && sudo apt-get install -y skopeo
+      - name: Resolve the published base
+        if: needs.inputs.outputs.release_kind == 'image'
         env:
-          SF_USER: ${{ secrets.SF_USER }}
-          SF_SSH_KEY: ${{ secrets.SF_SSH_KEY }}
-        run: |
-          set -euo pipefail
-          install -m 0700 -d ~/.ssh
-          install -m 0600 /dev/null ~/.ssh/id_sourceforge
-          printf '%s\n' "${SF_SSH_KEY}" > ~/.ssh/id_sourceforge
-          ssh-keyscan -t ed25519 frs.sourceforge.net > ~/.ssh/sourceforge_host 2>/dev/null
-          fingerprint="$(ssh-keygen -lf ~/.ssh/sourceforge_host -E sha256 | awk '{print $2}')"
-          test "$fingerprint" = 'SHA256:209BDmH3jsRyO9UeGPPgLWPSegKmYCBIya0nR/AWWCY'
-          cat ~/.ssh/sourceforge_host >> ~/.ssh/known_hosts
-          dest="${SF_USER}@frs.sourceforge.net:/home/frs/project/luminusos/${{ needs.containers.outputs.version_tag }}/"
-          rsync -avP --rsh="ssh -i ~/.ssh/id_sourceforge" dist/ "${dest}"
-
-      - name: Publish and prune R2 downloads
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          CHANNEL: ${{ inputs.channel }}
+          FEDORA_VERSION: ${{ needs.containers.outputs.fedora_version }}
+        run: python3 .github/scripts/workflow/published_base.py --repository "$GITHUB_REPOSITORY" --channel "$CHANNEL" --fedora "$FEDORA_VERSION" --output "$RUNNER_TEMP/published-base.json"
+      - name: Create candidate metadata
         env:
+          RELEASE_KIND: ${{ needs.inputs.outputs.release_kind }}
+          PUBLISHED_BASE: ${{ runner.temp }}/published-base.json
+          CHANNEL: ${{ inputs.channel }}
+          VERSION_TAG: ${{ needs.containers.outputs.version_tag }}
+          BUILD_VERSION: ${{ needs.containers.outputs.build_version }}
+          FEDORA_VERSION: ${{ needs.containers.outputs.fedora_version }}
+          FEDORA_BOOTC_DIGEST: ${{ needs.containers.outputs.fedora_bootc_digest }}
+          CORE: ${{ needs.publish-images.outputs.core_candidate }}
+          WORKSTATION: ${{ needs.publish-images.outputs.workstation_candidate }}
+          INSTALLER: ${{ needs.publish-images.outputs.installer_candidate }}
+        run: |
+          set -- "$CORE" "$WORKSTATION"
+          if [ "$RELEASE_KIND" = full ]; then set -- "$@" "$INSTALLER"; fi
+          python3 .github/scripts/workflow/sign_candidates.py --metadata candidate-metadata.json "$@"
+      - name: Bind real gate outcomes
+        env:
+          RELEASE_KIND: ${{ needs.inputs.outputs.release_kind }}
+          QUALITY_RESULT: ${{ needs.quality.result }}
+          BOOT_RESULT: ${{ needs.boot-test.result }}
+          SCAN_RESULT: ${{ needs.scan-candidates.result }}
+          SOURCE_IMAGE_SHA: ${{ github.sha }}
+          CORE: ${{ needs.publish-images.outputs.core_candidate }}
+          WORKSTATION: ${{ needs.publish-images.outputs.workstation_candidate }}
+          INSTALLER: ${{ needs.publish-images.outputs.installer_candidate }}
+        run: python3 .github/scripts/workflow/release_publish.py prepare-gates candidate
+      - name: Sign candidate manifest
+        env:
+          CANDIDATE_COSIGN_PRIVATE_KEY: ${{ secrets.CANDIDATE_COSIGN_PRIVATE_KEY }}
+          COSIGN_PASSWORD: ${{ secrets.CANDIDATE_COSIGN_PASSWORD }}
+        run: python3 .github/scripts/workflow/release_pipeline.py create-candidate --metadata candidate-metadata.json --directory candidate --output candidate/candidate.json --public-key shared/release/candidate.pub
+      - name: Bind gate results to signed candidate
+        run: python3 .github/scripts/workflow/release_publish.py prepare-results candidate
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: release-candidate
+          path: candidate/
+          compression-level: 0
+          if-no-files-found: error
+
+  release-evidence:
+    name: Assemble candidate evidence
+    needs: [quality, inputs]
+    if: ${{ !(github.event_name == 'workflow_dispatch' && inputs.inert_r2_probe == true) && (!inputs.security_findings_bypass && ((inputs.channel == 'testing' && github.ref == 'refs/heads/main') || (inputs.channel == 'stable' && startsWith(github.ref, 'refs/heads/release/'))) && inputs.candidate_run_id != '' && inputs.validation_run_id != '') }}
+    runs-on: ubuntu-26.04
+    environment: candidate-staging
+    permissions:
+      actions: read
+      contents: read
+    outputs:
+      summary_sha256: ${{ steps.approval.outputs.summary_sha256 }}
+      release_kind: ${{ steps.candidate.outputs.release_kind }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with: {persist-credentials: false}
+      - uses: sigstore/cosign-installer@756fe2d284c7292c4e9b62c8a28f1e5629c59532
+        with: {cosign-release: v2.5.3}
+      - name: Fetch signed candidate from prior successful run
+        id: candidate
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          CANDIDATE_RUN_ID: ${{ inputs.candidate_run_id }}
+        run: python3 .github/scripts/workflow/release_pipeline.py fetch-candidate --repository "$GITHUB_REPOSITORY" --run-id "$CANDIDATE_RUN_ID" --output candidate --public-key shared/release/candidate.pub
+      - name: Check requested release kind against the signed candidate
+        env:
+          ARTIFACTS: ${{ inputs.artifacts }}
+          SIGNED: ${{ steps.candidate.outputs.release_kind }}
+        run: python3 .github/scripts/workflow/release_pipeline.py check-kind
+      - name: Fetch matching installation validation
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          VALIDATION_RUN_ID: ${{ inputs.validation_run_id }}
+        run: python3 .github/scripts/workflow/release_pipeline.py fetch-validation --repository "$GITHUB_REPOSITORY" --run-id "$VALIDATION_RUN_ID" --candidate candidate/candidate.json --output validation --public-key shared/release/candidate.pub
+      - name: Reconstruct signed gate results
+        run: python3 .github/scripts/workflow/release_publish.py prepare-results candidate
+      - name: Assemble release evidence
+        env:
+          CANDIDATE_COSIGN_PRIVATE_KEY: ${{ secrets.CANDIDATE_COSIGN_PRIVATE_KEY }}
+          COSIGN_PASSWORD: ${{ secrets.CANDIDATE_COSIGN_PASSWORD }}
+        run: python3 .github/scripts/workflow/release_pipeline.py assemble-evidence --candidate candidate/candidate.json --validation validation/validation.json --results candidate/results.json --output dist/release-evidence.json --public-key shared/release/candidate.pub
+      - name: Verify candidate evidence
+        run: python3 .github/scripts/workflow/release_publish.py verify-release --candidate candidate/candidate.json --evidence dist/release-evidence.json --public-key shared/release/candidate.pub
+      - name: Show what a stable approval accepts
+        id: approval
+        if: inputs.channel == 'stable'
+        run: python3 .github/scripts/workflow/release_publish.py approval-summary --candidate candidate/candidate.json --evidence dist/release-evidence.json --public-key shared/release/candidate.pub --output approval/approval-summary.json --policy-ref "$GITHUB_REF"
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: release-evidence
+          path: dist/
+          include-hidden-files: true
+          if-no-files-found: error
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        if: inputs.channel == 'stable'
+        with:
+          name: stable-approval-summary
+          path: approval/
+          if-no-files-found: error
+
+  release:
+    name: Promote validated candidate
+    needs: [quality, inputs, release-evidence]
+    if: ${{ !(github.event_name == 'workflow_dispatch' && inputs.inert_r2_probe == true) && (!inputs.security_findings_bypass && inputs.channel == 'testing' && github.ref == 'refs/heads/main' && inputs.candidate_run_id != '' && inputs.validation_run_id != '') }}
+    runs-on: ubuntu-26.04
+    # The official publishing credentials live only in this environment
+    # (main only) and in stable, never at repository level.
+    environment: testing-publish
+    # This group serializes public-tag writers across workflows; the workflow group does not.
+    concurrency:
+      group: image-publication-${{ github.repository }}-testing
+      cancel-in-progress: false
+    permissions:
+      actions: read
+      contents: write
+      packages: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with: {persist-credentials: false}
+      - uses: sigstore/cosign-installer@756fe2d284c7292c4e9b62c8a28f1e5629c59532
+        with: {cosign-release: v2.5.3}
+      - name: Fetch signed candidate from prior successful run
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          CANDIDATE_RUN_ID: ${{ inputs.candidate_run_id }}
+        run: python3 .github/scripts/workflow/release_pipeline.py fetch-candidate --repository "$GITHUB_REPOSITORY" --run-id "$CANDIDATE_RUN_ID" --output candidate --public-key shared/release/candidate.pub
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: release-evidence
+          path: dist/
+      - name: Install promotion tools
+        run: sudo apt-get update && sudo apt-get install -y skopeo rsync
+      - uses: docker/login-action@8aa5831fb8d48d8f76594c7ddde61ae58019f550
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - name: Verify and promote immutable images
+        if: needs.release-evidence.outputs.release_kind == 'full'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          COSIGN_PRIVATE_KEY: ${{ secrets.COSIGN_PRIVATE_KEY }}
+          COSIGN_PASSWORD: ${{ secrets.COSIGN_PASSWORD }}
+          CHANNEL: ${{ inputs.channel }}
+        run: python3 .github/scripts/workflow/release_publish.py promote --candidate candidate/candidate.json --evidence dist/release-evidence.json --public-key shared/release/candidate.pub --channel "$CHANNEL"
+      # Image releases write only OCI tags and an evidence-only GitHub release,
+      # so this step gets no download-site or SourceForge credentials.
+      - name: Promote images and publish the evidence release
+        if: needs.release-evidence.outputs.release_kind == 'image'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          COSIGN_PRIVATE_KEY: ${{ secrets.COSIGN_PRIVATE_KEY }}
+          COSIGN_PASSWORD: ${{ secrets.COSIGN_PASSWORD }}
+          CHANNEL: ${{ inputs.channel }}
+        run: python3 .github/scripts/workflow/release_publish.py publish-image --candidate candidate/candidate.json --evidence dist/release-evidence.json --public-key shared/release/candidate.pub --channel "$CHANNEL" --directory dist
+      - name: Publish verified downloads and release
+        if: needs.release-evidence.outputs.release_kind == 'full'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           AWS_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
           AWS_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
           AWS_REQUEST_CHECKSUM_CALCULATION: when_required
           AWS_RESPONSE_CHECKSUM_VALIDATION: when_required
           R2_BUCKET: luminus-downloads
           R2_ENDPOINT: https://89e6fc75aed6d04cd84a0c7d11a5594e.r2.cloudflarestorage.com
+          SF_USER: ${{ secrets.SF_USER }}
+          SF_SSH_KEY: ${{ secrets.SF_SSH_KEY }}
           CHANNEL: ${{ inputs.channel }}
-          VERSION_TAG: ${{ needs.containers.outputs.version_tag }}
-        run: bash .github/scripts/publish-r2.sh "$CHANNEL" "$VERSION_TAG" dist
+        run: python3 .github/scripts/workflow/release_publish.py publish --candidate candidate/candidate.json --evidence dist/release-evidence.json --public-key shared/release/candidate.pub --channel "$CHANNEL" --directory dist
 
-      - name: Create GitHub release
+  release-stable:
+    name: Promote approved stable candidate
+    needs: [quality, inputs, release-evidence]
+    if: ${{ !(github.event_name == 'workflow_dispatch' && inputs.inert_r2_probe == true) && (!inputs.security_findings_bypass && inputs.channel == 'stable' && startsWith(github.ref, 'refs/heads/release/') && inputs.candidate_run_id != '' && inputs.validation_run_id != '') }}
+    runs-on: ubuntu-26.04
+    # Required reviewers approve here; the job starts only after approval.
+    environment: stable
+    # This group serializes public-tag writers across workflows; the workflow group does not.
+    concurrency:
+      group: image-publication-${{ github.repository }}-stable
+      cancel-in-progress: false
+    permissions:
+      actions: read
+      contents: write
+      packages: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with: {persist-credentials: false}
+      - uses: sigstore/cosign-installer@756fe2d284c7292c4e9b62c8a28f1e5629c59532
+        with: {cosign-release: v2.5.3}
+      - name: Fetch signed candidate from prior successful run
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        shell: bash
-        run: |
-          set -euo pipefail
-          args=(--notes-file dist/notes.md --target "$GITHUB_SHA")
-          if [ "${{ inputs.channel }}" = stable ]; then
-            args+=(--title "LuminusOS ${{ needs.containers.outputs.build_version }}")
-          else
-            args+=(--title "LuminusOS ${{ needs.containers.outputs.build_version }}: Testing" --prerelease)
-          fi
-          gh release create "${{ needs.containers.outputs.release_tag }}" "${args[@]}"
+          CANDIDATE_RUN_ID: ${{ inputs.candidate_run_id }}
+        run: python3 .github/scripts/workflow/release_pipeline.py fetch-candidate --repository "$GITHUB_REPOSITORY" --run-id "$CANDIDATE_RUN_ID" --output candidate --public-key shared/release/candidate.pub
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: release-evidence
+          path: dist/
+      - name: Recheck the summary shown before approval
+        env:
+          APPROVED_SUMMARY: ${{ needs.release-evidence.outputs.summary_sha256 }}
+        run: python3 .github/scripts/workflow/release_publish.py approval-summary --candidate candidate/candidate.json --evidence dist/release-evidence.json --public-key shared/release/candidate.pub --output approval/approval-summary.json --policy-ref "$GITHUB_REF" --expect-sha256 "$APPROVED_SUMMARY"
+      - name: Install promotion tools
+        run: sudo apt-get update && sudo apt-get install -y skopeo rsync
+      - uses: docker/login-action@8aa5831fb8d48d8f76594c7ddde61ae58019f550
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - name: Verify and promote immutable images
+        if: needs.release-evidence.outputs.release_kind == 'full'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          COSIGN_PRIVATE_KEY: ${{ secrets.COSIGN_PRIVATE_KEY }}
+          COSIGN_PASSWORD: ${{ secrets.COSIGN_PASSWORD }}
+          CHANNEL: ${{ inputs.channel }}
+        run: python3 .github/scripts/workflow/release_publish.py promote --candidate candidate/candidate.json --evidence dist/release-evidence.json --public-key shared/release/candidate.pub --channel "$CHANNEL"
+      # Image releases write only OCI tags and an evidence-only GitHub release,
+      # so this step gets no download-site or SourceForge credentials.
+      - name: Promote images and publish the evidence release
+        if: needs.release-evidence.outputs.release_kind == 'image'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          COSIGN_PRIVATE_KEY: ${{ secrets.COSIGN_PRIVATE_KEY }}
+          COSIGN_PASSWORD: ${{ secrets.COSIGN_PASSWORD }}
+          CHANNEL: ${{ inputs.channel }}
+        run: python3 .github/scripts/workflow/release_publish.py publish-image --candidate candidate/candidate.json --evidence dist/release-evidence.json --public-key shared/release/candidate.pub --channel "$CHANNEL" --directory dist
+      - name: Publish verified downloads and release
+        if: needs.release-evidence.outputs.release_kind == 'full'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          AWS_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
+          AWS_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
+          AWS_REQUEST_CHECKSUM_CALCULATION: when_required
+          AWS_RESPONSE_CHECKSUM_VALIDATION: when_required
+          R2_BUCKET: luminus-downloads
+          R2_ENDPOINT: https://89e6fc75aed6d04cd84a0c7d11a5594e.r2.cloudflarestorage.com
+          SF_USER: ${{ secrets.SF_USER }}
+          SF_SSH_KEY: ${{ secrets.SF_SSH_KEY }}
+          CHANNEL: ${{ inputs.channel }}
+        run: python3 .github/scripts/workflow/release_publish.py publish --candidate candidate/candidate.json --evidence dist/release-evidence.json --public-key shared/release/candidate.pub --channel "$CHANNEL" --directory dist

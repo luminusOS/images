@@ -1,9 +1,6 @@
 name: Auto Testing
 
-# Daily check: when fedora-bootc:<N> has a new digest, publish a signed testing
-# container, its hardware feature snapshot and a pre-release with generated
-# notes. No ISO or qcow2. The public testing tags move only after the feature
-# snapshot verifies (see containers.yml).
+# Daily check: detect Fedora base changes and validate a local candidate only.
 on:
   schedule:
     - cron: "17 10 * * *"
@@ -13,21 +10,33 @@ on:
         description: "Build even if the Fedora base digest is unchanged"
         type: boolean
         default: false
+      security_findings_bypass:
+        description: "Diagnostics only: bypass vulnerability findings; never approve promotion"
+        type: boolean
+        default: false
 
 permissions:
   contents: read
 
 jobs:
+  quality:
+    permissions:
+      contents: read
+    uses: ./.github/workflows/ci.yml
+
   check:
     name: Check Fedora base
     # Only main may sign and publish to the channel installed systems follow.
+    needs: [quality]
     if: github.ref == 'refs/heads/main'
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-26.04
     permissions:
       contents: read
       packages: read
     outputs:
       build: ${{ steps.check.outputs.build }}
+      fedora_version: ${{ steps.check.outputs.fedora_version }}
+      fedora_bootc_digest: ${{ steps.check.outputs.fedora_bootc_digest }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -47,8 +56,10 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y skopeo
 
-          fedora_version="$(tools/config-value.sh DEFAULT_FEDORA_VERSION)"
-          latest="$(tools/fedora-bootc-digest.sh "${fedora_version}")"
+          fedora_version="$(python3 tools/config-value.py DEFAULT_FEDORA_VERSION)"
+          latest="$(python3 tools/fedora-bootc-digest.py "${fedora_version}")"
+          echo "fedora_version=${fedora_version}" >>"${GITHUB_OUTPUT}"
+          echo "fedora_bootc_digest=${latest}" >>"${GITHUB_OUTPUT}"
           namespace="$(printf '%s' "${OWNER}" | tr '[:upper:]' '[:lower:]')"
           image="docker://ghcr.io/${namespace}/luminusos-workstation:testing-${fedora_version}"
 
@@ -80,77 +91,27 @@ jobs:
             echo "Fedora base unchanged and release exists; nothing to build."
           fi
 
-  containers:
-    name: Build and push containers
+  prepare:
+    name: Prepare testing candidate
     needs: [check]
     if: needs.check.outputs.build == 'true'
-    concurrency:
-      group: publish
-      cancel-in-progress: false
-    permissions:
-      contents: read
-      packages: write
-    uses: ./.github/workflows/containers.yml
-    with:
-      channel: testing
-      build_sequence: true
-      build_installer: false
-      publish: true
-      builder_mode: registry
-    secrets: inherit
-
-  release:
-    name: Publish pre-release
-    needs: [containers]
-    runs-on: ubuntu-latest
-    concurrency:
-      group: publish
-      cancel-in-progress: false
     permissions:
       contents: write
-      packages: read
-    steps:
-      # Keep the default persisted credentials: with persist-credentials: false
-      # the release API call below was rejected with HTTP 403.
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          fetch-depth: 0
-
-      - name: Build release notes
-        shell: bash
-        env:
-          GHCR_USER: ${{ github.actor }}
-          GHCR_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          NEW_IMAGE: ${{ needs.containers.outputs.workstation_image }}
-          NEW_TAG: ${{ needs.containers.outputs.release_tag }}
-          FEDORA_VERSION: ${{ needs.containers.outputs.fedora_version }}
-          NAMESPACE: ${{ needs.containers.outputs.image_namespace }}
-        run: |
-          set -euo pipefail
-          printf '%s' "${GHCR_TOKEN}" | podman login ghcr.io -u "${GHCR_USER}" --password-stdin
-
-          # The new tag does not exist yet, so the newest testing tag is the previous release.
-          prev_tag="$(git tag -l "testing-${FEDORA_VERSION}.*" --sort=-v:refname | head -n1)"
-          prev_image=""
-          if [ -n "${prev_tag}" ]; then
-            prev_image="ghcr.io/${NAMESPACE}/luminusos-workstation:${prev_tag}"
-            if ! podman pull --quiet "${prev_image}" >/dev/null; then
-              echo "Previous image ${prev_image} is gone; notes will not compare packages." >&2
-              prev_image=""
-              prev_tag=""
-            fi
-          fi
-          podman pull --quiet "${NEW_IMAGE}" >/dev/null
-          tools/release-notes.sh "${NEW_IMAGE}" "${NEW_TAG}" "${prev_image}" "${prev_tag}" >notes.md
-
-      - name: Create GitHub pre-release
-        shell: bash
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          RELEASE_TAG: ${{ needs.containers.outputs.release_tag }}
-          FEDORA_VERSION: ${{ needs.containers.outputs.fedora_version }}
-        run: |
-          set -euo pipefail
-          gh release create "${RELEASE_TAG}" \
-            --notes-file notes.md --target "${GITHUB_SHA}" --prerelease \
-            --title "${RELEASE_TAG}: Testing (F${FEDORA_VERSION}, #${GITHUB_SHA::7})"
+      packages: write
+      actions: read
+    uses: ./.github/workflows/publish.yml
+    with:
+      channel: testing
+      artifacts: image
+      build_sequence: true
+      force_core: true
+      detected_fedora_version: ${{ needs.check.outputs.fedora_version }}
+      detected_base_digest: ${{ needs.check.outputs.fedora_bootc_digest }}
+      security_findings_bypass: ${{ github.event_name == 'workflow_dispatch' && inputs.security_findings_bypass || false }}
+    # Preparation signs only with the isolated candidate key; the official
+    # publishing credentials stay out of this run.
+    secrets:
+      # The caller must declare environment secrets for the reusable workflow, or they
+      # resolve empty; the candidate-staging jobs still take the environment's value.
+      CANDIDATE_COSIGN_PRIVATE_KEY: ${{ secrets.CANDIDATE_COSIGN_PRIVATE_KEY }}
+      CANDIDATE_COSIGN_PASSWORD: ${{ secrets.CANDIDATE_COSIGN_PASSWORD }}

@@ -1,0 +1,562 @@
+import hashlib
+import importlib.util
+import json
+import re
+import subprocess
+import tempfile
+import unittest
+from pathlib import Path
+from unittest.mock import patch
+
+import yaml
+
+ROOT = Path(__file__).resolve().parents[1]
+
+
+def module(name):
+    spec = importlib.util.spec_from_file_location(
+        name, ROOT / ".github/scripts/workflow" / f"{name}.py"
+    )
+    result = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(result)
+    return result
+
+
+meta = module("build_metadata")
+reuse = module("core_reuse")
+archive_tools = module("image_archive")
+BASE = "sha256:" + "a" * 64
+CONFIG = {
+    "UPDATE_CHANNEL": "testing",
+    "DEFAULT_FEDORA_VERSION": "45",
+    "SIRIUS_VERSION": "1.0.4",
+    "SIRIUS_RPM_VERSION": "1.0.3",
+}
+ENV = {
+    "GITHUB_REPOSITORY_OWNER": "LuminusOS",
+    "GITHUB_RUN_ID": "12",
+    "GITHUB_RUN_ATTEMPT": "2",
+}
+RELEASES = {"SUPPORTED_RELEASES": "45", "LATEST_RELEASE": "45", "STABLE_LINES": "45"}
+
+
+class MetadataTests(unittest.TestCase):
+    def test_detected_digest_is_used_when_tag_changes(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            output = Path(tmp) / "output"
+            env = {
+                **ENV,
+                "GITHUB_OUTPUT": str(output),
+                "DETECTED_FEDORA_VERSION": "45",
+                "DETECTED_BASE_DIGEST": BASE,
+            }
+
+            def check_output(args, **kwargs):
+                if args[0] == "git":
+                    return "SUPPORTED_RELEASES=45\nLATEST_RELEASE=45\n"
+                return "sha256:" + "b" * 64
+
+            with (
+                patch.dict(meta.os.environ, env, clear=True),
+                patch.object(meta, "read_config", return_value=CONFIG),
+                patch.object(meta.subprocess, "run"),
+                patch.object(
+                    meta.subprocess, "check_output", side_effect=check_output
+                ) as resolve,
+            ):
+                meta.main()
+            self.assertIn(f"fedora_bootc_digest={BASE}\n", output.read_text())
+            self.assertEqual(resolve.call_count, 1)
+            self.assertEqual(resolve.call_args.args[0][0], "git")
+
+    def test_detected_pair_validation_precedes_output(self):
+        invalid = (
+            {"DETECTED_FEDORA_VERSION": "45"},
+            {"DETECTED_BASE_DIGEST": BASE},
+            {"DETECTED_FEDORA_VERSION": "", "DETECTED_BASE_DIGEST": ""},
+            {"DETECTED_FEDORA_VERSION": "44", "DETECTED_BASE_DIGEST": BASE},
+            {
+                "DETECTED_FEDORA_VERSION": "45",
+                "DETECTED_BASE_DIGEST": "sha256:" + "A" * 64,
+            },
+            {"DETECTED_FEDORA_VERSION": "45", "DETECTED_BASE_DIGEST": "bad"},
+        )
+        for pair in invalid:
+            with self.subTest(pair=pair), tempfile.TemporaryDirectory() as tmp:
+                output = Path(tmp) / "output"
+                with (
+                    patch.dict(
+                        meta.os.environ,
+                        {**ENV, **pair, "GITHUB_OUTPUT": str(output)},
+                        clear=True,
+                    ),
+                    patch.object(meta, "read_config", return_value=CONFIG),
+                    patch.object(meta.subprocess, "run"),
+                    patch.object(
+                        meta.subprocess,
+                        "check_output",
+                        return_value="SUPPORTED_RELEASES=45\nLATEST_RELEASE=45\n",
+                    ),
+                    self.assertRaises(ValueError),
+                ):
+                    meta.main()
+                self.assertFalse(output.exists())
+
+    def test_absent_detected_pair_resolves_base(self):
+        for pair in (
+            {},
+            {
+                "DETECTED_FEDORA_VERSION": "__not_supplied__",
+                "DETECTED_BASE_DIGEST": "__not_supplied__",
+            },
+        ):
+            with self.subTest(pair=pair), tempfile.TemporaryDirectory() as tmp:
+                output = Path(tmp) / "output"
+                with (
+                    patch.dict(
+                        meta.os.environ,
+                        {**ENV, **pair, "GITHUB_OUTPUT": str(output)},
+                        clear=True,
+                    ),
+                    patch.object(meta, "read_config", return_value=CONFIG),
+                    patch.object(meta.subprocess, "run"),
+                    patch.object(
+                        meta.subprocess,
+                        "check_output",
+                        side_effect=[
+                            "SUPPORTED_RELEASES=45\nLATEST_RELEASE=45\n",
+                            BASE,
+                        ],
+                    ) as resolve,
+                ):
+                    meta.main()
+                self.assertIn(f"fedora_bootc_digest={BASE}\n", output.read_text())
+                self.assertEqual(resolve.call_count, 2)
+
+    def test_detected_pair_workflow_wiring(self):
+        auto = (ROOT / ".github/workflows/auto-testing.yml").read_text()
+        publish = (ROOT / ".github/workflows/publish.yml").read_text()
+        containers = (ROOT / ".github/workflows/containers.yml").read_text()
+        self.assertIn("fedora_version: ${{ steps.check.outputs.fedora_version }}", auto)
+        self.assertIn(
+            "fedora_bootc_digest: ${{ steps.check.outputs.fedora_bootc_digest }}", auto
+        )
+        self.assertIn('echo "fedora_version=${fedora_version}"', auto)
+        self.assertIn('echo "fedora_bootc_digest=${latest}"', auto)
+        for name, output in (
+            ("detected_fedora_version", "fedora_version"),
+            ("detected_base_digest", "fedora_bootc_digest"),
+        ):
+            self.assertNotIn(name, publish.split("  workflow_call:", 1)[0])
+            self.assertIn(f"{name}: ${{{{ needs.check.outputs.{output} }}}}", auto)
+            self.assertIn(
+                f'{name}: {{type: string, default: "__not_supplied__"}}', publish
+            )
+            self.assertIn(
+                f'{name}: {{type: string, default: "__not_supplied__"}}', containers
+            )
+            self.assertIn(f"|| inputs.{name} }}}}", publish)
+            self.assertIn(f"${{{{ inputs.{name} }}}}", containers)
+        self.assertNotIn(
+            "detected_base_digest", publish.split("  workflow_call:", 1)[0]
+        )
+        auto_jobs = yaml.safe_load(auto)["jobs"]
+        publish_jobs = yaml.safe_load(publish)["jobs"]
+        container_jobs = yaml.safe_load(containers)["jobs"]
+        version = next(
+            step
+            for step in container_jobs["metadata"]["steps"]
+            if step.get("id") == "version"
+        )
+        for name, output, variable in (
+            ("detected_fedora_version", "fedora_version", "DETECTED_FEDORA_VERSION"),
+            ("detected_base_digest", "fedora_bootc_digest", "DETECTED_BASE_DIGEST"),
+        ):
+            self.assertEqual(
+                auto_jobs["check"]["outputs"][output],
+                f"${{{{ steps.check.outputs.{output} }}}}",
+            )
+            self.assertEqual(
+                auto_jobs["prepare"]["with"][name],
+                f"${{{{ needs.check.outputs.{output} }}}}",
+            )
+            self.assertEqual(
+                publish_jobs["containers"]["with"][name],
+                "${{ contains(github.workflow_ref, '/.github/workflows/publish.yml@')"
+                f" && '__not_supplied__' || inputs.{name} }}}}",
+            )
+            self.assertEqual(version["env"][variable], f"${{{{ inputs.{name} }}}}")
+        core_build = next(
+            step["with"]["build-args"]
+            for step in container_jobs["core"]["steps"]
+            if step.get("id") == "build"
+        )
+        self.assertIn(
+            "base=quay.io/fedora/fedora-bootc:"
+            "${{ needs.metadata.outputs.fedora_version }}"
+            "@${{ needs.metadata.outputs.fedora_bootc_digest }}",
+            core_build,
+        )
+
+    def test_testing_and_stable_identities(self):
+        result = meta.metadata(ENV, CONFIG, RELEASES, BASE, "20261105")
+        self.assertEqual(
+            result["workstation_image"],
+            "ghcr.io/luminusos/luminusos-workstation:candidate-12-2",
+        )
+        self.assertEqual(result["target_tag"], "testing-45")
+        stable = meta.metadata(
+            {**ENV, "CHANNEL": "stable", "GITHUB_REF_NAME": "release/45"},
+            CONFIG | {"UPDATE_CHANNEL": "stable"},
+            RELEASES,
+            BASE,
+            "20261105",
+            2,
+        )
+        self.assertEqual(stable["build_version"], "45.20261105.2")
+        self.assertEqual(stable["version_tag"], "45.20261105.2")
+        self.assertEqual(stable["release_tag"], "45.20261105.2")
+        self.assertEqual(stable["target_tag"], "45")
+        self.assertEqual(stable["branch_tag"], "45")
+        self.assertEqual(stable["channel_tag"], "latest")
+        self.assertEqual(
+            stable["workstation_image"],
+            "ghcr.io/luminusos/luminusos-workstation:candidate-12-2",
+        )
+        self.assertEqual(
+            stable["core_image"], "ghcr.io/luminusos/luminusos:candidate-12-2"
+        )
+
+    def test_pull_requests_into_a_release_line_build_that_line(self):
+        result = meta.metadata(
+            {
+                **ENV,
+                "CHANNEL": "stable",
+                "GITHUB_REF_NAME": "7/merge",
+                "GITHUB_BASE_REF": "release/45",
+            },
+            CONFIG | {"UPDATE_CHANNEL": "stable"},
+            RELEASES,
+            BASE,
+            "20261105",
+            1,
+        )
+        self.assertEqual(result["build_version"], "45.20261105.1")
+        build = yaml.safe_load(
+            (ROOT / ".github/workflows/build-containers.yml").read_text()
+        )
+        self.assertIn("release/*", build[True]["pull_request"]["branches"])
+        self.assertIn("release/*", build[True]["push"]["branches"])
+        self.assertIn(
+            "'release/'", build["jobs"]["build-containers"]["with"]["channel"]
+        )
+
+    def test_stable_builds_only_on_its_release_line_with_a_stable_target(self):
+        stable_env = {**ENV, "CHANNEL": "stable", "GITHUB_REF_NAME": "release/45"}
+        stable_config = CONFIG | {"UPDATE_CHANNEL": "stable"}
+        for env, config, sequence in (
+            ({**stable_env, "GITHUB_REF_NAME": "main"}, stable_config, 1),
+            ({**stable_env, "GITHUB_REF_NAME": "release/46"}, stable_config, 1),
+            ({**stable_env, "GITHUB_REF_NAME": "release/45x"}, stable_config, 1),
+            (stable_env, CONFIG, 1),
+            (stable_env, stable_config, 0),
+            (ENV, stable_config, 0),
+        ):
+            with (
+                self.subTest(ref=env.get("GITHUB_REF_NAME"), config=config),
+                self.assertRaises(ValueError),
+            ):
+                meta.metadata(env, config, RELEASES, BASE, "20261105", sequence)
+
+    def test_stable_lines_are_opt_in_and_supported(self):
+        self.assertEqual(
+            meta.releases("SUPPORTED_RELEASES=45\nLATEST_RELEASE=45\n")["STABLE_LINES"],
+            "",
+        )
+        self.assertEqual(
+            meta.releases(
+                'SUPPORTED_RELEASES="45 46"\nLATEST_RELEASE=46\nSTABLE_LINES=45\n'
+            )["STABLE_LINES"],
+            "45",
+        )
+        with self.assertRaises(ValueError):
+            meta.releases("SUPPORTED_RELEASES=45\nLATEST_RELEASE=45\nSTABLE_LINES=46\n")
+        env = {**ENV, "CHANNEL": "stable", "GITHUB_REF_NAME": "release/45"}
+        stable = CONFIG | {"UPDATE_CHANNEL": "stable"}
+        with self.assertRaisesRegex(ValueError, "stable line"):
+            meta.metadata(
+                env, stable, RELEASES | {"STABLE_LINES": ""}, BASE, "20261105", 1
+            )
+        self.assertEqual(
+            meta.metadata(env, stable, RELEASES, BASE, "20261105", 1)["fedora_version"],
+            "45",
+        )
+
+    def test_rejects_shell_config_and_bad_overrides(self):
+        with self.assertRaises(ValueError):
+            meta.releases('SUPPORTED_RELEASES="$(touch nope)"\nLATEST_RELEASE=45')
+        for latest in ('"45 44"', "045", "0"):
+            with self.subTest(latest=latest), self.assertRaises(ValueError):
+                meta.releases(f"SUPPORTED_RELEASES=45\nLATEST_RELEASE={latest}\n")
+        self.assertEqual(
+            meta.releases('SUPPORTED_RELEASES="45"\nLATEST_RELEASE="45" # newest\n')[
+                "LATEST_RELEASE"
+            ],
+            "45",
+        )
+        with self.assertRaises(ValueError):
+            meta.metadata(
+                {**ENV, "SIRIUS_VERSION": "1.2"}, CONFIG, RELEASES, BASE, "20261105"
+            )
+        with self.assertRaises(ValueError):
+            meta.metadata(
+                {**ENV, "FEDORA_VERSION": "99"}, CONFIG, RELEASES, BASE, "20261105"
+            )
+
+    def test_rejects_owner_namespace_with_invalid_trailing_punctuation(self):
+        for owner in (
+            "valid-",
+            "valid.",
+            "valid_",
+            "-invalid",
+            ".invalid",
+            "_invalid",
+            "with.dot",
+            "with_under",
+        ):
+            with self.subTest(owner=owner), self.assertRaises(ValueError):
+                meta.metadata(
+                    {**ENV, "GITHUB_REPOSITORY_OWNER": owner},
+                    CONFIG,
+                    RELEASES,
+                    BASE,
+                    "20261105",
+                )
+
+
+class ContainerCachePolicyTests(unittest.TestCase):
+    def test_publish_jobs_use_containerd_store_before_loading_archives(self):
+        text = (ROOT / ".github/workflows/publish.yml").read_text()
+        for name in ("publish-images",):
+            with self.subTest(job=name):
+                section = re.split(
+                    r"\n  [\w-]+:\n", text.split(f"  {name}:\n", 1)[1], maxsplit=1
+                )[0]
+                self.assertLess(
+                    section.index("docker/setup-docker-action@"),
+                    section.index("image_archive.py load"),
+                )
+                self.assertIn('"containerd-snapshotter":true', section)
+
+    def test_container_jobs_enable_store_before_docker_import_and_cache_scopes(self):
+        text = (ROOT / ".github/workflows/containers.yml").read_text()
+        for name, scope in (
+            ("core", "core"),
+            ("workstation", "workstation"),
+        ):
+            start = text.index(f"  {name}:\n")
+            next_job = -1
+            for next_name in ("core", "workstation", "installer"):
+                candidate = text.find(f"\n  {next_name}:\n", start + 1)
+                if candidate >= 0 and (next_job < 0 or candidate < next_job):
+                    next_job = candidate
+            section = text[start : next_job if next_job != -1 else None]
+            setup = section.index("docker/setup-docker-action@")
+            build = section.index("docker/build-push-action@")
+            self.assertLess(setup, build)
+            self.assertIn('"containerd-snapshotter":true', section)
+            self.assertIn(
+                f"scope={scope}-${{{{ needs.metadata.outputs.fedora_version }}}}-${{{{ runner.arch }}}}",
+                section,
+            )
+            self.assertIn(
+                f"scope={scope}-${{{{ needs.metadata.outputs.fedora_version }}}}-${{{{ runner.arch }}}},mode=max",
+                section,
+            )
+            self.assertIn("inputs.force_core", section)
+
+    def test_installer_workflow_preserves_installer_cache_scope(self):
+        workflow = ROOT / ".github/workflows/installer.yml"
+        text = workflow.read_text()
+        setup = text.index("docker/setup-docker-action@")
+        build = text.index("docker/build-push-action@")
+        self.assertLess(setup, build)
+        self.assertIn('"containerd-snapshotter":true', text)
+        self.assertIn(
+            "scope=installer-${{ inputs.fedora_version }}-${{ runner.arch }}", text
+        )
+        self.assertIn(
+            "scope=installer-${{ inputs.fedora_version }}-${{ runner.arch }},mode=max",
+            text,
+        )
+
+
+class ReuseTests(unittest.TestCase):
+    def test_fingerprint_ignores_workstation_and_changes_core(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            for path in (
+                "editions/core/Containerfile",
+                "shared/trust/key",
+                "shared/scripts/dnf-releasever.py",
+                "shared/scripts/os-release-set.py",
+                "shared/scripts/rpmdb-repair.py",
+                "editions/workstation/build.py",
+            ):
+                file = root / path
+                file.parent.mkdir(parents=True, exist_ok=True)
+                file.write_text(path)
+            before = reuse.inputs_hash(root, "45", BASE)
+            (root / "editions/workstation/build.py").write_text("change")
+            self.assertEqual(before, reuse.inputs_hash(root, "45", BASE))
+            (root / "shared/trust/key").write_text("change")
+            self.assertNotEqual(before, reuse.inputs_hash(root, "45", BASE))
+            self.assertNotEqual(
+                before, reuse.inputs_hash(root, "45", "sha256:" + "e" * 64)
+            )
+
+    def test_reuse_requires_digest_signature_and_labels(self):
+        reference = "ghcr.io/luminusos/luminusos:testing-45"
+        fingerprint = "f" * 64
+        resolved = subprocess.CompletedProcess([], 0, stdout=BASE)
+        labels = {
+            "Labels": {
+                "org.luminusos.core.fedora": "45",
+                "org.luminusos.core.inputs-sha256": fingerprint,
+            }
+        }
+        inspect = subprocess.CompletedProcess([], 0, stdout=json.dumps(labels))
+        with patch.object(
+            reuse, "command", side_effect=[resolved, None, inspect, None, None]
+        ) as cmd:
+            self.assertEqual(
+                reuse.select(reference, "45", fingerprint, "local:core"), BASE
+            )
+        self.assertEqual(
+            cmd.call_args_list[1].args[0][-1], "ghcr.io/luminusos/luminusos@" + BASE
+        )
+        for wrong in ("fedora", "hash", "signature"):
+            changed = json.loads(json.dumps(labels))
+            if wrong == "fedora":
+                changed["Labels"]["org.luminusos.core.fedora"] = "44"
+            if wrong == "hash":
+                changed["Labels"]["org.luminusos.core.inputs-sha256"] = "bad"
+            signature = (
+                subprocess.CalledProcessError(1, "cosign")
+                if wrong == "signature"
+                else None
+            )
+            with (
+                self.subTest(wrong=wrong),
+                patch.object(
+                    reuse,
+                    "command",
+                    side_effect=[
+                        resolved,
+                        signature,
+                        subprocess.CompletedProcess([], 0, stdout=json.dumps(changed)),
+                    ],
+                ),
+            ):
+                self.assertEqual(
+                    reuse.select(reference, "45", fingerprint, "local:core"), ""
+                )
+
+    def test_archive_checks_before_loading(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            archive = Path(tmp) / "image.tar"
+            archive.write_bytes(b"tampered")
+            with (
+                patch.object(archive_tools, "command") as cmd,
+                self.assertRaises(ValueError),
+            ):
+                archive_tools.load("local:core", archive, "a" * 64, BASE)
+            cmd.assert_not_called()
+
+    def test_forced_and_absent_refs_never_reuse(self):
+        with patch.object(reuse, "command") as command:
+            self.assertEqual(reuse.select("", "45", "f" * 64, "local:core"), "")
+            self.assertEqual(
+                reuse.select(
+                    "ghcr.io/luminusos/luminusos:old",
+                    "45",
+                    "f" * 64,
+                    "local:core",
+                    force=True,
+                ),
+                "",
+            )
+            command.assert_not_called()
+
+    def test_loaded_core_identity_matches_recorded_build_input(self):
+        import hashlib
+
+        with tempfile.TemporaryDirectory() as tmp:
+            archive = Path(tmp) / "image.tar"
+            archive.write_bytes(b"core archive")
+            checksum = hashlib.sha256(archive.read_bytes()).hexdigest()
+            with (
+                patch.object(archive_tools, "command") as command,
+                patch.object(archive_tools, "image_id", return_value=BASE),
+            ):
+                archive_tools.load("local:core", archive, checksum, BASE)
+            command.assert_called_once_with(["docker", "load", "-i", str(archive)])
+            with (
+                patch.object(archive_tools, "command"),
+                patch.object(
+                    archive_tools, "image_id", return_value="sha256:" + "b" * 64
+                ),
+                self.assertRaisesRegex(ValueError, "image id mismatch"),
+            ):
+                archive_tools.load("local:core", archive, checksum, BASE)
+
+    def test_archive_save_returns_image_identity_and_checksum(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            archive = Path(tmp) / "image.tar"
+            contents = b"saved image"
+
+            def save_command(args):
+                archive.write_bytes(contents)
+                return subprocess.CompletedProcess(args, 0)
+
+            with (
+                patch.object(archive_tools, "image_id", return_value=BASE),
+                patch.object(
+                    archive_tools, "command", side_effect=save_command
+                ) as command,
+            ):
+                identity, checksum = archive_tools.save("local:core", archive)
+
+            self.assertEqual(identity, BASE)
+            self.assertEqual(checksum, hashlib.sha256(contents).hexdigest())
+            command.assert_called_once_with(
+                ["docker", "save", "-o", str(archive), "local:core"]
+            )
+
+    def test_archive_load_rejects_invalid_metadata_without_loading(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            archive = Path(tmp) / "image.tar"
+            archive.write_bytes(b"archive")
+            for checksum, identity in (("bad", BASE), ("a" * 64, "bad")):
+                with (
+                    self.subTest(checksum=checksum, identity=identity),
+                    patch.object(archive_tools, "command") as command,
+                    self.assertRaises(ValueError),
+                ):
+                    archive_tools.load("local:core", archive, checksum, identity)
+                command.assert_not_called()
+
+    def test_archive_load_propagates_docker_load_failure(self):
+        import hashlib
+
+        with tempfile.TemporaryDirectory() as tmp:
+            archive = Path(tmp) / "image.tar"
+            archive.write_bytes(b"archive")
+            checksum = hashlib.sha256(archive.read_bytes()).hexdigest()
+            failure = subprocess.CalledProcessError(1, ["docker", "load"])
+            with (
+                patch.object(archive_tools, "command", side_effect=failure) as command,
+                self.assertRaises(subprocess.CalledProcessError),
+            ):
+                archive_tools.load("local:core", archive, checksum, BASE)
+            command.assert_called_once_with(["docker", "load", "-i", str(archive)])

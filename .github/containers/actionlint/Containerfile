@@ -1,0 +1,50 @@
+FROM docker.io/library/golang:1.26.11-bookworm@sha256:79ecd0a7157c7a4cf3b281ced8465350591bf54fedab540e75374a003e1fde7e AS builder
+ENV GOENV=off GOWORK=off GOTOOLCHAIN=local CGO_ENABLED=0 \
+    GOOS=linux GOARCH=amd64 GOFLAGS=-mod=readonly \
+    GOPROXY=https://proxy.golang.org GOSUMDB=sum.golang.org \
+    GOPRIVATE= GONOPROXY= GONOSUMDB=
+WORKDIR /src
+RUN set -eu; \
+    curl --fail --location --silent --show-error --connect-timeout 15 --max-time 120 \
+        --max-filesize 2097152 --output /tmp/actionlint.tar.gz \
+        https://codeload.github.com/rhysd/actionlint/tar.gz/914e7df21a07ef503a81201c76d2b11c789d3fca; \
+    echo '30a9b942aa2a9c5246d8434d3ad9ff010969d1d4510281c4d395e18665192e6e  /tmp/actionlint.tar.gz' | sha256sum --check; \
+    tar -xzf /tmp/actionlint.tar.gz --strip-components=1 --no-same-owner --no-same-permissions
+COPY native26.patch /tmp/native26.patch
+RUN set -eu; \
+    echo 'fc7c822a3bcdf299da41206205f38d172c615e4caa692f2ce1de5af1854094bd  /tmp/native26.patch' | sha256sum --check; \
+    git apply --check /tmp/native26.patch; \
+    git apply --whitespace=error /tmp/native26.patch; \
+    sha256sum go.mod go.sum > /tmp/module-files.sha256; \
+    for module in \
+        github.com/bmatcuk/doublestar/v4@v4.10.0 \
+        github.com/fatih/color@v1.19.0 \
+        github.com/google/go-cmp@v0.7.0 \
+        github.com/mattn/go-colorable@v0.1.14 \
+        github.com/mattn/go-runewidth@v0.0.21 \
+        github.com/mattn/go-shellwords@v1.0.12 \
+        github.com/robfig/cron/v3@v3.0.1 \
+        github.com/yuin/goldmark@v1.7.17 \
+        go.yaml.in/yaml/v4@v4.0.0-rc.3 \
+        golang.org/x/net@v0.52.0 \
+        golang.org/x/sync@v0.20.0 \
+        golang.org/x/sys@v0.42.0 \
+        github.com/clipperhouse/uax29/v2@v2.7.0 \
+        github.com/mattn/go-isatty@v0.0.20; \
+    do \
+        module_path="${module%@*}"; module_version="${module##*@}"; \
+        grep -Fq "$module_path $module_version h1:" go.sum; \
+        grep -Fq "$module_path $module_version/go.mod h1:" go.sum; \
+        go mod download -json "$module"; \
+        (cd /tmp && go mod download -json "$module"); \
+    done; \
+    sha256sum --check /tmp/module-files.sha256; \
+    go mod verify
+RUN --network=none set -eu; \
+    export GOPROXY=off GOSUMDB=off; \
+    go test -mod=readonly ./ -run '^TestRuleRunnerLabel' -count=1; \
+    go build -trimpath -buildvcs=false -mod=readonly -o /out/actionlint ./cmd/actionlint; \
+    sha256sum --check /tmp/module-files.sha256
+
+FROM docker.io/rhysd/actionlint@sha256:887a259a5a534f3c4f36cb02dca341673c6089431057242cdc931e9f133147e9
+COPY --from=builder /out/actionlint /usr/local/bin/actionlint

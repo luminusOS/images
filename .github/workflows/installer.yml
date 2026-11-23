@@ -1,0 +1,100 @@
+name: Installer Image Build
+
+on:
+  workflow_call:
+    inputs:
+      fedora_version: {type: string, required: true}
+      sirius_version: {type: string, required: true}
+      sirius_rpm_version: {type: string, required: true}
+      build_version: {type: string, required: true}
+      workstation_image: {type: string, required: true}
+      image_namespace: {type: string, required: true}
+      target_tag: {type: string, required: true}
+      workstation_iso_image: {type: string, required: true}
+      workstation_built_oci_manifest_digest: {type: string, default: ""}
+      workstation_archive_sha256: {type: string, default: ""}
+      workstation_image_id: {type: string, default: ""}
+    outputs:
+      image_id: {value: '${{ jobs.build.outputs.image_id }}'}
+      archive_sha256: {value: '${{ jobs.build.outputs.archive_sha256 }}'}
+      built_oci_manifest_digest: {value: '${{ jobs.build.outputs.built_oci_manifest_digest }}'}
+      built_oci_skopeo_version: {value: '${{ jobs.build.outputs.built_oci_skopeo_version }}'}
+      built_oci_artifact_id: {value: '${{ jobs.build.outputs.built_oci_artifact_id }}'}
+
+jobs:
+  build:
+    name: Build installer image
+    runs-on: ubuntu-26.04
+    timeout-minutes: 180
+    permissions: {contents: read, packages: read, actions: read}
+    outputs:
+      image_id: '${{ steps.save.outputs.image_id }}'
+      archive_sha256: '${{ steps.save.outputs.archive_sha256 }}'
+      built_oci_manifest_digest: '${{ steps.upload-installer-oci.outcome == ''success'' && steps.export-installer-oci.outputs.manifest_digest || '''' }}'
+      built_oci_skopeo_version: '${{ steps.upload-installer-oci.outcome == ''success'' && steps.export-installer-oci.outputs.skopeo_version || '''' }}'
+      built_oci_artifact_id: '${{ steps.upload-installer-oci.outcome == ''success'' && steps.upload-installer-oci.outputs.artifact-id || '''' }}'
+    steps:
+      - uses: docker/setup-docker-action@3f1ab1ab0e29231562e4db4ca600c1a49653bac6 # v5.7.0
+        with:
+          daemon-config: '{"features":{"containerd-snapshotter":true}}'
+          set-host: true
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Fetch verified canonical workstation payload
+        id: fetch-workstation-payload
+        env:
+          GH_TOKEN: '${{ github.token }}'
+          EXPECTED_DIGEST: '${{ inputs.workstation_built_oci_manifest_digest }}'
+        run: |
+          mkdir -p .test
+          python3 .github/scripts/workflow/oci_layout.py fetch-payload --repository "$GITHUB_REPOSITORY" --run-id "$GITHUB_RUN_ID" --layout .test/payload.oci --expected-digest "$EXPECTED_DIGEST"
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with: {name: workstation-image}
+      - name: Load workstation image
+        env:
+          IMAGE: '${{ inputs.workstation_image }}'
+          ARCHIVE: workstation-image.tar
+          ARCHIVE_SHA256: '${{ inputs.workstation_archive_sha256 }}'
+          IMAGE_ID: '${{ inputs.workstation_image_id }}'
+        run: python3 .github/scripts/workflow/image_archive.py load
+      - name: Install skopeo
+        run: sudo apt-get update && sudo apt-get install -y skopeo
+      - uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
+        with: {driver: docker}
+      - name: Build workstation ISO live root
+        id: build
+        uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
+        with:
+          context: .
+          file: editions/workstation/Containerfile.installer
+          platforms: linux/amd64
+          load: true
+          push: false
+          cache-from: type=gha,scope=installer-${{ inputs.fedora_version }}-${{ runner.arch }}
+          cache-to: type=gha,scope=installer-${{ inputs.fedora_version }}-${{ runner.arch }},mode=max
+          build-args: |
+            fedora_version=${{ inputs.fedora_version }}
+            sirius_version=${{ inputs.sirius_version }}
+            sirius_rpm_version=${{ inputs.sirius_rpm_version }}
+            image_version=${{ inputs.build_version }}
+            workstation_image=${{ inputs.workstation_image }}
+            workstation_target_image=ghcr.io/${{ inputs.image_namespace }}/luminusos-workstation:${{ inputs.target_tag }}
+          tags: '${{ inputs.workstation_iso_image }}'
+      - name: Export built installer OCI layout
+        id: export-installer-oci
+        if: steps.build.outcome == 'success'
+        env:
+          IMAGE: '${{ inputs.workstation_iso_image }}'
+        run: python3 .github/scripts/workflow/oci_layout.py export --image "$IMAGE" --layout installer-oci --ref installer --docker-host "${DOCKER_HOST:?Docker setup did not expose its socket}"
+      - name: Upload built installer OCI layout
+        id: upload-installer-oci
+        if: steps.export-installer-oci.outcome == 'success'
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with: {name: installer-oci, path: installer-oci/, compression-level: 0, if-no-files-found: error}
+      - name: Save installer image archive
+        id: save
+        env:
+          IMAGE: '${{ inputs.workstation_iso_image }}'
+          ARCHIVE: installer-image.tar
+        run: python3 .github/scripts/workflow/image_archive.py save
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with: {name: installer-image, path: installer-image.tar, compression-level: 0, if-no-files-found: error}

@@ -13,24 +13,26 @@ set -uo pipefail
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd -P)"
 # shellcheck disable=SC1091
 source "${ROOT}/tests/test-lib.sh"
-# shellcheck disable=SC1091
-source "${ROOT}/config/versions.env"
 
 engine="${CONTAINER_ENGINE:-podman}"
 command -v "${engine}" >/dev/null || {
   echo "sysext-lab: ${engine} not found" >&2
   exit 1
 }
-fedora="${DEFAULT_FEDORA_VERSION}"
+fedora="$(python3 "${ROOT}/tools/config-value.py" DEFAULT_FEDORA_VERSION)" || exit 1
 lab_from="${SYSEXT_LAB_FROM:-quay.io/fedora/fedora-bootc:${fedora}}"
 lab_version="${fedora}.19700101.1"
-builder="localhost/luminusos-sysext-builder:${fedora}"
 sysext="${ROOT}/editions/workstation/sysext"
 build="${ROOT}/editions/workstation/build-sysext.sh"
-LAB="$(mktemp -d "${TMPDIR:-/tmp}/sysext-lab.XXXXXX")"
-images=()
+LAB="$(mktemp -d "${TMPDIR:-/tmp}/sysext-lab.XXXXXX")" || exit 1
+nonce="$(basename "${LAB}" | tr '[:upper:]' '[:lower:]')"
+lab_repo="localhost/luminusos-${nonce}"
+builder="${lab_repo}:builder"
+export SYSEXT_BUILDER_IMAGE="${builder}"
 cleanup() {
-  for image in "${images[@]}"; do "${engine}" rmi -f "${image}" >/dev/null 2>&1; done
+  for tag in base nolevel mismatch builder; do
+    "${engine}" rmi -f "${lab_repo}:${tag}" >/dev/null 2>&1 || true
+  done
   "${engine}" unshare rm -rf "${LAB}" 2>/dev/null || rm -rf "${LAB}"
 }
 trap cleanup EXIT
@@ -47,10 +49,10 @@ RUN sed -i '/^\(IMAGE_VERSION\|SYSEXT_LEVEL\)=/d' /usr/lib/os-release && \\
     mkdir -p /usr/share/luminusos-lab && echo image-owned >/usr/share/luminusos-lab/marker
 LABEL org.opencontainers.image.version="${label}"
 EOF
-  "${engine}" build -q -t "localhost/luminusos-sysext-lab:${tag}" "${ctx}" >/dev/null || return 1
-  images+=("localhost/luminusos-sysext-lab:${tag}")
-  printf 'localhost/luminusos-sysext-lab@%s\n' \
-    "$("${engine}" image inspect --format '{{.Digest}}' "localhost/luminusos-sysext-lab:${tag}")"
+  "${engine}" build -q -t "${lab_repo}:${tag}" "${ctx}" >/dev/null || return 1
+  local digest
+  digest="$("${engine}" image inspect --format '{{.Digest}}' "${lab_repo}:${tag}")" || return 1
+  printf '%s@%s\n' "${lab_repo}" "${digest}"
 }
 
 expect_failure_with() {
@@ -71,8 +73,8 @@ base="$(lab_image base "${lab_version}" "${lab_version}")" || {
   exit 1
 }
 digest="${base#*@}"
-nolevel="$(lab_image nolevel "" "${lab_version}")"
-mismatch="$(lab_image mismatch "${lab_version}" "${fedora}.19700101.2")"
+nolevel="$(lab_image nolevel "" "${lab_version}")" || exit 1
+mismatch="$(lab_image mismatch "${lab_version}" "${fedora}.19700101.2")" || exit 1
 
 out="${LAB}/out"
 export SYSEXT_BUILD_NETWORK=none
@@ -83,7 +85,7 @@ expect_failure_with "the build refuses an image without SYSEXT_LEVEL" "differs f
 expect_failure_with "the build refuses a version label that differs from IMAGE_VERSION" "differs from the OCI version label" \
   bash "${build}" "${ROOT}/editions/workstation/features/dummy" "${mismatch}" "${LAB}/bad"
 expect_failure_with "the build refuses an image referenced by tag" "referenced by digest" \
-  bash "${build}" "${ROOT}/editions/workstation/features/dummy" localhost/luminusos-sysext-lab:base "${LAB}/bad"
+  bash "${build}" "${ROOT}/editions/workstation/features/dummy" "${lab_repo}:base" "${LAB}/bad"
 
 fixture() {
   local name="$1" dir="${LAB}/features/$1"

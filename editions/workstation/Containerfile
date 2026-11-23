@@ -1,7 +1,6 @@
 ARG core_image=localhost/luminusos:latest
 ARG fedora_bootc_base=quay.io/fedora/fedora-bootc:45
 ARG fedora_version
-ARG aurora_shell_version
 
 FROM scratch AS ctx-scripts
 
@@ -9,7 +8,7 @@ COPY shared/scripts /scripts
 
 FROM scratch AS ctx-workstation-script
 
-COPY editions/workstation/build.sh /workstation/build.sh
+COPY editions/workstation/build.py /workstation/build.py
 
 FROM scratch AS ctx-sysext
 
@@ -20,34 +19,9 @@ FROM scratch AS ctx-flatpaks
 
 COPY shared/flatpaks /flatpaks
 
-FROM scratch AS ctx-workstation-inputs
-
-COPY config/versions.env /versions.env
-COPY editions/workstation/install-rpm.sh /install-rpm.sh
-
-FROM ${fedora_bootc_base} AS aurora-extension
-
+FROM ${fedora_bootc_base} AS python-tools
 ARG fedora_version
-ARG aurora_shell_version
-ARG aurora_shell_sha256
-ARG aurora_shell_uuid=aurora-shell@luminusos.github.io
-
-RUN --mount=type=cache,target=/var/cache/dnf \
-    --mount=type=bind,from=ctx-scripts,source=/scripts,target=/scripts \
-    bash /scripts/dnf-releasever.sh "${fedora_version}" && \
-    dnf -y --releasever="${fedora_version}" install curl unzip jq && \
-    dnf clean all && \
-    mkdir -p "/out/${aurora_shell_uuid}" && \
-    curl -fsSL \
-      "https://github.com/luminusOS/aurora-shell/releases/download/${aurora_shell_version}/${aurora_shell_uuid}.shell-extension.zip" \
-      -o /tmp/aurora-shell.zip && \
-    # Release tags are mutable; the pinned digest is what actually
-    # guarantees we ship the artifact we reviewed.
-    echo "${aurora_shell_sha256}  /tmp/aurora-shell.zip" | sha256sum -c - && \
-    unzip -q /tmp/aurora-shell.zip -d "/out/${aurora_shell_uuid}" && \
-    test -f "/out/${aurora_shell_uuid}/metadata.json" && \
-    jq -e --arg uuid "${aurora_shell_uuid}" '.uuid == $uuid' \
-      "/out/${aurora_shell_uuid}/metadata.json"
+RUN dnf -y --releasever="${fedora_version}" install python3 && dnf clean all
 
 FROM ${core_image}
 
@@ -57,8 +31,6 @@ ARG edition_name="Workstation"
 ARG edition_id="workstation"
 ARG aurora_shell_uuid=aurora-shell@luminusos.github.io
 ARG skip_flatpaks=0
-ARG elastic_swap_version
-ARG elastic_swap_sha256
 ARG source_url="https://github.com/LuminusOS/images"
 ARG fedora_bootc_digest=""
 
@@ -73,12 +45,13 @@ LABEL containers.bootc="1" \
 # Boot + bootloader + installed desktop packages
 RUN --mount=type=cache,target=/var/cache/dnf \
     --mount=type=bind,from=ctx-scripts,source=/scripts,target=/scripts \
-    bash /scripts/dnf-releasever.sh "${fedora_version}" && \
+    --mount=type=bind,from=python-tools,source=/usr,target=/opt/python,ro \
+    env PYTHONHOME=/opt/python LD_LIBRARY_PATH=/opt/python/lib64 /opt/python/bin/python3 /scripts/dnf-releasever.py "${fedora_version}" && \
     dnf clean all && \
-    bash /scripts/rpmdb-repair.sh && \
+    env PYTHONHOME=/opt/python LD_LIBRARY_PATH=/opt/python/lib64 /opt/python/bin/python3 /scripts/rpmdb-repair.py && \
     dnf -y --releasever="${fedora_version}" install \
       kernel dracut kernel-modules-extra \
-      NetworkManager-wifi wpa_supplicant wireless-regdb \
+      NetworkManager-wifi wpa_supplicant wireless-regdb bluez \
       NetworkManager-iodine NetworkManager-iodine-gnome \
       NetworkManager-l2tp NetworkManager-l2tp-gnome \
       NetworkManager-libreswan NetworkManager-libreswan-gnome \
@@ -104,6 +77,7 @@ RUN --mount=type=cache,target=/var/cache/dnf \
       grub2-efi-x64 grub2-efi-x64-modules grub2-efi-x64-cdboot \
       shim-x64 dosfstools \
       bootc \
+      python3 systemd-container \
       toolbox \
       flatpak \
       glibc-all-langpacks \
@@ -134,12 +108,23 @@ COPY editions/workstation/files/system/usr/share/plymouth/themes/lucent/ /usr/sh
 
 # Rebuild initramfs for the installed image without live ISO modules.
 RUN --mount=type=bind,from=ctx-scripts,source=/scripts,target=/scripts \
-    bash /scripts/rebuild-initramfs.sh
+    --mount=type=bind,from=python-tools,source=/usr,target=/opt/python,ro \
+    env PYTHONHOME=/opt/python LD_LIBRARY_PATH=/opt/python/lib64 /opt/python/bin/python3 /scripts/rebuild-initramfs.py
 
-# Install the pre-built aurora-shell extension before GNOME Shell is installed.
-COPY --from=aurora-extension /out/aurora-shell@luminusos.github.io/ /usr/share/gnome-shell/extensions/aurora-shell@luminusos.github.io/
+# Luminus RPM repository definitions and keys, needed by every package installed from it.
+COPY editions/workstation/files/system/etc/yum.repos.d/luminus.repo /etc/yum.repos.d/luminus.repo
+COPY shared/rpm-keys/ /usr/share/luminus/rpm-keys/
+
+# Aurora Shell is published as an RPM in the Luminus repository before GNOME Shell is installed.
+RUN --mount=type=cache,target=/var/cache/dnf \
+    --mount=type=bind,from=ctx-scripts,source=/scripts,target=/scripts \
+    --mount=type=bind,from=python-tools,source=/usr,target=/opt/python,ro \
+    env PYTHONHOME=/opt/python LD_LIBRARY_PATH=/opt/python/lib64 /opt/python/bin/python3 /scripts/rpmdb-repair.py && \
+    dnf -y --releasever="${fedora_version}" install gnome-shell-extension-aurora-shell && \
+    dnf clean all
 RUN --mount=type=bind,from=ctx-scripts,source=/scripts,target=/scripts \
-    bash /scripts/aurora-session-modes.sh \
+    --mount=type=bind,from=python-tools,source=/usr,target=/opt/python,ro \
+    env PYTHONHOME=/opt/python LD_LIBRARY_PATH=/opt/python/lib64 /opt/python/bin/python3 /scripts/aurora-session-modes.py \
       /usr/share/gnome-shell/extensions/${aurora_shell_uuid}/metadata.json initial-setup
 RUN test -f /usr/share/gnome-shell/extensions/${aurora_shell_uuid}/metadata.json && \
     test -n "$(find /usr/share/gnome-shell/extensions/${aurora_shell_uuid}/metadata.json -perm -004 -print -quit)" && \
@@ -160,7 +145,8 @@ RUN test -f /usr/share/gnome-shell/extensions/${aurora_shell_uuid}/metadata.json
 # daemon runs and kills nothing. The daemon itself ships in systemd-udev.
 RUN --mount=type=cache,target=/var/cache/dnf \
     --mount=type=bind,from=ctx-scripts,source=/scripts,target=/scripts \
-    bash /scripts/rpmdb-repair.sh && \
+    --mount=type=bind,from=python-tools,source=/usr,target=/opt/python,ro \
+    env PYTHONHOME=/opt/python LD_LIBRARY_PATH=/opt/python/lib64 /opt/python/bin/python3 /scripts/rpmdb-repair.py && \
     dnf -y --releasever="${fedora_version}" install \
       --setopt=install_weak_deps=False \
       accountsservice \
@@ -169,12 +155,14 @@ RUN --mount=type=cache,target=/var/cache/dnf \
       gnome-initial-setup \
       gnome-shell \
       gnome-backgrounds \
+      tesseract \
+      tesseract-langpack-eng \
+      tesseract-langpack-por \
       ibus \
       nautilus \
       oo7-daemon \
       oo7-portal \
       sushi \
-      gnome-software \
       glycin-thumbnailer \
       gst-thumbnailers \
       papers-thumbnailer \
@@ -186,57 +174,49 @@ RUN --mount=type=cache,target=/var/cache/dnf \
       gstreamer1-plugin-libav && \
     dnf clean all
 
-# Nautilus thumbnails for AppImages. Not packaged in Fedora, so install the
-# upstream RPM; the pinned digest guards against a replaced release asset.
+# Keep the build-only channel repositories out of the installed system.
+ARG image_channel=testing
 RUN --mount=type=cache,target=/var/cache/dnf \
+    --mount=type=bind,source=editions/workstation/luminus-build.repo,target=/etc/yum.repos.d/luminus-build.repo,ro \
     --mount=type=bind,from=ctx-scripts,source=/scripts,target=/scripts \
-    --mount=type=bind,from=ctx-workstation-inputs,source=/,target=/inputs \
-    bash /scripts/rpmdb-repair.sh && \
-    . /inputs/versions.env && \
-    bash /inputs/install-rpm.sh "${fedora_version}" \
-      "https://github.com/kem-a/appimage-thumbnailer/releases/download/v${APPIMAGE_THUMBNAILER_VERSION}/appimage-thumbnailer-v${APPIMAGE_THUMBNAILER_VERSION}-1.x86_64.rpm" \
-      "${APPIMAGE_THUMBNAILER_SHA256}" && \
+    --mount=type=bind,from=python-tools,source=/usr,target=/opt/python,ro \
+    env PYTHONHOME=/opt/python LD_LIBRARY_PATH=/opt/python/lib64 /opt/python/bin/python3 /scripts/rpmdb-repair.py && \
+    dnf -y --repo="luminus-${image_channel}" install gnome-foreground-booster && \
+    rpm -q gnome-foreground-booster && \
+    systemctl --global enable gnome-foreground-booster.service && \
+    systemctl --global is-enabled gnome-foreground-booster.service && \
     dnf clean all
 
-# Swap daemon: grows and shrinks swap files in /var/swap behind zswap. It is
-# our own package, published as a release asset; the digest guards against a
-# replaced asset. A mismatch fails the build.
+# Nautilus thumbnails for AppImages, from the Luminus repository.
 RUN --mount=type=cache,target=/var/cache/dnf \
     --mount=type=bind,from=ctx-scripts,source=/scripts,target=/scripts \
-    --mount=type=bind,from=ctx-workstation-inputs,source=/,target=/inputs \
-    bash /scripts/rpmdb-repair.sh && \
-    bash /inputs/install-rpm.sh "${fedora_version}" \
-      "https://github.com/luminusOS/elastic-swap/releases/download/v${elastic_swap_version}/elastic-swap-${elastic_swap_version}-1.fc${fedora_version}.x86_64.rpm" \
-      "${elastic_swap_sha256}" && \
+    --mount=type=bind,from=python-tools,source=/usr,target=/opt/python,ro \
+    env PYTHONHOME=/opt/python LD_LIBRARY_PATH=/opt/python/lib64 /opt/python/bin/python3 /scripts/rpmdb-repair.py && \
+    dnf -y --releasever="${fedora_version}" install appimage-thumbnailer && \
+    dnf clean all
+
+# Swap daemon: grows and shrinks swap files in /var/swap behind zswap.
+RUN --mount=type=cache,target=/var/cache/dnf \
+    --mount=type=bind,from=ctx-scripts,source=/scripts,target=/scripts \
+    --mount=type=bind,from=python-tools,source=/usr,target=/opt/python,ro \
+    env PYTHONHOME=/opt/python LD_LIBRARY_PATH=/opt/python/lib64 /opt/python/bin/python3 /scripts/rpmdb-repair.py && \
+    dnf -y --releasever="${fedora_version}" install elastic-swap && \
     dnf clean all
 
 # D-Bus service for DDC/CI monitor control, used by Aurora Shell's External
 # Display Brightness module. It pulls Fedora's ddcutil, whose udev rule gives
-# the logged-in user access to the I2C buses. ddcutil-service is not packaged in
-# Fedora; until the LuminusOS RPM repository publishes it, this installs the
-# unsigned hopsayer/ddcutil-service COPR build. That COPR prunes old builds, so
-# the pinned digest fails the build when the asset is removed or replaced.
+# the logged-in user access to the I2C buses.
 RUN --mount=type=cache,target=/var/cache/dnf \
     --mount=type=bind,from=ctx-scripts,source=/scripts,target=/scripts \
-    --mount=type=bind,from=ctx-workstation-inputs,source=/,target=/inputs \
-    bash /scripts/rpmdb-repair.sh && \
-    . /inputs/versions.env && \
-    bash /inputs/install-rpm.sh "${fedora_version}" \
-      "https://download.copr.fedorainfracloud.org/results/hopsayer/ddcutil-service/fedora-${fedora_version}-x86_64/Packages/d/ddcutil-service-${DDCUTIL_SERVICE_VERSION}-0.x86_64.rpm" \
-      "${DDCUTIL_SERVICE_SHA256}" && \
-    dnf clean all
-
-# Hardware feature runtime: systemd-pull, which systemd-sysupdate uses to
-# fetch extensions, ships in systemd-container.
-RUN --mount=type=cache,target=/var/cache/dnf \
-    --mount=type=bind,from=ctx-scripts,source=/scripts,target=/scripts \
-    bash /scripts/rpmdb-repair.sh && \
-    dnf -y --releasever="${fedora_version}" install --setopt=install_weak_deps=False systemd-container && \
+    --mount=type=bind,from=python-tools,source=/usr,target=/opt/python,ro \
+    env PYTHONHOME=/opt/python LD_LIBRARY_PATH=/opt/python/lib64 /opt/python/bin/python3 /scripts/rpmdb-repair.py && \
+    dnf -y --releasever="${fedora_version}" install ddcutil-service && \
     dnf clean all
 
 # The system overlay mirrors the installed filesystem. Live-installer files
 # live in a separate overlay consumed only by Containerfile.installer.
 COPY editions/workstation/files/system/ /
+COPY shared/trust/ /
 # GDM renders the login-screen logo at natural size, so keep it small.
 COPY editions/workstation/assets/gdm-logo.png /usr/share/pixmaps/luminusos-gdm-logo.png
 
@@ -250,10 +230,11 @@ COPY editions/workstation/assets/about-logo-dark.png /usr/share/pixmaps/fedora_w
 RUN --mount=type=bind,from=ctx-flatpaks,source=/flatpaks,target=/flatpaks,ro \
     --mount=type=cache,target=/var/cache/dnf \
     --mount=type=bind,from=ctx-scripts,source=/scripts,target=/scripts \
+    --mount=type=bind,from=python-tools,source=/usr,target=/opt/python,ro \
     if [ "${skip_flatpaks}" = "1" ]; then \
       echo "Skipping Flatpak installation because skip_flatpaks=1"; \
     else \
-      bash /scripts/rpmdb-repair.sh && \
+      env PYTHONHOME=/opt/python LD_LIBRARY_PATH=/opt/python/lib64 /opt/python/bin/python3 /scripts/rpmdb-repair.py && \
       if ! command -v flatpak >/dev/null 2>&1; then \
         dnf -y --releasever="${fedora_version}" install flatpak; \
       fi && \
@@ -261,24 +242,26 @@ RUN --mount=type=bind,from=ctx-flatpaks,source=/flatpaks,target=/flatpaks,ro \
       xargs flatpak install -y --noninteractive --no-related < /flatpaks; \
     fi
 
-# Installed workstation configuration (invalidated only by build.sh changes)
+# Installed workstation configuration (invalidated only by build.py changes)
 RUN --mount=type=bind,from=ctx-workstation-script,source=/,target=/ctx \
-    env --chdir=/ctx/workstation ./build.sh
+    --mount=type=bind,from=python-tools,source=/usr,target=/opt/python,ro \
+    env PYTHONHOME=/opt/python LD_LIBRARY_PATH=/opt/python/lib64 /opt/python/bin/python3 /ctx/workstation/build.py
 
-# Hardware feature discovery metadata and transfer templates, from the
-# manifests under editions/workstation/features.
 RUN --mount=type=bind,from=ctx-sysext,source=/,target=/ctx \
     bash /ctx/feature-manifest.sh generate /ctx/features /
 
 # Dynamic branding stays late so version-only changes reuse package layers.
-# SYSEXT_LEVEL ties hardware feature extensions to this exact build.
 RUN --mount=type=bind,from=ctx-scripts,source=/scripts,target=/scripts \
-    bash /scripts/os-release-set.sh \
+    --mount=type=bind,from=python-tools,source=/usr,target=/opt/python,ro \
+    env PYTHONHOME=/opt/python LD_LIBRARY_PATH=/opt/python/lib64 /opt/python/bin/python3 /scripts/os-release-set.py \
       PRETTY_NAME "Luminus OS ${edition_name} ${image_version}" \
+      VERSION "${image_version}" \
+      BUILD_ID "${image_version}" \
+      IMAGE_VERSION "${image_version}" \
+      SYSEXT_LEVEL "${image_version}" \
       VARIANT "${edition_name}" \
       VARIANT_ID "${edition_id}" \
-      LOGO "luminusos-logo-icon" \
-      SYSEXT_LEVEL "${image_version}"
+      LOGO "luminusos-logo-icon"
 
 LABEL org.opencontainers.image.version="${image_version}"
 
@@ -296,11 +279,15 @@ RUN test -f /usr/share/gnome-shell/extensions/${aurora_shell_uuid}/metadata.json
       '.uuid == $uuid and (."shell-version" | index($major)) and (."session-modes" | index("initial-setup"))' \
       /usr/share/gnome-shell/extensions/${aurora_shell_uuid}/metadata.json
 
+# Final cleanup
 RUN dnf clean all && \
     rm -rf /var/cache/dnf /var/cache/libdnf5 /tmp/* /var/log/* /var/tmp/*
 
 RUN set -eux; \
     command -v bootc && \
+    ocr_languages="$(tesseract --list-langs)" && \
+    printf '%s\n' "$ocr_languages" | grep -qx eng && \
+    printf '%s\n' "$ocr_languages" | grep -qx por && \
     rpm -q gstreamer1-plugins-good gstreamer1-plugins-bad-free \
       gstreamer1-plugin-openh264 openh264 gstreamer1-plugin-libav \
       glycin-thumbnailer gst-thumbnailers papers-thumbnailer \
@@ -322,9 +309,10 @@ RUN set -eux; \
       iwlwifi-mvm-firmware iwlwifi-mld-firmware iwlbluetooth-firmware && \
     systemctl is-enabled firewalld.service && \
     ! systemctl is-enabled sshd.service && \
+    ! systemctl is-enabled sshd.socket && \
+    ! systemctl is-enabled ssh.socket && \
     systemctl is-enabled bootc-fetch-apply-updates.timer && \
     rpm -q elastic-swap && \
-    test "$(rpm -q --queryformat '%{VERSION}' elastic-swap)" = "${elastic_swap_version}" && \
     systemctl is-enabled elastic-swap.service && \
     test -f /usr/lib/systemd/system/elastic-swap-prepare.service && \
     rpm -q ddcutil ddcutil-service && \
@@ -359,6 +347,7 @@ RUN set -eux; \
       test "${SYSEXT_LEVEL}" = "${image_version}" ) && \
     test ! -e /usr/lib/sysupdate.d && \
     test -x /usr/lib/systemd/systemd-pull && \
+    test -x /usr/bin/python3 && \
     test -x /usr/libexec/luminusos/sysext && \
     test "$(readlink -f /usr/bin/luminus-features)" = /usr/libexec/luminusos/sysext && \
     test -f /usr/share/luminusos/sysupdate/luminusos.pgp && \
@@ -383,8 +372,7 @@ RUN set -eux; \
       [ "${id}" = luminusos-discovery-probe ] || \
         test -f "/usr/lib/luminusos/sysupdate/${id}.transfer.in" || exit 1; \
     done && \
-    /usr/lib/systemd/systemd-sysupdate --definitions=/usr/lib/luminusos/sysupdate-discovery \
-      features --json=short | \
+    /usr/lib/systemd/systemd-sysupdate --definitions=/usr/lib/luminusos/sysupdate-discovery features --json=short | \
       jq -e --argjson n "$(ls /usr/lib/luminusos/sysupdate-discovery/*.feature | wc -l)" \
         '(.features | length) == $n and (.features | index("luminusos-discovery-probe"))' && \
     GSETTINGS_BACKEND=memory gsettings get org.gnome.login-screen logo | grep -q luminusos && \

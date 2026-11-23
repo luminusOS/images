@@ -1,0 +1,169 @@
+import json
+import os
+import re
+import stat
+import subprocess
+import sys
+import tempfile
+from pathlib import Path
+
+import release_pipeline
+
+# The driver is reviewed repository code, run from the checkout of the
+# dispatching commit on the candidate's release line; that commit is
+# recorded as runner_sha.
+DRIVER = Path(__file__).resolve().parent / "validation_driver.py"
+PUBLIC_KEY = Path("shared/release/candidate.pub")
+# Where installation-validation.yml stages an image candidate's inputs.
+BASE_DISK = Path("base-disk/published-base.qcow2")
+CANDIDATE_MIRROR = Path("candidate-mirror")
+
+
+def reject_symlink_components(path):
+    path = Path(os.path.abspath(path))
+    for part in (path, *path.parents):
+        if part.is_symlink():
+            raise ValueError(f"symlink in path: {part}")
+    return path
+
+
+def owned_directory(path):
+    path = reject_symlink_components(path)
+    info = path.lstat()
+    if (
+        not stat.S_ISDIR(info.st_mode)
+        or info.st_uid != os.geteuid()
+        or info.st_mode & 0o022
+    ):
+        raise ValueError(f"untrusted runner directory: {path}")
+    return path
+
+
+def owned_file(path):
+    path = reject_symlink_components(path)
+    info = path.lstat()
+    if (
+        not stat.S_ISREG(info.st_mode)
+        or info.st_uid != os.geteuid()
+        or info.st_mode & 0o022
+    ):
+        raise ValueError(f"untrusted runner file: {path}")
+    return path
+
+
+def kind_inputs(candidate, runner_temp):
+    if release_pipeline.release_kind(candidate) == "full":
+        return []
+    return [
+        "--disk",
+        str(owned_file(runner_temp / BASE_DISK)),
+        "--candidate-mirror",
+        str(owned_directory(runner_temp / CANDIDATE_MIRROR)),
+    ]
+
+
+def validate_output_tree(directory):
+    for root, directories, files in os.walk(directory, followlinks=False):
+        for name in directories + files:
+            path = Path(root) / name
+            info = path.lstat()
+            if (
+                not (stat.S_ISREG(info.st_mode) or stat.S_ISDIR(info.st_mode))
+                or info.st_uid != os.geteuid()
+                or info.st_mode & 0o022
+            ):
+                raise ValueError(f"unsafe validation output: {path}")
+
+
+def run_validation(candidate_dir, runner_temp, run_id, repository, fixture_base):
+    if not re.fullmatch(r"[1-9][0-9]*", run_id):
+        raise ValueError("candidate run ID must be a positive decimal integer")
+    candidate_dir = owned_directory(candidate_dir)
+    runner_temp = owned_directory(runner_temp)
+    fixture_base = owned_directory(fixture_base)
+    candidate_path = candidate_dir / "candidate.json"
+    candidate = release_pipeline.candidate(candidate_path, PUBLIC_KEY)
+    if candidate["run_id"] != int(run_id) or candidate["repository"] != repository:
+        raise ValueError("candidate repository or run ID mismatch")
+    if os.environ.get("GITHUB_REF") != release_pipeline.release_ref(
+        candidate["channel"], candidate["fedora_version"]
+    ):
+        raise ValueError("validation must run on the candidate's release line")
+    extra = kind_inputs(candidate, runner_temp)
+    receipts = Path(tempfile.mkdtemp(prefix="luminusos-validation-", dir=runner_temp))
+    os.chmod(receipts, 0o700)
+    environment = {
+        key: value
+        for key, value in os.environ.items()
+        if not any(
+            secret in key.upper()
+            for secret in ("TOKEN", "SECRET", "PASSWORD", "COSIGN_PRIVATE_KEY")
+        )
+    }
+    subprocess.run(
+        [
+            sys.executable,
+            str(DRIVER),
+            "--candidate",
+            str(candidate_path),
+            "--artifacts",
+            str(candidate_dir),
+            "--receipts",
+            str(receipts),
+            "--fixture-base",
+            str(fixture_base),
+            *extra,
+        ],
+        check=True,
+        env=environment,
+    )
+    owned_directory(receipts)
+    validate_output_tree(receipts)
+    current = release_pipeline.candidate(candidate_path, PUBLIC_KEY)
+    if current != candidate:
+        raise ValueError("candidate changed during validation")
+    receipt_paths = sorted(receipts.glob("*.json"))
+    if any(path.is_symlink() or not path.is_file() for path in receipt_paths):
+        raise ValueError("invalid receipt file")
+    receipt_data = [
+        json.loads(path.read_text(encoding="utf-8")) for path in receipt_paths
+    ]
+    release_pipeline.validate_receipts(receipt_data, receipts, candidate)
+    return receipts
+
+
+def main():
+    env = os.environ
+    if (
+        not re.fullmatch(
+            r"refs/heads/(?:main|release/[1-9][0-9]*)", env.get("GITHUB_REF", "")
+        )
+        or env.get("GITHUB_EVENT_NAME") != "workflow_dispatch"
+    ):
+        raise ValueError("validation is restricted to release line workflow_dispatch")
+    receipts = run_validation(
+        Path("candidate"),
+        Path(env["RUNNER_TEMP"]),
+        env["CANDIDATE_RUN_ID"],
+        env["GITHUB_REPOSITORY"],
+        Path(env["FIXTURE_BASE"]),
+    )
+    value = str(receipts)
+    if "\n" in value or "\r" in value:
+        raise ValueError("invalid output path")
+    with Path(env["GITHUB_OUTPUT"]).open("a", encoding="utf-8") as output:
+        print(f"receipts={value}", file=output)
+
+
+if __name__ == "__main__":
+    try:
+        main()
+    except (
+        KeyError,
+        OSError,
+        ValueError,
+        subprocess.CalledProcessError,
+        json.JSONDecodeError,
+    ) as error:
+        print(f"installation validation failed: {error}", file=sys.stderr)
+        sys.exit(1)

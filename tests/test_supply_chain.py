@@ -1,0 +1,1876 @@
+import contextlib
+import copy
+import hashlib
+import importlib.util
+import io
+import json
+import subprocess
+import tempfile
+import unittest
+from datetime import UTC, datetime, timedelta
+from pathlib import Path
+from types import SimpleNamespace
+from unittest.mock import patch
+
+SCRIPT = Path(__file__).parents[1] / ".github/scripts/workflow/supply_chain.py"
+SPEC = importlib.util.spec_from_file_location("supply_chain", SCRIPT)
+supply_chain = importlib.util.module_from_spec(SPEC)
+SPEC.loader.exec_module(supply_chain)
+
+
+def grype_status(now=None):
+    now = now or datetime.now(UTC)
+    return {
+        "schemaVersion": "v6.1.10",
+        "built": now.strftime("%Y-%m-%dT%H:%M:%SZ"),
+        "valid": True,
+        "from": "https://grype.anchore.io/databases/archive?checksum=sha256%3A"
+        + "a" * 64,
+    }
+
+
+def grype_scan(matches, now=None):
+    return {"matches": matches, "descriptor": {"db": {"status": grype_status(now)}}}
+
+
+class GrypeDatabaseTests(unittest.TestCase):
+    def test_database_validation_and_boundaries(self):
+        now = datetime(2026, 11, 20, tzinfo=UTC)
+        valid = grype_status(now)
+        scan = lambda status: {"descriptor": {"db": {"status": status}}}
+        result = supply_chain._grype_db(scan(valid), now)
+        self.assertEqual(
+            result,
+            {
+                "schema_version": "v6.1.10",
+                "built": "2026-11-20T00:00:00Z",
+                "archive_sha256": "a" * 64,
+                "source": "https://grype.anchore.io/databases/archive",
+            },
+        )
+        boundary = dict(
+            valid, built=(now - timedelta(hours=120)).isoformat().replace("+00:00", "Z")
+        )
+        supply_chain._grype_db(scan(boundary), now)
+        invalid = [
+            dict(boundary, built="2026-11-14T23:59:59Z"),
+            dict(valid, built="2026-11-20T00:00:01Z"),
+            dict(valid, valid=False),
+            dict(valid, valid="true"),
+            dict(valid, schemaVersion="v5.1.10"),
+            dict(valid, built="2026-11-20T00:00:00+00:00"),
+            dict(
+                valid,
+                **{"from": valid["from"].replace("grype.anchore.io", "evil.example")},
+            ),
+            dict(valid, **{"from": valid["from"].replace("https:", "http:")}),
+            dict(valid, **{"from": "https://grype.anchore.io/archive"}),
+            dict(valid, **{"from": valid["from"] + "&checksum=sha256:" + "a" * 64}),
+            dict(valid, **{"from": valid["from"].replace("a" * 64, "A" * 64)}),
+        ]
+        for status in invalid:
+            with (
+                self.subTest(status=status),
+                self.assertRaises(supply_chain.SupplyChainError),
+            ):
+                supply_chain._grype_db(scan(status), now)
+        with self.assertRaises(supply_chain.SupplyChainError):
+            supply_chain._grype_db({}, now)
+
+    def test_subsecond_boundaries(self):
+        now = datetime(2026, 11, 20, 0, 0, 0, 500000, tzinfo=UTC)
+        for delta, accepted in (
+            (timedelta(hours=-120, microseconds=-1), False),
+            (timedelta(hours=-120), True),
+            (timedelta(hours=-120, microseconds=500000), True),
+            (timedelta(microseconds=100000), False),
+        ):
+            status = grype_status(now)
+            status["built"] = (now + delta).isoformat().replace("+00:00", "Z")
+            scan = {"descriptor": {"db": {"status": status}}}
+            with self.subTest(delta=delta):
+                if accepted:
+                    supply_chain._grype_db(scan, now)
+                else:
+                    with self.assertRaises(supply_chain.SupplyChainError):
+                        supply_chain._grype_db(scan, now)
+
+    def test_url_rejects_noncanonical_hosts_and_extra_query_keys(self):
+        now = datetime(2026, 11, 20, tzinfo=UTC)
+        status = grype_status(now)
+        source = status["from"]
+        for url in (
+            source.replace("grype.anchore.io", "user@grype.anchore.io"),
+            source.replace("grype.anchore.io", "grype.anchore.io:443"),
+            source.replace("grype.anchore.io", "GRYPE.ANCHORE.IO"),
+            source.replace("grype.anchore.io", "grype.anchore.io."),
+            source.replace("checksum=", "checksum%3D"),
+            source.replace("?checksum=", "?Checksum=x&checksum="),
+        ):
+            with (
+                self.subTest(url=url),
+                self.assertRaises(supply_chain.SupplyChainError),
+            ):
+                supply_chain._grype_db(
+                    {"descriptor": {"db": {"status": status | {"from": url}}}}, now
+                )
+
+    def test_invalid_timestamp_error_identifies_database(self):
+        status = grype_status() | {"built": "not-a-time"}
+        with self.assertRaisesRegex(supply_chain.SupplyChainError, "Grype database"):
+            supply_chain._grype_db(
+                {"descriptor": {"db": {"status": status}}}, datetime.now(UTC)
+            )
+
+    def test_invalid_database_does_not_rewrite_excluded_report(self):
+        now = datetime(2026, 11, 20, tzinfo=UTC)
+        payload = grype_scan([], now)
+        payload["descriptor"]["db"]["status"]["built"] = "2020-01-01T00:00:00Z"
+        original = json.dumps(payload)
+        with tempfile.TemporaryDirectory() as temp:
+            output = Path(temp)
+
+            def run(argv, **kwargs):
+                if argv[1] == "version":
+                    return subprocess.CompletedProcess(argv, 0, "Version: 1.2.3", "")
+                value = (
+                    json.dumps({"spdxVersion": "SPDX-2.3", "packages": []})
+                    if argv[0] == "syft"
+                    else original
+                )
+                Path(argv[argv.index("--file") + 1]).write_text(value)
+                return subprocess.CompletedProcess(argv, 0, "", "")
+
+            with (
+                patch.dict("os.environ", {}, clear=True),
+                patch.object(
+                    supply_chain,
+                    "_scan_exclusion",
+                    return_value={"path": "/var/lib/flatpak"},
+                ),
+                patch.object(supply_chain.subprocess, "run", side_effect=run),
+                self.assertRaises(supply_chain.SupplyChainError),
+            ):
+                supply_chain._inspect_image(
+                    "repo@sha256:" + "a" * 64,
+                    output,
+                    "b" * 40,
+                    expected_syft_version="1.2.3",
+                    expected_grype_version="1.2.3",
+                    scan_exclusion=Path("exclusion"),
+                    now=now,
+                )
+            self.assertEqual((output / "vulnerabilities.json").read_text(), original)
+
+
+def local_input_paths(output):
+    root = output.parent / "scan-inputs"
+    trusted = supply_chain.local_oci_scan.TrustedFile(root / "trusted", "a" * 64)
+    return SimpleNamespace(
+        manifest_digest="sha256:" + "a" * 64,
+        layout=root / "layout",
+        db_cache=root / "db",
+        scratch=root / "scratch",
+        syft=trusted,
+        grype=trusted,
+        bwrap=trusted,
+        prlimit=trusted,
+        preparation_receipt=trusted,
+        handoff_receipt=trusted,
+        runtime_files=(),
+    )
+
+
+class SupplyChainTests(unittest.TestCase):
+    def test_output_relationship_preflight_precedes_every_cleanup(self):
+        local = supply_chain.local_oci_scan
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            output = root / "output"
+            output.mkdir(mode=0o700)
+            trusted = local.TrustedFile(root / "trusted", "a" * 64)
+            baseline = SimpleNamespace(
+                layout=root / "layout",
+                db_cache=root / "db",
+                scratch=root / "scratch",
+                syft=trusted,
+                grype=trusted,
+                bwrap=trusted,
+                prlimit=trusted,
+                preparation_receipt=trusted,
+                handoff_receipt=trusted,
+                runtime_files=(),
+            )
+            for field in (
+                "layout",
+                "db_cache",
+                "scratch",
+                "syft",
+                "grype",
+                "bwrap",
+                "prlimit",
+                "preparation_receipt",
+                "handoff_receipt",
+                "runtime_files",
+                "exceptions",
+            ):
+                for name in (
+                    "provenance.json",
+                    "scan-evidence.json",
+                    "sbom.spdx.json",
+                    "vulnerabilities.json",
+                ):
+                    (output / name).write_bytes(b"protected input and previous output")
+                managed = output / "provenance.json"
+                args = vars(baseline).copy()
+                exceptions = None
+                if field in ("layout", "db_cache", "scratch"):
+                    args[field] = output
+                elif field == "exceptions":
+                    exceptions = managed
+                elif field == "runtime_files":
+                    args[field] = (
+                        local.RuntimeFile(
+                            local.TrustedFile(managed, "b" * 64), "/lib64/libproof.so"
+                        ),
+                    )
+                else:
+                    args[field] = local.TrustedFile(managed, "b" * 64)
+                before = {p.name: p.read_bytes() for p in output.iterdir()}
+                with (
+                    self.subTest(field=field),
+                    patch.object(local, "scan") as scan,
+                    self.assertRaises(supply_chain.SupplyChainError),
+                ):
+                    supply_chain.inspect_image(
+                        "invalid logical subject",
+                        output,
+                        "b" * 40,
+                        exceptions,
+                        expected_syft_version="1.34.2",
+                        expected_grype_version="0.101.1",
+                        local_input=SimpleNamespace(**args),
+                    )
+                scan.assert_not_called()
+                self.assertEqual(
+                    {p.name: p.read_bytes() for p in output.iterdir()}, before
+                )
+
+    def test_private_seam_requires_reviewed_policy_and_rejects_bypass_first(self):
+        with tempfile.TemporaryDirectory() as temp:
+            output = Path(temp)
+            evidence = output / "scan-evidence.json"
+            for bypass in ("false", "true"):
+                evidence.write_text("stale previous success")
+                with (
+                    patch.dict(
+                        "os.environ", {"SECURITY_FINDINGS_BYPASS": bypass}, clear=True
+                    ),
+                    patch.object(supply_chain, "_run") as run,
+                    self.assertRaises(supply_chain.SupplyChainError),
+                ):
+                    supply_chain.inspect_image(
+                        "repo@sha256:" + "a" * 64,
+                        output,
+                        "b" * 40,
+                        expected_syft_version="1.34.2",
+                        expected_grype_version="0.101.1",
+                        local_input=local_input_paths(output),
+                    )
+                run.assert_not_called()
+                self.assertFalse(evidence.exists())
+
+    def test_private_seam_reuses_evaluator_and_separates_policy_identities(self):
+        with tempfile.TemporaryDirectory() as temp:
+            output = Path(temp) / "output"
+            output.mkdir(mode=0o700)
+            policy = Path(temp) / "reviewed-unit-fixture.json"
+            policy.write_text(
+                json.dumps(
+                    {
+                        "kind": "policy",
+                        "schema_version": 2,
+                        "evidence_class": "runtime",
+                        "exceptions": [],
+                    }
+                )
+            )
+            policy_hash = hashlib.sha256(policy.read_bytes()).hexdigest()
+            binding = {"handoff_policy_sha256": "d" * 64, "receipt_sha256": "e" * 64}
+
+            def scan(local_input, destination, **kwargs):
+                (destination / "sbom.spdx.json").write_text(
+                    json.dumps({"spdxVersion": "SPDX-2.3", "packages": []})
+                )
+                (destination / "vulnerabilities.json").write_text(
+                    json.dumps(grype_scan([]))
+                )
+                return {
+                    "tools": {"syft": "Version: 1.34.2", "grype": "Version: 0.101.1"},
+                    "private_binding": binding,
+                }
+
+            with (
+                patch.dict("os.environ", {}, clear=True),
+                patch.object(supply_chain.local_oci_scan, "scan", side_effect=scan),
+                patch.object(supply_chain, "_run") as public_run,
+            ):
+                manifest = supply_chain.inspect_image(
+                    "repo@sha256:" + "a" * 64,
+                    output,
+                    "b" * 40,
+                    policy,
+                    expected_syft_version="1.34.2",
+                    expected_grype_version="0.101.1",
+                    edition="core",
+                    component_scope="core_payload",
+                    channel="testing",
+                    fedora="45",
+                    expected_policy_sha256=policy_hash,
+                    local_input=local_input_paths(output),
+                )
+            public_run.assert_not_called()
+            value = json.loads(manifest.read_text())
+            self.assertEqual(value["policy_sha256"], policy_hash)
+            self.assertEqual(value["local_input"]["private_binding"], binding)
+            self.assertEqual(value["image"], "repo@sha256:" + "a" * 64)
+            self.assertEqual(value["security"]["gate"], "success")
+            self.assertIsNone(value["security"]["run_attempt"])
+            self.assertIsNone(
+                json.loads((output / "provenance.json").read_text())["predicate"][
+                    "source"
+                ]["run_attempt"]
+            )
+
+    def test_private_policy_scope_hash_and_findings_fail_without_stale_success(self):
+        with tempfile.TemporaryDirectory() as temp:
+            output = Path(temp) / "output"
+            output.mkdir(mode=0o700)
+            policy = Path(temp) / "synthetic-unit-policy.json"
+            policy.write_text(
+                json.dumps(
+                    {
+                        "kind": "policy",
+                        "schema_version": 2,
+                        "evidence_class": "runtime",
+                        "exceptions": [],
+                    }
+                )
+            )
+            expected = hashlib.sha256(policy.read_bytes()).hexdigest()
+            args = {
+                "expected_syft_version": "1.34.2",
+                "expected_grype_version": "0.101.1",
+                "edition": "core",
+                "component_scope": "core_payload",
+                "channel": "testing",
+                "fedora": "45",
+                "expected_policy_sha256": expected,
+                "local_input": local_input_paths(output),
+            }
+            for changes in (
+                {"expected_policy_sha256": "f" * 64},
+                {"component_scope": "installer_live"},
+                {"expected_syft_version": "1.2.3"},
+            ):
+                (output / "scan-evidence.json").write_text("old success")
+                with (
+                    self.subTest(changes=changes),
+                    patch.dict("os.environ", {}, clear=True),
+                    patch.object(supply_chain.local_oci_scan, "scan") as scan,
+                    self.assertRaises(supply_chain.SupplyChainError),
+                ):
+                    supply_chain.inspect_image(
+                        "repo@sha256:" + "a" * 64,
+                        output,
+                        "b" * 40,
+                        policy,
+                        **(args | changes),
+                    )
+                scan.assert_not_called()
+                self.assertFalse((output / "scan-evidence.json").exists())
+
+            def vulnerable(value, destination, **kwargs):
+                (destination / "sbom.spdx.json").write_text(
+                    json.dumps({"spdxVersion": "SPDX-2.3", "packages": []})
+                )
+                (destination / "vulnerabilities.json").write_text(
+                    json.dumps(
+                        {
+                            "descriptor": grype_scan([])["descriptor"],
+                            "matches": [
+                                {
+                                    "vulnerability": {
+                                        "id": "CVE-2026-1234",
+                                        "severity": "Critical",
+                                    },
+                                    "artifact": {"name": "pkg", "version": "1"},
+                                }
+                            ],
+                        }
+                    )
+                )
+                return {
+                    "tools": {"syft": "Version: 1.34.2", "grype": "Version: 0.101.1"}
+                }
+
+            with (
+                patch.dict("os.environ", {}, clear=True),
+                patch.object(
+                    supply_chain.local_oci_scan, "scan", side_effect=vulnerable
+                ),
+                self.assertRaises(supply_chain.SupplyChainError),
+            ):
+                supply_chain.inspect_image(
+                    "repo@sha256:" + "a" * 64, output, "b" * 40, policy, **args
+                )
+            self.assertFalse((output / "scan-evidence.json").exists())
+            self.assertFalse((output / "vulnerabilities.json").exists())
+
+    def bypass_environment(self):
+        return {
+            "SECURITY_FINDINGS_BYPASS": "true",
+            "GITHUB_REPOSITORY": "owner/images",
+            "GITHUB_WORKFLOW_REF": "owner/images/.github/workflows/auto-testing.yml@refs/heads/main",
+            "GITHUB_EVENT_NAME": "workflow_dispatch",
+            "GITHUB_REF": "refs/heads/main",
+            "GITHUB_ACTOR": "operator",
+            "GITHUB_RUN_ID": "123",
+            "GITHUB_RUN_ATTEMPT": "1",
+            "GITHUB_SERVER_URL": "https://github.com",
+            "BYPASS_CHANNEL": "testing",
+        }
+
+    def test_bypass_requires_exact_manual_fresh_auto_testing_context(self):
+        with patch.dict("os.environ", self.bypass_environment(), clear=True):
+            self.assertTrue(supply_chain.authorize_bypass())
+        cases = {
+            "GITHUB_EVENT_NAME": "schedule",
+            "GITHUB_REF": "refs/heads/topic",
+            "GITHUB_WORKFLOW_REF": "owner/images/.github/workflows/publish.yml@refs/heads/main",
+            "GITHUB_REPOSITORY": "other/images",
+            "BYPASS_CHANNEL": "stable",
+            "BYPASS_CANDIDATE": "1",
+            "BYPASS_VALIDATION": "2",
+            "BYPASS_TESTING": "3",
+            "BYPASS_TESTING_VALIDATION": "4",
+            "BYPASS_VERSION": "45.20260101",
+        }
+        for field, value in cases.items():
+            with (
+                self.subTest(field=field),
+                patch.dict(
+                    "os.environ", self.bypass_environment() | {field: value}, clear=True
+                ),
+                self.assertRaises(supply_chain.SupplyChainError),
+            ):
+                supply_chain.authorize_bypass()
+
+    def test_default_and_explicit_false_are_strict(self):
+        for environment in (
+            {},
+            {"SECURITY_FINDINGS_BYPASS": "false", "GITHUB_EVENT_NAME": "schedule"},
+        ):
+            with patch.dict("os.environ", environment, clear=True):
+                self.assertFalse(supply_chain.authorize_bypass())
+
+    def test_bypass_audits_clean_and_vulnerable_scans(self):
+        for severity in (None, "High", "Critical", "Unknown"):
+            with (
+                self.subTest(severity=severity),
+                tempfile.TemporaryDirectory() as temporary,
+            ):
+                output = Path(temporary)
+                summary = output / "summary.md"
+                matches = (
+                    []
+                    if severity is None
+                    else [
+                        {
+                            "vulnerability": {
+                                "id": "CVE-2026-1234",
+                                "severity": severity,
+                            },
+                            "artifact": {"name": "pkg", "version": "1.0"},
+                        }
+                    ]
+                )
+
+                def run(argv, matches=matches, **kwargs):
+                    if argv[1] == "version":
+                        return subprocess.CompletedProcess(
+                            argv, 0, "Version: 1.2.3", ""
+                        )
+                    payload = (
+                        {"spdxVersion": "SPDX-2.3", "packages": []}
+                        if argv[0] == "syft"
+                        else grype_scan(matches)
+                    )
+                    Path(argv[argv.index("--file") + 1]).write_text(json.dumps(payload))
+                    return subprocess.CompletedProcess(argv, 0, "", "")
+
+                with (
+                    patch.dict(
+                        "os.environ",
+                        self.bypass_environment()
+                        | {"GITHUB_STEP_SUMMARY": str(summary)},
+                        clear=True,
+                    ),
+                    patch.object(supply_chain.subprocess, "run", side_effect=run),
+                    contextlib.redirect_stdout(io.StringIO()) as stdout,
+                ):
+                    manifest = supply_chain.inspect_image(
+                        "repo@sha256:" + "a" * 64,
+                        output,
+                        "b" * 40,
+                        expected_syft_version="1.2.3",
+                        expected_grype_version="1.2.3",
+                    )
+                self.assertIn(
+                    "::warning::Security findings gate BYPASSED", stdout.getvalue()
+                )
+                audit = json.loads(manifest.read_text())["security"]
+                self.assertEqual(audit["gate"], "bypassed")
+                self.assertEqual(audit["actor"], "operator")
+                self.assertEqual(audit["run_id"], "123")
+                self.assertEqual(len(audit["findings"]), int(severity is not None))
+                self.assertEqual(
+                    json.loads((output / "provenance.json").read_text())["predicate"][
+                        "security"
+                    ],
+                    audit,
+                )
+                self.assertIn("NOT eligible for promotion", summary.read_text())
+
+    def test_bypass_rejects_stale_database(self):
+        now = datetime(2026, 11, 20, tzinfo=UTC)
+        with tempfile.TemporaryDirectory() as temp:
+            output = Path(temp)
+
+            def run(argv, **kwargs):
+                if argv[1] == "version":
+                    return subprocess.CompletedProcess(argv, 0, "Version: 1.2.3", "")
+                payload = (
+                    {"spdxVersion": "SPDX-2.3", "packages": []}
+                    if argv[0] == "syft"
+                    else grype_scan([], now - timedelta(hours=121))
+                )
+                Path(argv[argv.index("--file") + 1]).write_text(json.dumps(payload))
+                return subprocess.CompletedProcess(argv, 0, "", "")
+
+            with (
+                patch.dict("os.environ", self.bypass_environment(), clear=True),
+                patch.object(supply_chain.subprocess, "run", side_effect=run),
+                self.assertRaisesRegex(supply_chain.SupplyChainError, "stale"),
+            ):
+                supply_chain.inspect_image(
+                    "repo@sha256:" + "a" * 64,
+                    output,
+                    "b" * 40,
+                    expected_syft_version="1.2.3",
+                    expected_grype_version="1.2.3",
+                    now=now,
+                )
+            self.assertFalse((output / "scan-evidence.json").exists())
+
+    def test_run_id_requires_valid_run_attempt(self):
+        for attempt in (None, "", "0", "01", "-1", "abc"):
+            environment = {"GITHUB_RUN_ID": "123"}
+            if attempt is not None:
+                environment["GITHUB_RUN_ATTEMPT"] = attempt
+            with (
+                self.subTest(attempt=attempt),
+                tempfile.TemporaryDirectory() as temp,
+                patch.dict("os.environ", environment, clear=True),
+                self.assertRaisesRegex(supply_chain.SupplyChainError, "run attempt"),
+            ):
+                supply_chain._inspect_image(
+                    "repo@sha256:" + "a" * 64,
+                    Path(temp),
+                    "b" * 40,
+                    expected_syft_version="1.2.3",
+                    expected_grype_version="1.2.3",
+                )
+
+    def test_rejects_tag(self):
+        with self.assertRaises(supply_chain.SupplyChainError):
+            supply_chain._digest_image("registry.example/image:latest")
+
+    def test_bypass_does_not_relax_invalid_scanner_evidence(self):
+        cases = [
+            "not JSON",
+            {"matches": {}},
+            {"matches": [None]},
+            {
+                "matches": [
+                    {
+                        "vulnerability": {"id": "CVE-2026-1234", "severity": "Severe"},
+                        "artifact": {"name": "pkg", "version": "1"},
+                    }
+                ]
+            },
+            {
+                "matches": [
+                    {
+                        "vulnerability": {"id": "CVE-2026-1234", "severity": []},
+                        "artifact": {"name": "pkg", "version": "1"},
+                    }
+                ]
+            },
+            {
+                "matches": [
+                    {
+                        "vulnerability": {"id": "CVE-2026-1234", "severity": "High"},
+                        "artifact": {"name": "pkg"},
+                    }
+                ]
+            },
+        ]
+        for fix in ([], "invalid", {"versions": "1.0"}, {"versions": [None]}):
+            cases.append(
+                {
+                    "matches": [
+                        {
+                            "vulnerability": {
+                                "id": "CVE-2026-1234",
+                                "severity": "High",
+                                "fix": fix,
+                            },
+                            "artifact": {"name": "pkg", "version": "1"},
+                        }
+                    ]
+                }
+            )
+        for payload in cases:
+            with (
+                self.subTest(payload=payload),
+                tempfile.TemporaryDirectory() as temporary,
+            ):
+
+                def run(argv, payload=payload, **kwargs):
+                    if argv[1] == "version":
+                        return subprocess.CompletedProcess(
+                            argv, 0, "Version: 1.2.3", ""
+                        )
+                    value = (
+                        {"spdxVersion": "SPDX-2.3", "packages": []}
+                        if argv[0] == "syft"
+                        else payload
+                    )
+                    if argv[0] == "grype" and isinstance(value, dict):
+                        value = value | {"descriptor": grype_scan([])["descriptor"]}
+                    Path(argv[argv.index("--file") + 1]).write_text(
+                        value if isinstance(value, str) else json.dumps(value)
+                    )
+                    return subprocess.CompletedProcess(argv, 0, "", "")
+
+                with (
+                    patch.dict("os.environ", self.bypass_environment(), clear=True),
+                    patch.object(supply_chain.subprocess, "run", side_effect=run),
+                    self.assertRaises(supply_chain.SupplyChainError),
+                ):
+                    supply_chain.inspect_image(
+                        "repo@sha256:" + "a" * 64,
+                        Path(temporary),
+                        "b" * 40,
+                        expected_syft_version="1.2.3",
+                        expected_grype_version="1.2.3",
+                    )
+                self.assertFalse((Path(temporary) / "scan-evidence.json").exists())
+
+    def test_bypass_does_not_relax_command_failures_or_digest(self):
+        with (
+            patch.dict("os.environ", self.bypass_environment(), clear=True),
+            tempfile.TemporaryDirectory() as temporary,
+        ):
+            for image, error in (
+                ("repo:tag", None),
+                ("repo@sha256:" + "a" * 64, subprocess.CalledProcessError(1, "grype")),
+            ):
+                with (
+                    self.subTest(image=image),
+                    patch.object(supply_chain.subprocess, "run", side_effect=error),
+                    self.assertRaises(supply_chain.SupplyChainError),
+                ):
+                    supply_chain.inspect_image(
+                        image,
+                        Path(temporary),
+                        "b" * 40,
+                        expected_syft_version="1.2.3",
+                        expected_grype_version="1.2.3",
+                    )
+
+    def test_bypass_scanner_execution_failures_remain_fatal(self):
+        for failed_tool in ("syft", "grype"):
+            with (
+                self.subTest(tool=failed_tool),
+                tempfile.TemporaryDirectory() as temporary,
+            ):
+
+                def run(argv, failed_tool=failed_tool, **kwargs):
+                    if argv[1] == "version":
+                        return subprocess.CompletedProcess(
+                            argv, 0, "Version: 1.2.3", ""
+                        )
+                    if argv[0] == failed_tool:
+                        raise subprocess.CalledProcessError(1, argv)
+                    Path(argv[argv.index("--file") + 1]).write_text(
+                        json.dumps({"spdxVersion": "SPDX-2.3", "packages": []})
+                    )
+                    return subprocess.CompletedProcess(argv, 0, "", "")
+
+                with (
+                    patch.dict("os.environ", self.bypass_environment(), clear=True),
+                    patch.object(supply_chain.subprocess, "run", side_effect=run),
+                    self.assertRaisesRegex(
+                        supply_chain.SupplyChainError, f"command failed: {failed_tool}"
+                    ),
+                ):
+                    supply_chain.inspect_image(
+                        "repo@sha256:" + "a" * 64,
+                        Path(temporary),
+                        "b" * 40,
+                        expected_syft_version="1.2.3",
+                        expected_grype_version="1.2.3",
+                    )
+                self.assertFalse((Path(temporary) / "scan-evidence.json").exists())
+
+    def test_inspection_writes_digest_linked_evidence(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            output = Path(temporary) / "out"
+
+            def run(argv, **kwargs):
+                if argv[1] == "version":
+                    return subprocess.CompletedProcess(argv, 0, "Version: 1.2.3\n", "")
+                if argv[0] == "syft":
+                    Path(argv[argv.index("--file") + 1]).write_text(
+                        json.dumps({"spdxVersion": "SPDX-2.3", "packages": []}),
+                        encoding="utf-8",
+                    )
+                elif argv[0] == "grype":
+                    Path(argv[argv.index("--file") + 1]).write_text(
+                        json.dumps(grype_scan([])), encoding="utf-8"
+                    )
+                return subprocess.CompletedProcess(argv, 0, "", "")
+
+            with (
+                patch.dict("os.environ", {"GITHUB_RUN_ATTEMPT": "3"}),
+                patch.object(supply_chain.subprocess, "run", side_effect=run),
+            ):
+                manifest = supply_chain.inspect_image(
+                    "registry.example/image@sha256:" + "a" * 64,
+                    output,
+                    "b" * 40,
+                    expected_syft_version="1.2.3",
+                    expected_grype_version="1.2.3",
+                )
+            evidence = json.loads(manifest.read_text(encoding="utf-8"))
+            provenance = json.loads((output / "provenance.json").read_text())
+            self.assertEqual(evidence["db"], provenance["predicate"]["db"])
+            self.assertEqual(evidence["db"]["archive_sha256"], "a" * 64)
+            self.assertEqual(evidence["security"]["run_attempt"], "3")
+            self.assertEqual(provenance["predicate"]["source"]["run_attempt"], "3")
+            self.assertEqual(evidence["digest"], "a" * 64)
+            self.assertEqual(
+                set(evidence["files"]),
+                {"sbom.spdx.json", "vulnerabilities.json", "provenance.json"},
+            )
+
+    def test_critical_finding_fails_closed(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            output = Path(temporary)
+
+            def run(argv, **kwargs):
+                if argv[1] == "version":
+                    return subprocess.CompletedProcess(argv, 0, "Version: 1.2.3", "")
+                path = Path(argv[argv.index("--file") + 1])
+                payload = (
+                    {"spdxVersion": "SPDX-2.3", "packages": []}
+                    if argv[0] == "syft"
+                    else {
+                        "matches": [
+                            {
+                                "vulnerability": {
+                                    "id": "CVE-2025-1234",
+                                    "severity": "Critical",
+                                    "fix": {"versions": ["2.0"]},
+                                },
+                                "artifact": {"name": "pkg", "version": "1.0"},
+                            },
+                            {
+                                "vulnerability": {
+                                    "id": "CVE-2025-5678",
+                                    "severity": "High",
+                                },
+                                "artifact": {"name": "other", "version": "3.0"},
+                            },
+                        ]
+                    }
+                )
+                if argv[0] == "grype":
+                    payload["descriptor"] = grype_scan([])["descriptor"]
+                path.write_text(json.dumps(payload), encoding="utf-8")
+                return subprocess.CompletedProcess(argv, 0, "", "")
+
+            with (
+                patch.object(supply_chain.subprocess, "run", side_effect=run),
+                self.assertRaises(supply_chain.SupplyChainError) as raised,
+            ):
+                supply_chain.inspect_image(
+                    "repo@sha256:" + "a" * 64,
+                    output,
+                    "b" * 40,
+                    expected_syft_version="1.2.3",
+                    expected_grype_version="1.2.3",
+                )
+            self.assertIn(
+                "Critical CVE-2025-1234: pkg 1.0 (fixed versions: 2.0)",
+                str(raised.exception),
+            )
+            self.assertIn(
+                "High CVE-2025-5678: other 3.0 (fixed versions: unknown)",
+                str(raised.exception),
+            )
+            self.assertFalse((output / "scan-evidence.json").exists())
+            self.assertTrue((output / "vulnerabilities.json").exists())
+
+    def test_unexpected_tool_version_fails(self):
+        with (
+            patch.object(
+                supply_chain.subprocess,
+                "run",
+                return_value=subprocess.CompletedProcess(
+                    ["syft", "version"], 0, "Version: 9.9.0", ""
+                ),
+            ),
+            self.assertRaises(supply_chain.SupplyChainError),
+        ):
+            supply_chain._version("syft", "1.2.3")
+
+    def test_checksums_allowlist_and_sort_order(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            directory = Path(temporary)
+            (directory / "z.iso").write_bytes(b"z")
+            (directory / "a.qcow2").write_bytes(b"a")
+            (directory / "unrelated.txt").write_bytes(b"x")
+            sums = supply_chain.write_checksums(directory)
+            self.assertEqual(
+                [line.split()[-1] for line in sums.read_text().splitlines()],
+                ["a.qcow2", "z.iso"],
+            )
+
+    def test_checksums_recurse_evidence_and_reject_unsafe_paths(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            directory = Path(temporary)
+            evidence = directory / "image-a"
+            evidence.mkdir()
+            (evidence / "vulnerabilities.json").write_text("{}")
+            (evidence / "scan-evidence.json").write_text("{}")
+            sums = supply_chain.write_checksums(directory)
+            self.assertIn("image-a/vulnerabilities.json", sums.read_text())
+            for name in ("candidate.json", "validation.json", "release-evidence.json"):
+                (evidence / name).write_text("{}")
+            sums = supply_chain.write_checksums(directory)
+            for name in ("candidate.json", "validation.json", "release-evidence.json"):
+                self.assertIn(f"image-a/{name}", sums.read_text())
+            (directory / "bad\\n.iso").write_bytes(b"bad")
+            with self.assertRaises(supply_chain.SupplyChainError):
+                supply_chain.write_checksums(directory)
+
+    def test_checksum_hashing_does_not_read_whole_file(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            image = Path(temporary) / "large.iso"
+            image.write_bytes(b"x" * 1024)
+            with patch.object(
+                Path, "read_bytes", side_effect=AssertionError("read_bytes called")
+            ):
+                self.assertEqual(len(supply_chain._file_hash(image)), 64)
+
+    def test_checksums_reject_symlinks(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            directory = Path(temporary)
+            (directory / "artifact.iso").symlink_to(directory / "missing.iso")
+            with self.assertRaises(supply_chain.SupplyChainError):
+                supply_chain.write_checksums(directory)
+
+    def test_exception_validation_rejects_expired_unjustified_and_broad(self):
+        cases = [
+            {
+                "cve": "CVE-2025-1234",
+                "package": "pkg",
+                "reason": "justified reason",
+                "expires": "2000-01-01",
+            },
+            {
+                "cve": "CVE-2025-1234",
+                "package": "pkg",
+                "reason": "short",
+                "expires": "2999-01-01",
+            },
+            {
+                "cve": "CVE-2025-1234",
+                "package": "*",
+                "reason": "justified reason",
+                "expires": "2999-01-01",
+            },
+        ]
+        for entry in cases:
+            with self.subTest(entry=entry), tempfile.TemporaryDirectory() as temporary:
+                path = Path(temporary) / "exceptions.json"
+                path.write_text(json.dumps({"exceptions": [entry]}))
+                with self.assertRaises(supply_chain.SupplyChainError):
+                    supply_chain._exceptions(path)
+
+    def test_invalid_semver_and_signature_failure_are_rejected(self):
+        with self.assertRaises(supply_chain.SupplyChainError):
+            supply_chain._version("syft", "")
+        with tempfile.TemporaryDirectory() as temporary:
+            target = Path(temporary) / "artifact"
+            target.write_text("x")
+            with (
+                patch.dict(
+                    "os.environ",
+                    self.bypass_environment() | {"COSIGN_PRIVATE_KEY": "secret"},
+                ),
+                patch.object(
+                    supply_chain,
+                    "_run",
+                    side_effect=[None, supply_chain.SupplyChainError("bad signature")],
+                ),
+                self.assertRaises(supply_chain.SupplyChainError),
+            ):
+                supply_chain.sign_file(target, Path(temporary) / "key")
+
+    def test_signing_verifies_detached_signature(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            target = Path(temporary) / "SHA256SUMS"
+            key = Path(temporary) / "pub.pem"
+            target.write_text("hash\n")
+            with (
+                patch.dict("os.environ", {"COSIGN_PRIVATE_KEY": "secret"}),
+                patch.object(supply_chain, "_run") as command,
+            ):
+                self.assertEqual(
+                    supply_chain.sign_file(target, key), Path(f"{target}.sig")
+                )
+            self.assertEqual(command.call_count, 2)
+            self.assertIn("verify-blob", command.call_args_list[1].args[0])
+
+
+class ScopedExceptionTests(unittest.TestCase):
+    def test_local_seam_reuses_exact_scoped_exceptions_and_pretool_validation(self):
+        output = self.root / "private-output"
+        output.mkdir(mode=0o700)
+
+        def scan(value, destination, **kwargs):
+            (destination / "sbom.spdx.json").write_text(
+                json.dumps({"spdxVersion": "SPDX-2.3", "packages": []})
+            )
+            (destination / "vulnerabilities.json").write_text(
+                json.dumps(
+                    {
+                        "descriptor": grype_scan([], self.now)["descriptor"],
+                        "matches": [
+                            {
+                                "vulnerability": {
+                                    "id": self.entry["advisory"],
+                                    "severity": "Critical",
+                                },
+                                "artifact": {
+                                    "name": "pkg",
+                                    "version": "1.0",
+                                    "type": "rpm",
+                                },
+                            }
+                        ],
+                    }
+                )
+            )
+            return {"tools": {"syft": "Version: 1.34.2", "grype": "Version: 0.101.1"}}
+
+        args = {
+            "expected_syft_version": "1.34.2",
+            "expected_grype_version": "0.101.1",
+            "now": self.now,
+            **self.context,
+            "local_input": local_input_paths(output),
+        }
+        digest = self.write_policy()
+        with (
+            patch.dict("os.environ", {}, clear=True),
+            patch.object(supply_chain.local_oci_scan, "scan", side_effect=scan),
+        ):
+            result = supply_chain.inspect_image(
+                "repo@sha256:" + "a" * 64,
+                output,
+                "b" * 40,
+                self.path,
+                expected_policy_sha256=digest,
+                **args,
+            )
+        self.assertEqual(
+            json.loads(result.read_text())["scan"]["decision"], "accepted_risk"
+        )
+        for failure in ("expired", "evidence"):
+            if failure == "expired":
+                self.entry["expires_at"] = "2026-11-08T00:00:00Z"
+            else:
+                self.entry["expires_at"] = "2026-12-01T00:00:00Z"
+                (self.root / "triage.txt").write_bytes(b"unreviewed changed evidence")
+            digest = self.write_policy()
+            with (
+                self.subTest(failure=failure),
+                patch.dict("os.environ", {}, clear=True),
+                patch.object(supply_chain.local_oci_scan, "scan") as execute,
+                self.assertRaises(supply_chain.SupplyChainError),
+            ):
+                supply_chain.inspect_image(
+                    "repo@sha256:" + "a" * 64,
+                    output,
+                    "b" * 40,
+                    self.path,
+                    expected_policy_sha256=digest,
+                    **args,
+                )
+            execute.assert_not_called()
+            self.assertFalse((output / "scan-evidence.json").exists())
+
+    def setUp(self):
+        self.temporary = tempfile.TemporaryDirectory()
+        self.addCleanup(self.temporary.cleanup)
+        self.root = Path(self.temporary.name)
+        self.path = self.root / "policy.json"
+        self.now = datetime(2026, 11, 9, tzinfo=UTC)
+        self.context = {
+            "edition": "core",
+            "component_scope": "core_payload",
+            "channel": "testing",
+            "fedora": "45",
+        }
+        evidence = b"Reviewed exact advisory; aliases require separate exact entries.\n"
+        (self.root / "triage.txt").write_bytes(evidence)
+        self.entry = {
+            "advisory": "CVE-2026-1234",
+            "package": "pkg",
+            "package_version": "1.0",
+            **self.context,
+            "owner": "reviewer",
+            "reason": "Reviewed temporary exact risk.",
+            "classification": "accepted_risk",
+            "component_type": "rpm",
+            "issued_at": "2026-11-01T00:00:00Z",
+            "expires_at": "2026-12-01T00:00:00Z",
+            "evidence": [
+                {
+                    "path": "triage.txt",
+                    "size_bytes": len(evidence),
+                    "sha256": hashlib.sha256(evidence).hexdigest(),
+                }
+            ],
+        }
+        self.policy = {
+            "kind": "policy",
+            "schema_version": 2,
+            "evidence_class": "runtime",
+            "exceptions": [self.entry],
+        }
+
+    def write_policy(self):
+        raw = json.dumps(self.policy).encode()
+        self.path.write_bytes(raw)
+        return hashlib.sha256(raw).hexdigest()
+
+    def load(self, **changes):
+        args = {
+            "context": self.context,
+            "now": self.now,
+            "expected_sha256": self.write_policy(),
+        }
+        return supply_chain._exceptions(self.path, **(args | changes))
+
+    def inspect(self, artifact=None, advisory=None, sbom=None, failure=None, **changes):
+        artifact = artifact or {"name": "pkg", "version": "1.0", "type": "rpm"}
+        advisory = advisory or self.entry["advisory"]
+        sbom = sbom or {"spdxVersion": "SPDX-2.3", "packages": []}
+        digest = self.write_policy()
+
+        def run(argv, **kwargs):
+            if argv[1] == "version":
+                return subprocess.CompletedProcess(argv, 0, "Version: 1.2.3", "")
+            if failure == argv[0]:
+                raise subprocess.CalledProcessError(1, argv)
+            payload = (
+                sbom
+                if argv[0] == "syft"
+                else {
+                    "matches": [
+                        {
+                            "vulnerability": {"id": advisory, "severity": "Critical"},
+                            "artifact": artifact,
+                            "relatedVulnerabilities": [{"id": self.entry["advisory"]}],
+                        }
+                    ]
+                }
+            )
+            if argv[0] == "grype":
+                payload["descriptor"] = grype_scan([], self.now)["descriptor"]
+            Path(argv[argv.index("--file") + 1]).write_text(json.dumps(payload))
+            return subprocess.CompletedProcess(argv, 0, "", "")
+
+        args = dict(
+            expected_syft_version="1.2.3",
+            expected_grype_version="1.2.3",
+            expected_policy_sha256=digest,
+            now=self.now,
+            **self.context,
+        )
+        with (
+            patch.dict("os.environ", {}, clear=True),
+            patch.object(supply_chain.subprocess, "run", side_effect=run),
+        ):
+            path = supply_chain.inspect_image(
+                "repo@sha256:" + "a" * 64,
+                self.root / "out",
+                "b" * 40,
+                self.path,
+                **(args | changes),
+            )
+        return json.loads(path.read_text())
+
+    def test_exact_advisories_have_auditable_record_and_policy_hashes(self):
+        for advisory in ("CVE-2026-1234", "GHSA-2345-6789-cfgh", "GO-2026-1234"):
+            for classification in ("accepted_risk", "proven_false_positive"):
+                with self.subTest(advisory=advisory, classification=classification):
+                    self.entry.update(advisory=advisory, classification=classification)
+                    result = self.inspect()
+                    record = (
+                        json.dumps(
+                            self.entry,
+                            sort_keys=True,
+                            indent=2,
+                            ensure_ascii=True,
+                            allow_nan=False,
+                        )
+                        + "\n"
+                    )
+                    applied = hashlib.sha256(record.encode()).hexdigest()
+                    self.assertEqual(result["scan"]["decision"], "accepted_risk")
+                    self.assertEqual(result["scan"]["applied_exceptions"], [applied])
+                    self.assertEqual(
+                        result["security"]["exception_summary"], [self.entry]
+                    )
+                    self.assertEqual(
+                        result["policy_sha256"],
+                        hashlib.sha256(self.path.read_bytes()).hexdigest(),
+                    )
+                    provenance = json.loads(
+                        (self.root / "out/provenance.json").read_text()
+                    )
+                    self.assertEqual(
+                        provenance["predicate"]["inputs"]["exceptions_sha256"],
+                        result["policy_sha256"],
+                    )
+
+    def test_rejects_malformed_unknown_duplicate_and_wildcard_records(self):
+        changes = [
+            {"advisory": "CVE-*"},
+            {"advisory": "GHSA-invalid"},
+            {"package": ""},
+            {"package": "pkg*"},
+            {"package_version": "1.*"},
+            {"owner": ""},
+            {"reason": "short"},
+            {"classification": "waive"},
+            {"component_type": "unknown"},
+            {"evidence": []},
+            {"unexpected": True},
+            {"issued_at": "2026-11-01T00:00:00+00:00"},
+            {"issued_at": "2026-02-30T00:00:00Z"},
+            {"issued_at": "2026-11-10T00:00:00Z"},
+            {"expires_at": "2026-12-01T00:00:00.000000001Z"},
+        ]
+        for change in changes:
+            with self.subTest(change=change):
+                self.policy["exceptions"] = [self.entry | change]
+                with self.assertRaises(supply_chain.SupplyChainError):
+                    self.load()
+        for records in (
+            [self.entry, self.entry],
+            [self.entry, self.entry | {"owner": "another-reviewer"}],
+        ):
+            self.policy["exceptions"] = records
+            with self.assertRaises(supply_chain.SupplyChainError):
+                self.load()
+
+    def test_scope_clock_and_version_do_not_transfer(self):
+        for change in (
+            {"edition": "workstation", "component_scope": "workstation_payload"},
+            {"component_scope": "installer_live"},
+            {"channel": "stable"},
+            {"fedora": "46"},
+            {"fedora": 45},
+            {"edition": "installer"},
+        ):
+            with (
+                self.subTest(change=change),
+                self.assertRaises(supply_chain.SupplyChainError),
+            ):
+                self.load(context=self.context | change)
+        for clock in (
+            "2026-11-09T00:00:00Z",
+            self.now.replace(tzinfo=None),
+            datetime(2026, 12, 1, tzinfo=UTC),
+        ):
+            with (
+                self.subTest(clock=clock),
+                self.assertRaises(supply_chain.SupplyChainError),
+            ):
+                self.load(now=clock)
+        with self.assertRaises(supply_chain.SupplyChainError):
+            self.inspect(artifact={"name": "pkg", "version": "1.1", "type": "rpm"})
+        with self.assertRaises(supply_chain.SupplyChainError):
+            self.inspect(advisory="GO-2026-1234")
+
+    def test_rebinding_policy_does_not_renew_expired_exception(self):
+        self.entry["reason"] += " Newly rebound bytes."
+        with self.assertRaises(supply_chain.SupplyChainError):
+            self.load(now=datetime(2026, 12, 1, tzinfo=UTC))
+        self.entry["issued_at"] = "2026-11-01T00:00:00.000000001Z"
+        with self.assertRaises(supply_chain.SupplyChainError):
+            self.load(now=datetime(2026, 11, 1, tzinfo=UTC))
+
+    def test_policy_hash_context_legacy_and_synthetic_are_fail_closed(self):
+        digest = self.write_policy()
+        self.path.write_bytes(self.path.read_bytes() + b"\n")
+        with self.assertRaises(supply_chain.SupplyChainError):
+            supply_chain._exceptions(
+                self.path, context=self.context, now=self.now, expected_sha256=digest
+            )
+        for kwargs in ({}, {"context": self.context}, {"expected_sha256": digest}):
+            with self.assertRaises(supply_chain.SupplyChainError):
+                supply_chain._exceptions(self.path, now=self.now, **kwargs)
+        for policy in (
+            {"exceptions": []},
+            self.policy | {"schema_version": True},
+            self.policy | {"schema_version": 3},
+            self.policy | {"evidence_class": "synthetic"},
+            self.policy | {"unexpected": True},
+        ):
+            self.policy = policy
+            with self.assertRaises(supply_chain.SupplyChainError):
+                self.load()
+
+    def test_evidence_bytes_duplicates_json_and_symlinks_are_rejected(self):
+        original = self.entry["evidence"]
+        for evidence in (
+            [original[0] | {"path": "../triage.txt"}],
+            [original[0] | {"sha256": "f" * 64}],
+            [original[0] | {"size_bytes": True}],
+            [original[0], original[0]],
+        ):
+            self.entry["evidence"] = evidence
+            with self.assertRaises(supply_chain.SupplyChainError):
+                self.load()
+        self.entry["evidence"] = original
+        self.write_policy()
+        raw = self.path.read_bytes().replace(
+            b'"schema_version": 2', b'"schema_version": 2, "schema_version": 2'
+        )
+        self.path.write_bytes(raw)
+        with self.assertRaises(supply_chain.SupplyChainError):
+            supply_chain._exceptions(
+                self.path,
+                context=self.context,
+                now=self.now,
+                expected_sha256=hashlib.sha256(raw).hexdigest(),
+            )
+        (self.root / "triage.txt").unlink()
+        (self.root / "triage.txt").symlink_to(self.path)
+        with self.assertRaises(supply_chain.SupplyChainError):
+            self.load()
+
+    def test_embedded_go_binds_observed_binary_hash_rpm_and_locations(self):
+        binary = {
+            "path": "/usr/bin/tool",
+            "sha256": "c" * 64,
+            "rpm_nevra": "tool-1.0-1.fc45.x86_64",
+        }
+        self.entry.update(component_type="embedded_go", binary=binary)
+        artifact = {
+            "name": "pkg",
+            "version": "1.0",
+            "type": "go-module",
+            "locations": [{"path": "/usr/bin/tool"}],
+        }
+        sbom = {
+            "spdxVersion": "SPDX-2.3",
+            "packages": [
+                {
+                    "SPDXID": "rpm",
+                    "name": "tool",
+                    "versionInfo": "1.0-1.fc45",
+                    "externalRefs": [
+                        {
+                            "referenceType": "purl",
+                            "referenceLocator": "pkg:rpm/fedora/tool@1.0-1.fc45?arch=x86_64",
+                        }
+                    ],
+                }
+            ],
+            "files": [
+                {
+                    "SPDXID": "binary",
+                    "fileName": "usr/bin/tool",
+                    "checksums": [{"algorithm": "SHA256", "checksumValue": "c" * 64}],
+                }
+            ],
+            "relationships": [
+                {
+                    "spdxElementId": "rpm",
+                    "relationshipType": "CONTAINS",
+                    "relatedSpdxElement": "binary",
+                }
+            ],
+        }
+        self.assertEqual(
+            self.inspect(artifact=artifact, sbom=sbom)["scan"]["decision"],
+            "accepted_risk",
+        )
+        for case in (
+            "missing_owner",
+            "invalid_owner_id",
+            "duplicate_package_id",
+            "invalid_package_id",
+            "owner_without_purl",
+            "conflicting_nevra",
+        ):
+            changed = copy.deepcopy(sbom)
+            package = changed["packages"][0]
+            if case in ("missing_owner", "invalid_owner_id", "owner_without_purl"):
+                owner = None if case == "invalid_owner_id" else "second"
+                changed["relationships"].append(
+                    changed["relationships"][0] | {"spdxElementId": owner}
+                )
+                if case == "owner_without_purl":
+                    changed["packages"].append(
+                        package | {"SPDXID": owner, "externalRefs": []}
+                    )
+            elif case == "duplicate_package_id":
+                changed["packages"].append(copy.deepcopy(package))
+            elif case == "invalid_package_id":
+                changed["packages"].append(package | {"SPDXID": []})
+            else:
+                package["externalRefs"].append(
+                    {
+                        "referenceType": "purl",
+                        "referenceLocator": "pkg:rpm/fedora/tool@1.0-1.fc45?arch=aarch64",
+                    }
+                )
+            with (
+                self.subTest(case=case),
+                self.assertRaises(supply_chain.SupplyChainError),
+            ):
+                self.inspect(artifact=artifact, sbom=changed)
+        for field, value in (
+            ("path", "/usr/bin/other"),
+            ("sha256", "d" * 64),
+            ("rpm_nevra", "tool-2.0-1.fc45.x86_64"),
+        ):
+            self.entry["binary"] = binary | {field: value}
+            with (
+                self.subTest(field=field),
+                self.assertRaises(supply_chain.SupplyChainError),
+            ):
+                self.inspect(artifact=artifact, sbom=sbom)
+        self.entry["binary"] = binary
+        changed = copy.deepcopy(sbom)
+        changed["files"][0]["checksums"] = []
+        with self.assertRaises(supply_chain.SupplyChainError):
+            self.inspect(artifact=artifact, sbom=changed)
+        artifact["locations"].append({"path": "/usr/bin/other"})
+        with self.assertRaises(supply_chain.SupplyChainError):
+            self.inspect(artifact=artifact, sbom=sbom)
+
+    def test_same_advisory_in_several_binaries_needs_one_entry_per_binary(self):
+        binaries = {
+            "skopeo": (
+                "/usr/bin/skopeo",
+                "skopeo-1:1.24.1-1.fc45.x86_64",
+                "/sysroot/ostree/repo/objects/2b/9e05183517660c9d28a9d875e6db695708f3a91fb75e7b7bd4b88fcb29c29f.file",
+                "effe157831c2d72c21885b4cf97f021a3ff6957b6b6bc3715f57b95a926944b9",
+            ),
+            "podman": (
+                "/usr/bin/podman",
+                "podman-5:6.1.3-1.fc45.x86_64",
+                "/sysroot/ostree/repo/objects/90/51a1cb1dfada1c2a0dbae6257990b03537238eaaa112a9f9c398384de6e855.file",
+                "246b121ff1063dc42de1b2d9c0db4be61dde67106b99abd0934aafb865a74bb1",
+            ),
+        }
+        entries = {}
+        for name, (path, nevra, obj, sha) in binaries.items():
+            entries[name] = copy.deepcopy(self.entry) | {
+                "component_type": "embedded_go",
+                "package": "stdlib",
+                "package_version": "go1.27.1-X:nodwarf5",
+                "binary": {
+                    "path": path,
+                    "rpm_nevra": nevra,
+                    "sha256": sha,
+                    "ostree_object": obj,
+                },
+            }
+        sbom = {
+            "spdxVersion": "SPDX-2.3",
+            "packages": [],
+            "files": [
+                {
+                    "SPDXID": f"file-{name}",
+                    "fileName": obj.lstrip("/"),
+                    "checksums": [{"algorithm": "SHA256", "checksumValue": sha}],
+                }
+                for name, (_, _, obj, sha) in binaries.items()
+            ],
+            "relationships": [],
+        }
+        self.policy["exceptions"] = list(entries.values())
+        self.entry = entries["skopeo"]
+        for name, (_, _, obj, _) in binaries.items():
+            artifact = {
+                "name": "stdlib",
+                "version": "go1.27.1-X:nodwarf5",
+                "type": "go-module",
+                "locations": [{"path": obj}],
+            }
+            with self.subTest(binary=name):
+                self.assertEqual(
+                    self.inspect(artifact=artifact, sbom=sbom)["scan"]["decision"],
+                    "accepted_risk",
+                )
+        self.policy["exceptions"] = [entries["skopeo"]]
+        artifact = {
+            "name": "stdlib",
+            "version": "go1.27.1-X:nodwarf5",
+            "type": "go-module",
+            "locations": [{"path": binaries["podman"][2]}],
+        }
+        with self.assertRaises(supply_chain.SupplyChainError):
+            self.inspect(artifact=artifact, sbom=sbom)
+        duplicate = copy.deepcopy(entries["skopeo"]) | {
+            "reason": "Another reviewed reason."
+        }
+        self.policy["exceptions"] = [entries["skopeo"], duplicate]
+        with self.assertRaisesRegex(supply_chain.SupplyChainError, "duplicate"):
+            self.load()
+        relabelled = copy.deepcopy(entries["skopeo"])
+        relabelled["binary"]["path"] = "/usr/bin/other"
+        for order in (
+            [entries["skopeo"], relabelled],
+            [relabelled, entries["skopeo"]],
+        ):
+            self.policy["exceptions"] = order
+            with (
+                self.subTest(first=order[0]["binary"]["path"]),
+                self.assertRaisesRegex(supply_chain.SupplyChainError, "duplicate"),
+            ):
+                self.load()
+
+    def test_ostree_binary_exceptions_bind_content_and_all_locations(self):
+        cases = [
+            (
+                "embedded_go",
+                "go-module",
+                "stdlib",
+                "go1.27.1-X:nodwarf5",
+                "/usr/bin/skopeo",
+                "skopeo-1:1.24.1-1.fc45.x86_64",
+                "/sysroot/ostree/repo/objects/2b/9e05183517660c9d28a9d875e6db695708f3a91fb75e7b7bd4b88fcb29c29f.file",
+                "effe157831c2d72c21885b4cf97f021a3ff6957b6b6bc3715f57b95a926944b9",
+            ),
+            (
+                "linux_kernel",
+                "linux-kernel",
+                "linux-kernel",
+                "7.3.3-300.fc45.x86_64",
+                "/usr/lib/modules/7.3.3-300.fc45.x86_64/vmlinuz",
+                "kernel-core-7.3.3-300.fc45.x86_64",
+                "/sysroot/ostree/repo/objects/4f/4679842b77b7bb6e4220f08582cd52d848d34f618fbcffaaa8f9294a01bb6a.file",
+                "0e04d9abb6bad511aee3780746033797da092cbb436d6749b97dccf8bc57ab23",
+            ),
+        ]
+        for component, kind, name, version, path, nevra, obj, sha in cases:
+            with self.subTest(component=component):
+                binary = {
+                    "path": path,
+                    "rpm_nevra": nevra,
+                    "sha256": sha,
+                    "ostree_object": obj,
+                }
+                self.entry.update(
+                    component_type=component,
+                    package=name,
+                    package_version=version,
+                    binary=binary,
+                )
+                artifact = {
+                    "name": name,
+                    "version": version,
+                    "type": kind,
+                    "locations": [{"path": obj}],
+                }
+                sbom = {
+                    "spdxVersion": "SPDX-2.3",
+                    "packages": [],
+                    "files": [
+                        {
+                            "SPDXID": "file",
+                            "fileName": obj.lstrip("/"),
+                            "checksums": [
+                                {"algorithm": "SHA256", "checksumValue": sha}
+                            ],
+                        }
+                    ],
+                    "relationships": [],
+                }
+                self.assertEqual(
+                    self.inspect(artifact=artifact, sbom=sbom)["scan"]["decision"],
+                    "accepted_risk",
+                )
+                self.assertEqual(
+                    self.inspect(
+                        artifact=artifact | {"locations": [{"accessPath": obj}]},
+                        sbom=sbom,
+                    )["scan"]["decision"],
+                    "accepted_risk",
+                )
+                self.assertEqual(
+                    self.inspect(
+                        artifact=artifact
+                        | {"locations": [{"path": obj, "accessPath": path}]},
+                        sbom=sbom,
+                    )["scan"]["decision"],
+                    "accepted_risk",
+                )
+                for location in (
+                    {"path": obj, "accessPath": "/usr/bin/other"},
+                    {"path": "/usr/bin/other", "accessPath": obj},
+                    {"path": path, "accessPath": path},
+                ):
+                    with (
+                        self.subTest(location=location),
+                        self.assertRaises(supply_chain.SupplyChainError),
+                    ):
+                        self.inspect(
+                            artifact=artifact | {"locations": [location]}, sbom=sbom
+                        )
+                for case in (
+                    "wrong_sha",
+                    "wrong_object",
+                    "extra_location",
+                    "missing_file",
+                    "missing_checksum",
+                    "duplicate_file_wrong_sha",
+                    "wrong_type",
+                ):
+                    changed_artifact, changed_sbom = (
+                        copy.deepcopy(artifact),
+                        copy.deepcopy(sbom),
+                    )
+                    if case == "wrong_sha":
+                        changed_sbom["files"][0]["checksums"][0]["checksumValue"] = (
+                            "a" * 64
+                        )
+                    elif case == "wrong_object":
+                        changed_artifact["locations"][0]["path"] = "/other"
+                    elif case == "extra_location":
+                        changed_artifact["locations"].append({"path": "/other"})
+                    elif case == "missing_file":
+                        changed_sbom["files"] = []
+                    elif case == "missing_checksum":
+                        changed_sbom["files"][0]["checksums"] = []
+                    elif case == "duplicate_file_wrong_sha":
+                        duplicate = copy.deepcopy(changed_sbom["files"][0])
+                        duplicate["SPDXID"] = "file-duplicate"
+                        duplicate["checksums"][0]["checksumValue"] = "a" * 64
+                        changed_sbom["files"].append(duplicate)
+                    else:
+                        changed_artifact["type"] = "rpm"
+                    with (
+                        self.subTest(case=case),
+                        self.assertRaises(supply_chain.SupplyChainError),
+                    ):
+                        self.inspect(artifact=changed_artifact, sbom=changed_sbom)
+                self.entry["binary"] = binary | {"ostree_object": obj.upper()}
+                with self.assertRaises(supply_chain.SupplyChainError):
+                    self.load()
+                self.entry["binary"] = binary
+                if component == "linux_kernel":
+                    for change in (
+                        {"package": "other"},
+                        {"package_version": "other"},
+                        {"binary": binary | {"path": "/usr/bin/kernel"}},
+                        {"binary": binary | {"rpm_nevra": "kernel-core-other"}},
+                    ):
+                        old = copy.deepcopy(self.entry)
+                        self.entry.update(change)
+                        with self.assertRaises(supply_chain.SupplyChainError):
+                            self.load()
+                        self.entry.clear()
+                        self.entry.update(old)
+
+    def test_kernel_exception_can_cover_every_kernel_version(self):
+        self.entry.update(
+            component_type="linux_kernel_any",
+            package="linux-kernel",
+            package_version="any",
+        )
+        for version in (
+            "7.3.3-300.fc45.x86_64",
+            "7.3.4-300.fc45.x86_64",
+            "7.4.1-200.fc45.aarch64",
+            "7.4.0-0.rc1.fc45.x86_64",
+            "7.4.0-0.rc2.20261120git1a2b3c4d.fc45.x86_64",
+        ):
+            artifact = {
+                "name": "linux-kernel",
+                "version": version,
+                "type": "linux-kernel",
+            }
+            with self.subTest(version=version):
+                self.assertEqual(
+                    self.inspect(artifact=artifact)["scan"]["decision"], "accepted_risk"
+                )
+        for artifact in (
+            {
+                "name": "linux-kernel",
+                "version": "7.3.4-300.fc44.x86_64",
+                "type": "linux-kernel",
+            },
+            {"name": "linux-kernel", "version": "any", "type": "linux-kernel"},
+            {
+                "name": "linux-kernel",
+                "version": "7.4.0-0.rc1.fc45.x86_64/../x",
+                "type": "linux-kernel",
+            },
+            {
+                "name": "linux-kernel",
+                "version": "7.4.0-0.fc45.x86_64.fc44.x86_64",
+                "type": "linux-kernel",
+            },
+            {
+                "name": "linux-kernel",
+                "version": "7.4.0-0.fc44.x86_64.fc45.x86_64",
+                "type": "linux-kernel",
+            },
+            {"name": "linux-kernel", "version": "7.3.4-300.fc45.x86_64", "type": "rpm"},
+            {
+                "name": "kernel-core",
+                "version": "7.3.4-300.fc45.x86_64",
+                "type": "linux-kernel",
+            },
+        ):
+            with (
+                self.subTest(artifact=artifact),
+                self.assertRaises(supply_chain.SupplyChainError),
+            ):
+                self.inspect(artifact=artifact)
+        kernel = {
+            "name": "linux-kernel",
+            "version": "7.3.4-300.fc45.x86_64",
+            "type": "linux-kernel",
+        }
+        with self.assertRaises(supply_chain.SupplyChainError):
+            self.inspect(artifact=kernel, advisory="CVE-2026-9999")
+        for change in (
+            {"package": "kernel-core"},
+            {"package_version": "7.3.4-300.fc45.x86_64"},
+            {
+                "binary": {
+                    "path": "/usr/lib/modules/x/vmlinuz",
+                    "sha256": "a" * 64,
+                    "rpm_nevra": "kernel-core-x",
+                }
+            },
+        ):
+            old = copy.deepcopy(self.entry)
+            self.entry.update(change)
+            with (
+                self.subTest(change=change),
+                self.assertRaises(supply_chain.SupplyChainError),
+            ):
+                self.load()
+            self.entry.clear()
+            self.entry.update(old)
+        self.policy["exceptions"] = [
+            self.entry,
+            copy.deepcopy(self.entry) | {"reason": "Another reviewed reason."},
+        ]
+        with self.assertRaisesRegex(supply_chain.SupplyChainError, "duplicate"):
+            self.load()
+
+    def test_scanner_failures_cannot_be_excepted(self):
+        for tool in ("syft", "grype"):
+            with (
+                self.subTest(tool=tool),
+                self.assertRaises(supply_chain.SupplyChainError),
+            ):
+                self.inspect(failure=tool)
+        self.assertFalse((self.root / "out/scan-evidence.json").exists())
+
+    def test_cli_context_is_forwarded_without_inference(self):
+        with patch.object(supply_chain, "inspect_image") as inspect:
+            self.assertEqual(
+                supply_chain.main(
+                    [
+                        "inspect",
+                        "--image",
+                        "repo@sha256:" + "a" * 64,
+                        "--output",
+                        str(self.root),
+                        "--source-sha",
+                        "b" * 40,
+                        "--exceptions",
+                        str(self.path),
+                        "--syft-version",
+                        "1.2.3",
+                        "--grype-version",
+                        "1.2.3",
+                        "--edition",
+                        "core",
+                        "--component-scope",
+                        "core_payload",
+                        "--channel",
+                        "testing",
+                        "--fedora",
+                        "45",
+                        "--policy-sha256",
+                        "d" * 64,
+                    ]
+                ),
+                0,
+            )
+        self.assertEqual(inspect.call_args.kwargs["expected_policy_sha256"], "d" * 64)
+        self.assertEqual(inspect.call_args.kwargs["component_scope"], "core_payload")
+
+
+class FlatpakScanRiskTests(unittest.TestCase):
+    def test_scan_exclusion_and_validation(self):
+        record = {
+            "schema_version": 1,
+            "kind": "flatpak-preinstall-scan-exclusion",
+            "excluded_path": "/var/lib/flatpak",
+            "editions": ["workstation"],
+            "component_scopes": ["workstation_payload", "installer_live"],
+            "owner": "leandromqrs",
+            "accepted_at": "2026-11-16T00:00:00Z",
+            "expires_at": "2026-12-16T00:00:00Z",
+            "reason": "Offline essential apps",
+            "follow_up": "replace with exact per-finding exceptions",
+        }
+        now = datetime(2026, 11, 20, tzinfo=UTC)
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            path = root / "risk.json"
+            commands = []
+
+            def run(argv, **kwargs):
+                commands.append(argv)
+                if argv[1] == "version":
+                    return subprocess.CompletedProcess(argv, 0, "Version: 1.2.3\n", "")
+                data = (
+                    {"spdxVersion": "SPDX-2.3", "packages": []}
+                    if argv[0] == "syft"
+                    else grype_scan([], now)
+                )
+                Path(argv[argv.index("--file") + 1]).write_text(json.dumps(data))
+                return subprocess.CompletedProcess(argv, 0, "", "")
+
+            def inspect(value, **changes):
+                path.write_text(json.dumps(value))
+                args = {
+                    "expected_syft_version": "1.2.3",
+                    "expected_grype_version": "1.2.3",
+                    "edition": "workstation",
+                    "component_scope": "workstation_payload",
+                    "channel": "testing",
+                    "fedora": "45",
+                    "now": now,
+                    "scan_exclusion": path,
+                }
+                args.update(changes)
+                with patch.object(supply_chain.subprocess, "run", side_effect=run):
+                    return supply_chain.inspect_image(
+                        "repo@sha256:" + "a" * 64, root / "out", "b" * 40, **args
+                    )
+
+            manifest = inspect(record)
+            exclusion = {
+                "path": "/var/lib/flatpak",
+                "record_sha256": hashlib.sha256(path.read_bytes()).hexdigest(),
+                "expires_at": record["expires_at"],
+            }
+            evidence = json.loads(manifest.read_text())
+            self.assertEqual(evidence["scan"]["exclusions"], [exclusion])
+            self.assertEqual(evidence["security"]["decision"], "accepted_risk")
+            vulnerabilities = root / "out" / "vulnerabilities.json"
+            self.assertEqual(
+                json.loads(vulnerabilities.read_text())["scan"]["exclusions"],
+                [exclusion],
+            )
+            self.assertEqual(
+                evidence["files"]["vulnerabilities.json"],
+                hashlib.sha256(vulnerabilities.read_bytes()).hexdigest(),
+            )
+            for tool in ("syft", "grype"):
+                command = next(c for c in commands if c[0] == tool and "--file" in c)
+                self.assertEqual(
+                    command[command.index("--exclude") + 1], "/var/lib/flatpak/**"
+                )
+            for change in (
+                {"schema_version": True},
+                {"kind": "other"},
+                {"owner": ""},
+                {"expires_at": "2026-11-19T00:00:00Z"},
+                {"accepted_at": "2026-11-21T00:00:00Z"},
+                {"expires_at": "2026-12-17T00:00:00Z"},
+                {"excluded_path": "/"},
+                {"editions": ["core"]},
+            ):
+                with (
+                    self.subTest(change=change),
+                    self.assertRaises(supply_chain.SupplyChainError),
+                ):
+                    inspect({**record, **change})
+            with self.assertRaises(supply_chain.SupplyChainError):
+                inspect(record, edition="core", component_scope="core_payload")
+            with self.assertRaises(supply_chain.SupplyChainError):
+                inspect({key: value for key, value in record.items() if key != "owner"})
+            inspect(record, component_scope="installer_live")
+            commands.clear()
+            inspect(record, scan_exclusion=None)
+            self.assertFalse(any("--exclude" in c for c in commands))
+
+    def test_cli_forwards_exclusion(self):
+        with patch.object(supply_chain, "inspect_image") as inspect:
+            result = supply_chain.main(
+                [
+                    "inspect",
+                    "--image",
+                    "repo@sha256:" + "a" * 64,
+                    "--output",
+                    "/tmp/output",
+                    "--source-sha",
+                    "b" * 40,
+                    "--syft-version",
+                    "1.34.2",
+                    "--grype-version",
+                    "0.101.1",
+                    "--scan-exclusion",
+                    "risk.json",
+                ]
+            )
+        self.assertEqual(result, 0)
+        self.assertEqual(inspect.call_args.kwargs["scan_exclusion"], Path("risk.json"))
+
+
+if __name__ == "__main__":
+    unittest.main()

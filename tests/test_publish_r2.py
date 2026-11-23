@@ -1,0 +1,398 @@
+import hashlib
+import importlib.util
+import io
+import json
+import subprocess
+import tempfile
+import unittest
+from pathlib import Path
+from unittest.mock import patch
+
+ROOT = Path(__file__).resolve().parents[1]
+SPEC = importlib.util.spec_from_file_location(
+    "publish_r2", ROOT / ".github/scripts/publish-r2.py"
+)
+publish_r2 = importlib.util.module_from_spec(SPEC)
+SPEC.loader.exec_module(publish_r2)
+
+
+class PublishTests(unittest.TestCase):
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmp.cleanup)
+        self.dist = Path(self.tmp.name)
+        self.version = "testing-45.20261031"
+        for fmt in ("iso", "qcow2"):
+            (self.dist / f"luminusos-workstation-{self.version}.{fmt}").write_bytes(
+                fmt.encode()
+            )
+
+    def test_promotion_and_prune_after_verified_downloads(self):
+        calls = []
+        manifests = []
+
+        def fake(args, **kwargs):
+            calls.append(args)
+            if args[:3] == ["aws", "s3", "cp"] and args[4].endswith("/latest.json"):
+                manifests.append(json.loads(Path(args[3]).read_text()))
+            if args[:3] == ["aws", "s3", "ls"]:
+                return subprocess.CompletedProcess(
+                    args,
+                    0,
+                    stdout=" PRE testing-45.20261030/\n PRE ../../bad/\n PRE testing-45.20261031/\n",
+                )
+            return subprocess.CompletedProcess(args, 0)
+
+        def download(url):
+            calls.append(["curl", url])
+            return hashlib.sha256(url.rsplit(".", 1)[-1].encode()).hexdigest()
+
+        with (
+            patch.object(publish_r2.subprocess, "run", side_effect=fake),
+            patch.object(publish_r2, "download_digest", side_effect=download),
+        ):
+            publish_r2.publish(
+                "testing",
+                self.version,
+                self.dist,
+                "bucket",
+                "https://example.invalid",
+                latest_release="45",
+            )
+        removals = [call for call in calls if call[:3] == ["aws", "s3", "rm"]]
+        self.assertEqual(len(removals), 1)
+        self.assertEqual(removals[0][3], "s3://bucket/testing/testing-45.20261030/")
+        # aws s3 rm has no --no-progress; release run 44041629422 failed on it.
+        self.assertNotIn("--no-progress", removals[0])
+        self.assertIn("--only-show-errors", removals[0])
+        self.assertEqual(manifests[0]["version"], self.version)
+        self.assertTrue(
+            manifests[0]["assets"]["iso"].startswith(
+                "https://download.luminusos.org/testing/"
+            )
+        )
+        self.assertTrue(manifests[0]["assets"]["qcow2"].endswith(".qcow2"))
+        self.assertGreater(
+            calls.index(removals[0]),
+            max(i for i, call in enumerate(calls) if call[0] == "curl"),
+        )
+
+    def test_older_line_never_moves_channel_index_or_prunes_other_lines(self):
+        calls = []
+        version = "testing-44.20261031"
+        for fmt in ("iso", "qcow2"):
+            (self.dist / f"luminusos-workstation-{version}.{fmt}").write_bytes(
+                fmt.encode()
+            )
+
+        def fake(args, **kwargs):
+            calls.append(args)
+            if args[:3] == ["aws", "s3", "ls"]:
+                return subprocess.CompletedProcess(
+                    args,
+                    0,
+                    stdout=" PRE testing-45.20261030/\n PRE testing-44.20261001/\n",
+                )
+            return subprocess.CompletedProcess(args, 0)
+
+        def download(url):
+            return hashlib.sha256(url.rsplit(".", 1)[-1].encode()).hexdigest()
+
+        with (
+            patch.object(publish_r2.subprocess, "run", side_effect=fake),
+            patch.object(publish_r2, "download_digest", side_effect=download),
+        ):
+            publish_r2.publish(
+                "testing",
+                version,
+                self.dist,
+                "bucket",
+                "https://example.invalid",
+                latest_release="45",
+            )
+        self.assertFalse(any("latest.json" in " ".join(call) for call in calls))
+        removals = [call[3] for call in calls if call[:3] == ["aws", "s3", "rm"]]
+        self.assertEqual(removals, ["s3://bucket/testing/testing-44.20261001/"])
+
+    def test_latest_line_prunes_only_its_own_older_versions(self):
+        calls = []
+
+        def fake(args, **kwargs):
+            calls.append(args)
+            if args[:3] == ["aws", "s3", "ls"]:
+                return subprocess.CompletedProcess(
+                    args,
+                    0,
+                    stdout=" PRE testing-44.20261001/\n PRE testing-45.20261030/\n",
+                )
+            return subprocess.CompletedProcess(args, 0)
+
+        def download(url):
+            return hashlib.sha256(url.rsplit(".", 1)[-1].encode()).hexdigest()
+
+        with (
+            patch.object(publish_r2.subprocess, "run", side_effect=fake),
+            patch.object(publish_r2, "download_digest", side_effect=download),
+        ):
+            publish_r2.publish(
+                "testing",
+                self.version,
+                self.dist,
+                "bucket",
+                "https://example.invalid",
+                latest_release="45",
+            )
+        self.assertTrue(any("latest.json" in " ".join(call) for call in calls))
+        removals = [call[3] for call in calls if call[:3] == ["aws", "s3", "rm"]]
+        self.assertEqual(removals, ["s3://bucket/testing/testing-45.20261030/"])
+
+    def test_dropped_download_is_retried_from_scratch(self):
+        outcomes = iter([56, 0])
+        streams = []
+
+        class Process:
+            def __init__(self, command, **kwargs):
+                self.code = next(outcomes)
+                body = b"partial" if self.code else b"complete"
+                streams.append(command)
+                self.stdout = io.BytesIO(body)
+                self.pid = 0
+
+            def wait(self, timeout=None):
+                return self.code
+
+            def poll(self):
+                return self.code
+
+        with (
+            patch.object(publish_r2.subprocess, "Popen", Process),
+            patch.object(publish_r2.time, "sleep"),
+        ):
+            digest = publish_r2.download_digest("https://example.invalid/a.iso")
+        self.assertEqual(digest, hashlib.sha256(b"complete").hexdigest())
+        self.assertEqual(len(streams), 2)
+
+    def test_download_gives_up_after_bounded_attempts(self):
+        attempts = []
+
+        class Process:
+            def __init__(self, command, **kwargs):
+                attempts.append(command)
+                self.stdout = io.BytesIO(b"")
+                self.pid = 0
+
+            def wait(self, timeout=None):
+                return 56
+
+            def poll(self):
+                return 56
+
+        with (
+            patch.object(publish_r2.subprocess, "Popen", Process),
+            patch.object(publish_r2.time, "sleep"),
+            self.assertRaises(subprocess.CalledProcessError),
+        ):
+            publish_r2.download_digest("https://example.invalid/a.iso")
+        self.assertEqual(len(attempts), publish_r2.DOWNLOAD_ATTEMPTS)
+
+    def test_http_error_is_not_retried(self):
+        attempts = []
+
+        class Process:
+            def __init__(self, command, **kwargs):
+                attempts.append(command)
+                self.stdout = io.BytesIO(b"")
+                self.pid = 0
+
+            def wait(self, timeout=None):
+                return 22
+
+            def poll(self):
+                return 22
+
+        with (
+            patch.object(publish_r2.subprocess, "Popen", Process),
+            self.assertRaises(subprocess.CalledProcessError),
+        ):
+            publish_r2.download_digest("https://example.invalid/a.iso")
+        self.assertEqual(len(attempts), 1)
+
+    def test_corrupt_download_never_updates_index_or_prunes(self):
+        calls = []
+
+        def fake(args, **kwargs):
+            calls.append(args)
+            return subprocess.CompletedProcess(args, 0)
+
+        with (
+            patch.object(publish_r2.subprocess, "run", side_effect=fake),
+            patch.object(publish_r2, "download_digest", return_value="corrupt"),
+            self.assertRaises(ValueError),
+        ):
+            publish_r2.publish(
+                "testing",
+                self.version,
+                self.dist,
+                "bucket",
+                "https://example.invalid",
+                latest_release="45",
+            )
+        self.assertFalse(
+            any(
+                "latest.json" in " ".join(call) or call[:3] == ["aws", "s3", "rm"]
+                for call in calls
+            )
+        )
+
+    def test_invalid_inputs_cannot_call_aws(self):
+        with patch.object(publish_r2.subprocess, "run") as run:
+            for channel, version, bucket, latest in (
+                ("testing", "../bad", "bucket", "45"),
+                ("stable", "testing-45.20261031", "bucket", "45"),
+                ("testing", self.version, "../bucket", "45"),
+                ("testing", self.version, "bucket", ""),
+                ("testing", self.version, "bucket", None),
+                ("testing", self.version, "bucket", "45 44"),
+            ):
+                with (
+                    self.subTest(
+                        channel=channel, version=version, bucket=bucket, latest=latest
+                    ),
+                    self.assertRaises(ValueError),
+                ):
+                    publish_r2.publish(
+                        channel,
+                        version,
+                        self.dist,
+                        bucket,
+                        "https://example.invalid",
+                        latest_release=latest,
+                    )
+            run.assert_not_called()
+
+    def test_upload_or_download_failure_never_promotes_or_prunes(self):
+        for failure in ("qcow2-upload", "download"):
+            calls = []
+
+            def fake(args, *, calls=calls, failure=failure, **kwargs):
+                calls.append(args)
+                if (
+                    failure == "qcow2-upload"
+                    and args[:3] == ["aws", "s3", "cp"]
+                    and args[3].endswith(".qcow2")
+                ):
+                    raise subprocess.CalledProcessError(1, args)
+                return subprocess.CompletedProcess(args, 0)
+
+            def download(url, *, failure=failure):
+                if failure == "download":
+                    raise subprocess.CalledProcessError(22, ["curl", url])
+                return hashlib.sha256(url.rsplit(".", 1)[-1].encode()).hexdigest()
+
+            with (
+                self.subTest(failure=failure),
+                patch.object(publish_r2.subprocess, "run", side_effect=fake),
+                patch.object(publish_r2, "download_digest", side_effect=download),
+                self.assertRaises(subprocess.CalledProcessError),
+            ):
+                publish_r2.publish(
+                    "testing",
+                    self.version,
+                    self.dist,
+                    "bucket",
+                    "https://example.invalid",
+                    latest_release="45",
+                )
+            self.assertFalse(
+                any(
+                    "latest.json" in " ".join(call) or call[:3] == ["aws", "s3", "rm"]
+                    for call in calls
+                )
+            )
+
+    def test_required_evidence_uploads_and_is_publicly_verified_before_pruning(self):
+        evidence = self.dist / "image" / "sbom.spdx.json"
+        evidence.parent.mkdir()
+        evidence.write_text('{"packages":[]}')
+        (self.dist / "image" / "provenance.json").write_text("{}")
+        (self.dist / "release-evidence.json").write_text("{}")
+        entries = {}
+        for path in self.dist.rglob("*"):
+            if path.is_file() and not path.name.endswith(".sig"):
+                entries[path.relative_to(self.dist).as_posix()] = publish_r2.sha256(
+                    path
+                )
+        (self.dist / "SHA256SUMS").write_text(
+            "".join(f"{digest}  {name}\n" for name, digest in sorted(entries.items()))
+        )
+        (self.dist / "SHA256SUMS.sig").write_text("detached")
+        calls = []
+        latest = []
+
+        def fake(args, **kwargs):
+            calls.append(args)
+            if args[:3] == ["aws", "s3", "cp"] and args[4].endswith("latest.json"):
+                latest.append(json.loads(Path(args[3]).read_text()))
+            if args[:3] == ["aws", "s3", "ls"]:
+                return subprocess.CompletedProcess(
+                    args, 0, stdout=" PRE testing-45.20261030/\n"
+                )
+            return subprocess.CompletedProcess(args, 0)
+
+        def download(url):
+            calls.append(["curl", url])
+            relative = url.split(f"/{self.version}/", 1)[1]
+            return publish_r2.sha256(self.dist / relative)
+
+        with (
+            patch.object(publish_r2.subprocess, "run", side_effect=fake),
+            patch.object(publish_r2, "download_digest", side_effect=download),
+        ):
+            publish_r2.publish(
+                "testing",
+                self.version,
+                self.dist,
+                "bucket",
+                "https://example.invalid",
+                True,
+                latest_release="45",
+            )
+        self.assertIn("image/sbom.spdx.json", latest[0]["evidence"])
+        self.assertEqual(
+            latest[0]["assets"]["iso"].rsplit("/", 1)[-1],
+            f"luminusos-workstation-{self.version}.iso",
+        )
+        verify = next(call for call in calls if call[0] == "cosign")
+        self.assertIn("verify-blob", verify)
+        self.assertLess(
+            calls.index(verify),
+            next(i for i, call in enumerate(calls) if call[0:3] == ["aws", "s3", "cp"]),
+        )
+        self.assertGreater(
+            calls.index(
+                next(call for call in calls if call[:3] == ["aws", "s3", "rm"])
+            ),
+            max(i for i, call in enumerate(calls) if call[0] == "curl"),
+        )
+
+    def test_required_evidence_rejects_manifest_mismatch_before_upload(self):
+        (self.dist / "SHA256SUMS").write_text("0" * 64 + "  unknown.json\n")
+        (self.dist / "SHA256SUMS.sig").write_text("signature")
+        with (
+            patch.object(publish_r2.subprocess, "run") as run,
+            self.assertRaises(ValueError),
+        ):
+            publish_r2.publish(
+                "testing",
+                self.version,
+                self.dist,
+                "bucket",
+                "https://example.invalid",
+                True,
+                latest_release="45",
+            )
+        run.assert_called_once()
+
+
+if __name__ == "__main__":
+    unittest.main()

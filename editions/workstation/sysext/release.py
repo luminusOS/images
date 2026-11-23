@@ -1,4 +1,3 @@
-#!/usr/bin/env python3
 """Assemble, sign and verify one hardware feature release snapshot.
 
   release.py assemble <dir> --version V --image-digest sha256:...
@@ -56,8 +55,13 @@ def load_features(d, version, digest):
         if os.path.basename(path) != f"{name}.json":
             fail(f"{path}: metadata names feature {meta['id']}")
         if meta["version"] != version or meta["image_digest"] != digest:
-            fail(f"{name}: built for {meta['version']} {meta['image_digest']}, not {version} {digest}")
-        for key, file in (("raw_sha256", meta["raw"]), ("raw_xz_sha256", meta["raw_xz"])):
+            fail(
+                f"{name}: built for {meta['version']} {meta['image_digest']}, not {version} {digest}"
+            )
+        for key, file in (
+            ("raw_sha256", meta["raw"]),
+            ("raw_xz_sha256", meta["raw_xz"]),
+        ):
             if sha256(f"{d}/{file}") != meta[key]:
                 fail(f"{file}: hash differs from its build metadata")
         metas.append(meta)
@@ -81,7 +85,9 @@ def check_matrix(metas):
         for ref in meta["exec_refs"]:
             others = set(owners.get(ref, {})) - {meta["id"]}
             if others:
-                errors.append(f"{meta['id']} executes {ref} owned by {', '.join(sorted(others))}")
+                errors.append(
+                    f"{meta['id']} executes {ref} owned by {', '.join(sorted(others))}"
+                )
     if errors:
         for e in errors:
             print(f"release: {e}", file=sys.stderr)
@@ -126,8 +132,13 @@ def assemble(args):
     }
     atomic_write(f"{args.dir}/SHA256SUMS", sums)
     atomic_write(f"{args.dir}/SHA256SUMS.raw", sums_raw)
-    atomic_write(f"{args.dir}/release.json", json.dumps(descriptor, indent=2, sort_keys=True) + "\n")
-    print(f"release: assembled {len(metas)} feature(s) for {args.version} {args.image_digest}")
+    atomic_write(
+        f"{args.dir}/release.json",
+        json.dumps(descriptor, indent=2, sort_keys=True) + "\n",
+    )
+    print(
+        f"release: assembled {len(metas)} feature(s) for {args.version} {args.image_digest}"
+    )
 
 
 def sign(args):
@@ -136,16 +147,34 @@ def sign(args):
         if not os.path.isfile(path):
             fail(f"{path} missing; run assemble first")
         subprocess.run(
-            ["gpg", "--batch", "--yes", "--pinentry-mode", "loopback", "--passphrase-fd", "0",
-             "--local-user", args.key, "--detach-sign", "--output", f"{path}.gpg", path],
-            input=os.environ.get("SYSEXT_SIGNING_PASSPHRASE", "").encode(), check=True,
+            [
+                "gpg",
+                "--batch",
+                "--yes",
+                "--pinentry-mode",
+                "loopback",
+                "--passphrase-fd",
+                "0",
+                "--local-user",
+                args.key,
+                "--detach-sign",
+                "--output",
+                f"{path}.gpg",
+                path,
+            ],
+            input=os.environ.get("SYSEXT_SIGNING_PASSPHRASE", "").encode(),
+            check=True,
         )
     print(f"release: signed {', '.join(SIGNED)} with {args.key}")
 
 
 def gpgv(keyring, path):
-    r = subprocess.run(["gpgv", "--keyring", os.path.abspath(keyring), f"{path}.gpg", path],
-                       capture_output=True, text=True)
+    r = subprocess.run(
+        ["gpgv", "--keyring", os.path.abspath(keyring), f"{path}.gpg", path],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
     if r.returncode:
         fail(f"{os.path.basename(path)}: signature does not verify\n{r.stderr.strip()}")
 
@@ -176,37 +205,54 @@ def verify(args, *, installer=False, discovery_dir=None):
     if descriptor.get("format") != 1:
         fail("unsupported descriptor format")
     if descriptor.get("version") != args.version:
-        fail(f"descriptor names version {descriptor.get('version')}, expected {args.version}")
+        fail(
+            f"descriptor names version {descriptor.get('version')}, expected {args.version}"
+        )
     if descriptor.get("image_digest") != args.image_digest:
-        fail(f"descriptor names image {descriptor.get('image_digest')}, expected {args.image_digest}")
+        fail(
+            f"descriptor names image {descriptor.get('image_digest')}, expected {args.image_digest}"
+        )
     features = descriptor.get("features") or {}
     if not features:
         fail("descriptor lists no features")
     if discovery_dir is not None:
-        discovered = {p.stem for p in discovery_dir.glob("*.feature")} - {"luminusos-discovery-probe"}
+        discovered = {p.stem for p in discovery_dir.glob("*.feature")} - {
+            "luminusos-discovery-probe"
+        }
         if set(features) != discovered:
-            fail(f"installer feature matrix mismatch: missing={sorted(discovered - features.keys())}; "
-                 f"not discoverable={sorted(features.keys() - discovered)}")
+            fail(
+                f"installer feature matrix mismatch: missing={sorted(discovered - features.keys())}; "
+                f"not discoverable={sorted(features.keys() - discovered)}"
+            )
     lists = [] if args.offline else [("SHA256SUMS", ".raw.xz", "raw_xz_sha256")]
     if args.raw or args.offline:
         lists.append(("SHA256SUMS.raw", ".raw", "raw_sha256"))
     for list_name, suffix, key in lists:
         sums = parse_sums(f"{args.dir}/{list_name}")
-        want = {f"luminusos-{fid}_{args.version}{suffix}": e[key] for fid, e in features.items()}
+        want = {
+            f"luminusos-{fid}_{args.version}{suffix}": e[key]
+            for fid, e in features.items()
+        }
         if sums != want:
             fail(f"{list_name} does not match the descriptor")
         for name, digest in want.items():
             if sha256(f"{args.dir}/{name}") != digest:
                 fail(f"{name}: payload hash does not match")
     if installer:
-        expected = set(want) | {name + suffix for name in signed for suffix in ("", ".gpg")}
+        expected = set(want) | {
+            name + suffix for name in signed for suffix in ("", ".gpg")
+        }
         if {path.name for path in Path(args.dir).iterdir()} != expected:
             fail("installer feature directory contains unexpected files")
-    print(f"release: verified {len(features)} feature(s) for {args.version} {args.image_digest}")
+    print(
+        f"release: verified {len(features)} feature(s) for {args.version} {args.image_digest}"
+    )
 
 
 def verify_installer(args):
-    versions = re.findall(r"^IMAGE_VERSION=(.*)$", args.os_release.read_text(), re.MULTILINE)
+    versions = re.findall(
+        r"^IMAGE_VERSION=(.*)$", args.os_release.read_text(), re.MULTILINE
+    )
     if len(versions) != 1:
         fail("expected exactly one live IMAGE_VERSION")
     version = versions[0]
@@ -216,15 +262,19 @@ def verify_installer(args):
         fail("invalid live IMAGE_VERSION")
     index = json.loads((args.payload / "index.json").read_bytes())
     latest = [
-        entry for entry in index["manifests"]
-        if entry.get("annotations", {}).get("org.opencontainers.image.ref.name") == "latest"
+        entry
+        for entry in index["manifests"]
+        if entry.get("annotations", {}).get("org.opencontainers.image.ref.name")
+        == "latest"
     ]
     if len(latest) != 1:
         fail("expected exactly one latest OCI manifest")
     digest = latest[0]["digest"]
     if not DIGEST_RE.fullmatch(digest):
         fail("invalid installer OCI manifest digest")
-    manifest = (args.payload / "blobs" / "sha256" / digest.removeprefix("sha256:")).read_bytes()
+    manifest = (
+        args.payload / "blobs" / "sha256" / digest.removeprefix("sha256:")
+    ).read_bytes()
     if f"sha256:{hashlib.sha256(manifest).hexdigest()}" != digest:
         fail("installer OCI manifest bytes do not match index digest")
     document = json.loads(manifest)
@@ -236,12 +286,24 @@ def verify_installer(args):
         if not DIGEST_RE.fullmatch(blob_digest) or type(size) is not int or size < 0:
             fail("invalid installer OCI blob descriptor")
         blob = args.payload / "blobs" / "sha256" / blob_digest.removeprefix("sha256:")
-        if not blob.is_file() or blob.stat().st_size != size or f"sha256:{sha256(blob)}" != blob_digest:
+        if (
+            not blob.is_file()
+            or blob.stat().st_size != size
+            or f"sha256:{sha256(blob)}" != blob_digest
+        ):
             fail(f"installer OCI blob does not match manifest: {blob_digest}")
-    verify(argparse.Namespace(
-        dir=args.dir, keyring=args.keyring, version=version, image_digest=digest,
-        offline=True, raw=False,
-    ), installer=True, discovery_dir=args.discovery_dir)
+    verify(
+        argparse.Namespace(
+            dir=args.dir,
+            keyring=args.keyring,
+            version=version,
+            image_digest=digest,
+            offline=True,
+            raw=False,
+        ),
+        installer=True,
+        discovery_dir=args.discovery_dir,
+    )
 
 
 def main():
@@ -260,9 +322,14 @@ def main():
     v.add_argument("--version", required=True)
     v.add_argument("--image-digest", required=True)
     mode = v.add_mutually_exclusive_group()
-    mode.add_argument("--raw", action="store_true", help="also verify the offline .raw list and files")
-    mode.add_argument("--offline", action="store_true",
-                      help="verify only the ISO subset: release.json, SHA256SUMS.raw and the .raw files")
+    mode.add_argument(
+        "--raw", action="store_true", help="also verify the offline .raw list and files"
+    )
+    mode.add_argument(
+        "--offline",
+        action="store_true",
+        help="verify only the ISO subset: release.json, SHA256SUMS.raw and the .raw files",
+    )
     i = sub.add_parser("verify-installer")
     i.add_argument("dir")
     i.add_argument("--keyring", required=True)
@@ -270,7 +337,12 @@ def main():
     i.add_argument("--os-release", required=True, type=Path)
     i.add_argument("--discovery-dir", type=Path)
     args = ap.parse_args()
-    {"assemble": assemble, "sign": sign, "verify": verify, "verify-installer": verify_installer}[args.cmd](args)
+    {
+        "assemble": assemble,
+        "sign": sign,
+        "verify": verify,
+        "verify-installer": verify_installer,
+    }[args.cmd](args)
 
 
 if __name__ == "__main__":

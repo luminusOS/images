@@ -75,23 +75,20 @@ flowchart TD
 │       ├── assets/
 │       ├── Containerfile
 │       ├── Containerfile.installer
-│       ├── build.sh
-│       ├── build-sysext.sh
-│       ├── features/
-│       ├── files/
-│       │   ├── installer/
-│       │   └── system/
-│       └── sysext/
+│       ├── build.py
+│       └── files/
+│           ├── installer/
+│           └── system/
 ├── shared/
 │   ├── bootc-image-builder.toml.example
 │   ├── flatpaks
 │   └── scripts/
 └── tools/
-    ├── config-value.sh
-    ├── install-qemu.sh
-    ├── package-artifact.sh
-    ├── qemu-common.sh
-    └── qemu.sh
+    ├── config-value.py
+    ├── install-qemu.py
+    ├── package-artifact.py
+    ├── qemu_common.py
+    └── qemu.py
 ```
 
 ## Naming And Scope
@@ -105,9 +102,9 @@ flowchart TD
 | OS version | `LOS_TAG` without the `testing-` prefix (`<fedora>.<YYYYMMDD>` by default) unless `LOS_VERSION` is set; channel-neutral so promoted stable builds are not labelled testing. |
 | Shared data/config | Stored in `shared/`; current shared inputs are Flatpak refs and bootc-image-builder config. |
 | Workstation overlays | Installed files live under `files/system/`; live-only files live under `files/installer/`. Both mirror `/`. |
-| Desktop build script | `editions/workstation/build.sh`, called from the workstation Containerfile. |
+| Desktop build script | `editions/workstation/build.py`, called with `python3` from the workstation Containerfile. |
 | Artifact packaging | Handled by `image-builder` through `just package workstation`. |
-| Local VM testing | Handled by `tools/qemu.sh` and `tools/install-qemu.sh`. |
+| Local VM testing | Handled by `tools/qemu.py` and `tools/install-qemu.py`. |
 
 ## Build Inputs
 
@@ -115,20 +112,15 @@ flowchart TD
 | --- | --- | --- |
 | `LOS_BASE` | `quay.io/fedora/fedora-bootc:<fedora>@<digest>` | Pinned base image for the core edition. |
 | `LOS_FEDORA_VERSION` | From `config/versions.env` | Fedora release version used for base images, DNF repos and tags. |
-| `LOS_FEDORA_BOOTC_DIGEST` | From `config/versions.env` | Fedora bootc composition for local builds. Quay garbage-collects superseded digests within a day, so CI and `publish` ignore it and resolve the live digest with `tools/fedora-bootc-digest.sh`, recording it in the release notes. If a local build cannot pull it, set `LOS_FEDORA_BOOTC_DIGEST=$(tools/fedora-bootc-digest.sh 45)`. |
+| `LOS_FEDORA_BOOTC_DIGEST` | From `config/versions.env` | Fedora bootc composition for local builds. CI resolves the current digest with `python3 tools/fedora-bootc-digest.py`. If the configured digest is no longer available, set `LOS_FEDORA_BOOTC_DIGEST=$(python3 tools/fedora-bootc-digest.py 45)`. |
 | `LOS_REGISTRY` | `localhost` | Registry prefix for local builds. |
 | `LOS_TAG` | `testing-<fedora>.<date>` | Local image tag. |
 | `LOS_VERSION` | `LOS_TAG` without the `testing-` prefix | Version written to `VERSION`, `BUILD_ID`, `IMAGE_VERSION`, and bootloader entries. |
 | `LOS_NAME` | `LuminusOS` | OS name written to os-release. |
 | `LOS_PRETTY_NAME` | `Luminus OS` | Base pretty OS name; active editions append their edition name and `LOS_VERSION` for bootloader entries. |
 | `LOS_WORKSTATION_TARGET_IMAGE` | `…:testing-<fedora>`, or `…:<fedora>` when `UPDATE_CHANNEL=stable` | Installed bootc update reference. |
-| `AURORA_SHELL_VERSION` | From `config/versions.env` | Aurora Shell release downloaded during build. |
-| `AURORA_SHELL_SHA256` | From `config/versions.env` | Expected digest for the Aurora Shell release artifact. |
-| `ELASTIC_SWAP_VERSION` | From `config/versions.env` | elastic-swap release whose x86_64 RPM is installed into the workstation image. |
-| `ELASTIC_SWAP_SHA256` | From `config/versions.env` | SHA256 of that RPM for the default Fedora release; the build fails if the download does not match. |
-| `SIRIUS_VERSION` | From `config/versions.env` | Sirius GitHub release downloaded into the live installer. |
-| `SIRIUS_RPM_VERSION` | From `config/versions.env` | Package version encoded in the Sirius release RPM filename and metadata. |
-| `SIRIUS_SHA256` | From `config/versions.env` | SHA256 of the Sirius release RPM; the installer build fails if the download does not match. Update it with `SIRIUS_VERSION`. |
+| `SIRIUS_VERSION` | From `config/versions.env` | Sirius release installed into the live installer from the Luminus RPM repository (`-rc.N` versions come from the testing channel, final versions from stable). |
+| `SIRIUS_RPM_VERSION` | From `config/versions.env` | Package version requested from the repository (`1.0.5~rc.2` for `1.0.5-rc.2`). |
 | `LOS_FORCE_CORE` | `0` | Rebuild core even if the local stamp is unchanged. |
 | `LOS_SKIP_FLATPAKS` | `0` | Skip Flatpak installation during workstation build. |
 
@@ -168,12 +160,10 @@ flowchart TD
     Format -->|all| ISO
     Format -->|all| QCOW2
 
-    Edition -->|sysext feature| BuildSysext["build-sysext.sh<br/>guards, EROFS, release.py assemble"]
-
     Qemu --> Target{"target"}
-    Target -->|iso| QemuISO["tools/qemu.sh iso"]
-    Target -->|install| QemuInstall["tools/install-qemu.sh"]
-    Target -->|run| QemuRun["tools/qemu.sh disk<br/>.test/install-disk.qcow2"]
+    Target -->|iso| QemuISO["tools/qemu.py iso"]
+    Target -->|install| QemuInstall["tools/install-qemu.py"]
+    Target -->|run| QemuRun["tools/qemu.py disk<br/>.test/install-disk.qcow2"]
 ```
 
 ## Core Image
@@ -187,9 +177,11 @@ Responsibilities:
 - Set `/etc/dnf/vars/releasever` and `/etc/yum/vars/releasever`.
 - Inherit bootc base packages from Fedora bootc.
 - Update `/usr/lib/os-release` branding and image version.
+- Copy `shared/trust/` (signature policy, public key and sigstore attachment opt-in).
+- Install firewalld, disable TCP SSH (`sshd.service`, `sshd.socket`) and remove SSH from the public zone. `sshd@.service` and `systemd-ssh-generator` stay available for the ephemeral vsock validation channel.
 - Recover RPM database state when the container build path leaves a temporary rebuild database.
 - Run final cleanup (DNF caches, logs, temporary files).
-- Verify `bootc` is present and run `bootc container lint`.
+- Verify `bootc`, closed TCP SSH (including that `ssh.socket` is not enabled), the preserved vsock SSH units and the attachment opt-in, then run `bootc container lint`.
 
 ```mermaid
 flowchart TD
@@ -209,6 +201,8 @@ flowchart TD
 | File | Role |
 | --- | --- |
 | `shared/flatpaks` | Flatpak refs installed into workstation unless `LOS_SKIP_FLATPAKS=1`; related refs are not preinstalled so GPU-specific runtimes are resolved on the installed system. |
+| `editions/workstation/files/system/etc/yum.repos.d/luminus*.repo` | The Luminus RPM repository on the system: `luminus` (stable, enabled) and `luminus-testing` (disabled). Packages and metadata are checked against the channel keys in `shared/rpm-keys/`, installed to `/usr/share/luminus/rpm-keys/`. The live installer build installs Sirius from this repository instead of downloading the RPM. |
+| `editions/workstation/files/system/usr/libexec/luminus-flatpak-remotes` | Boot-time service that adds the Luminus application remote (`luminus` on stable, `luminus-testing` on testing) to the system Flatpak installation. The channel comes from the booted bootc image tag (`testing-*` is testing) unless `/etc/luminus/flatpak-channel` names one. It installs no applications and never changes an existing remote, so updated systems keep their remotes and a remote with the same name and another URL is left alone. The `.flatpakrepo` files under `usr/share/luminus/flatpak` come from the `flatpak-repo` descriptors. |
 | `shared/bootc-image-builder.toml.example` | Template for the gitignored local `shared/bootc-image-builder.toml` used by the direct QEMU install path (test user credentials stay out of git). |
 | `shared/scripts/` | Build-time helper scripts (rpmdb repair, releasever pin, os-release branding, initramfs rebuild, session-modes patch) bind-mounted into every edition build. |
 | `config/versions.env` | Shared Fedora, Aurora Shell, Sirius, and primary Fedora branch defaults consumed by Just and GitHub Actions. |
@@ -222,27 +216,25 @@ The workstation image is built by `editions/workstation/Containerfile`. It is us
 
 The ISO live root is built by `editions/workstation/Containerfile.installer` as `luminusos-workstation:<tag>-iso`. It starts from the workstation image, then adds the live-only installer packages, Sirius, GNOME live session files, and the image-builder ISO config. The normal workstation image is also embedded as the install payload.
 
-The workstation Containerfile has five stages:
+The workstation Containerfile has four stages:
 
 1. `ctx-scripts`: shared build helpers.
 2. `ctx-workstation-script`: edition build script context.
 3. `ctx-flatpaks`: shared Flatpak refs from `shared/flatpaks`.
-4. `aurora-extension`: downloads and validates the Aurora Shell extension zip.
-5. Final workstation stage: starts from core and installs installed-system boot packages, Plymouth, GNOME, Aurora Shell, Flatpaks, qcow2 image-builder config, and first-boot cleanup.
+4. Final workstation stage: starts from core and installs installed-system boot packages, Plymouth, GNOME, Aurora Shell, Flatpaks, qcow2 image-builder config, and first-boot cleanup.
 
 ```mermaid
 flowchart TD
-    ScriptCtx["ctx-workstation-script<br/>editions/workstation/build.sh"]
+    ScriptCtx["ctx-workstation-script<br/>editions/workstation/build.py"]
     FlatpakCtx["ctx-flatpaks<br/>shared/flatpaks"]
     FilesCtx["system overlay<br/>files/system"]
-    AuroraStage["aurora-extension stage"]
     CoreImage["core image<br/>luminusos:<tag>"]
     BootPkgs["installed boot packages<br/>kernel, dracut, grub, shim, bootc, toolbox, flatpak, plymouth"]
     Plymouth["install Lucent Plymouth theme"]
     Dracut["rebuild installed initramfs<br/>with plymouth"]
     CopyAurora["install Aurora Shell"]
     PatchAurora["patch metadata<br/>session-modes includes initial-setup"]
-    GnomeBuild["editions/workstation/build.sh"]
+    GnomeBuild["editions/workstation/build.py"]
     Flatpaks["optional Flatpak installation"]
     ValidateAurora["compile schemas<br/>validate shell version + session mode"]
     Lint["bootc container lint"]
@@ -251,7 +243,6 @@ flowchart TD
     ScriptCtx --> GnomeBuild
     FilesCtx --> GnomeBuild
     FlatpakCtx --> Flatpaks
-    AuroraStage --> CopyAurora
     CoreImage --> BootPkgs --> Plymouth --> Dracut --> CopyAurora --> PatchAurora --> GnomeBuild
     GnomeBuild --> Flatpaks --> ValidateAurora --> Lint --> Output
 ```
@@ -271,7 +262,7 @@ The workstation initramfs is rebuilt without live modules. The installer image r
 
 ## Aurora Shell
 
-Aurora Shell is installed from the release artifact selected by `AURORA_SHELL_VERSION`. The workstation image patches `metadata.json` for the normal user session and GNOME Initial Setup; the installer image adds the custom live installer session:
+Aurora Shell, elastic-swap, appimage-thumbnailer and ddcutil-service are installed with `dnf` from the Luminus RPM repository, whose packages are signed with the channel key. Aurora Shell is installed as `gnome-shell-extension-aurora-shell`. The workstation image patches `metadata.json` for the normal user session and GNOME Initial Setup; the installer image adds the custom live installer session:
 
 ```json
 "session-modes": ["initial-setup", "live-installer", "user"]
@@ -297,11 +288,11 @@ The Sirius RPM ships the binary, the polkit action, the desktop file, and generi
 
 ## GNOME Workstation Setup
 
-Main file: `editions/workstation/build.sh`.
+Main file: `editions/workstation/build.py`.
 
 Responsibilities:
 
-- Install `accountsservice`, `gdm`, `gnome-initial-setup`, `gnome-shell`, `gnome-backgrounds`, `nautilus`, `sushi`, and `gnome-software`.
+- Install `accountsservice`, `gdm`, `gnome-initial-setup`, `gnome-shell`, `gnome-backgrounds`, `nautilus`, and `sushi`.
 - Install the Fedora GStreamer plugins `gstreamer1-plugins-good`, `gstreamer1-plugins-bad-free`, `gstreamer1-plugin-openh264` (with `openh264` from the `fedora-cisco-openh264` repository), and `gstreamer1-plugin-libav`, so host apps can play MP4/H.264 and AAC media.
 - Prepare `/boot/efi` and `/boot/loader/entries`.
 - Disable GNOME Software autostart and search provider.
@@ -439,18 +430,18 @@ flowchart TD
     ESP["512 MiB<br/>vfat ESP<br/>/boot/efi"]
     Boot["1–2 GiB<br/>ext4<br/>/boot"]
     Root["remaining space<br/>Btrfs"]
-    RootSubvol["root subvolume<br/>/"]
-    HomeSubvol["home subvolume<br/>/home"]
-    VarSubvol["var subvolume<br/>/var"]
+    RootSubvol["root subvolume<br/>/ (sysroot)"]
+    Var["ostree stateroot var<br/>/var, /var/home"]
 
     Disk --> BIOS
     Disk --> ESP
     Disk --> Boot
     Disk --> Root
     Root --> RootSubvol
-    Root --> HomeSubvol
-    Root --> VarSubvol
+    RootSubvol --> Var
 ```
+
+The Btrfs partition has a single `root` subvolume. `/var` (and `/var/home`, which `/home` links to) is the ostree stateroot directory inside it, bind-mounted by the boot. Like the Sirius templates, which create no subvolumes, it has no separate `var` or `home` subvolume: a new `var` subvolume mounted at `/var` starts empty with an unlabeled root and hides the `/var` bootc prepared, so first-boot services such as `systemd-random-seed` are denied by SELinux.
 
 ## Live-To-Installed Transition
 
@@ -503,7 +494,7 @@ flowchart TD
 
 `bootc-generic-iso` can embed the installer payload as a `containers-storage` blob. `bootc install` can't stream that directly: containers/storage keeps layers already unpacked on disk, so install has to re-diff and re-tar each layer into a large `/var/tmp` staging area (~2.5 GiB compressed) before it can deploy them. On a live ISO, `/var/tmp` has nowhere to go but RAM, which is why installs used to need a dedicated tmpfs and a ~5 GiB RAM gate.
 
-Instead, the payload is embedded in the `-iso` container image itself as an **OCI layout** at `/usr/lib/luminusos/payload.oci`. The build exports it into the build context beforehand (`skopeo copy <payload-image> oci:.test/payload.oci:latest` in the Justfile locally, a workflow step in CI) and `Containerfile.installer` copies it into the live root. OCI layout blobs are already ready-made layer tarballs, so `bootc install --source-imgref oci:/usr/lib/luminusos/payload.oci:latest` (set in `distro.toml`) streams them straight to the target disk, with no re-tar, no large staging area, and no image-builder payload-embedding support required at all.
+Instead, the payload is embedded in the `-iso` container image itself as an **OCI layout** at `/usr/lib/luminusos/payload.oci`. The build prepares `.test/payload.oci` beforehand: testing CI acquires the verified same-run workstation OCI artifact and changes only its index reference to `latest`, preserving the manifest and blobs; local and stable paths export the payload with Skopeo. `Containerfile.installer` copies the layout into the live root. OCI layout blobs are already ready-made layer tarballs, so `bootc install --source-imgref oci:/usr/lib/luminusos/payload.oci:latest` (set in `distro.toml`) streams them straight to the target disk, with no re-tar, no large staging area, and no image-builder payload-embedding support required at all.
 
 The `:latest` suffix is load-bearing: `skopeo copy oci:...` strips it from the on-disk directory name and records it as the `org.opencontainers.image.ref.name` annotation in `index.json`, which is what makes the `:latest` reference resolvable. The container build fails its final verification if the annotation is missing.
 
@@ -539,7 +530,7 @@ sudo image-builder build \
   qcow2
 ```
 
-The direct qcow2 artifact uses `/usr/lib/image-builder/bootc/disk.yaml`. It keeps the root/home/var deployment on Btrfs, but `/boot` is ext4 because image-builder qcow2 generation does not support Btrfs for `/boot`.
+The direct qcow2 artifact uses `/usr/lib/image-builder/bootc/disk.yaml`. It keeps root, `/var` and home on the single Btrfs `root` subvolume, but `/boot` is ext4 because image-builder qcow2 generation does not support Btrfs for `/boot`.
 
 ```mermaid
 flowchart TD
@@ -559,6 +550,20 @@ flowchart TD
     Workstation --> QCOW2Builder --> QCOW2 --> LastQCOW2
 ```
 
+## Container CI Responsibilities
+
+`.github/workflows/build-containers.yml` (Image Build Validation) is the read-only build validation entry point. Its manual dispatch accepts `build_installer`, a boolean defaulting to `false`; only an explicit manual opt-in enables the installer, and `publish: false` remains enforced. Push and pull-request validation do not enable the installer. `containers.yml` (Image Build Orchestration) resolves metadata and explicitly orchestrates core → workstation → installer. `installer.yml` (Installer Image Build) owns the live-root construction and payload preparation. The installer is a live root for workstation, not a separate edition. Aggregate titles describe operations rather than enumerating editions; leaf jobs identify the image being built. Renaming visible job titles requires migrating any matching required-check contexts in repository protections.
+
+The workflow helpers separate three responsibilities:
+
+- `core_reuse.py hash|select` fingerprints core inputs and selects a signed, compatible core image when reuse is requested.
+- `image_archive.py save|load` transports any built image between jobs, verifying the archive SHA-256 before loading and the local image ID afterward. A local image ID is not a registry manifest digest.
+- `oci_layout.py fetch-payload` acquires the same-run workstation OCI artifact for testing, requires its expected manifest digest, and remaps only the index reference to `latest`.
+
+New editions based on core or workstation should declare their actual parent through explicit job dependencies and verified archive handoffs. Keep edition-specific Containerfiles and build arguments explicit; do not route unrelated edition operations through core reuse or installer helpers. No additional edition definitions or generic dependency engine are needed for the current two editions.
+
+`publish.yml` owns publication, signing and promotion, not the read-only build workflow. Each channel builds candidates on its own source line, `main` for testing and `release/<fedora>` for stable. Scheduled releases prepare only core and workstation OCI images for `bootc upgrade`. The chains verify the signed kind before advancing a scheduled candidate. Installation validation upgrades a disposable disk built from the published base, and promotion preserves the validated digests. A manual `publish.yml` dispatch with `artifacts=full` adds the installer, ISO and qcow2; only full publication writes downloads or updates the download index. See the [release strategy](docs/release-strategy.md).
+
 ## Local QEMU Testing
 
 The repository supports two local VM paths:
@@ -575,7 +580,7 @@ flowchart TD
     QemuRun["just qemu run"]
 
     DirectInstall["just qemu install"]
-    InstallScript["tools/install-qemu.sh"]
+    InstallScript["tools/install-qemu.py"]
     BIB["bootc-image-builder container"]
     Disk[".test/install-disk.qcow2"]
 
@@ -583,7 +588,7 @@ flowchart TD
     Build --> DirectInstall --> InstallScript --> BIB --> Disk --> QemuRun
 ```
 
-`tools/qemu.sh iso`:
+`python3 tools/qemu.py iso`:
 
 - Selects ISO through `QEMU_ISO_PATH`, `.test/last-iso`, or the newest root-level ISO.
 - Creates or reuses `.test/install-disk.qcow2`.
@@ -591,12 +596,14 @@ flowchart TD
 - Uses AHCI/SATA by default for firmware compatibility.
 - Enables serial logging and `.test/qemu.log` when `QEMU_DEBUG != 0`.
 
-`tools/qemu.sh disk`:
+`python3 tools/qemu.py disk`:
 
 - Selects `QEMU_DISK_PATH`, `.test/last-qcow2`, the newest root-level qcow2, or the legacy `.test/disk.qcow2`, in that order.
-- `just qemu run` uses `.test/install-disk.qcow2` and resets NVRAM by default.
+- `just qemu run` uses `.test/install-disk.qcow2` and resets legacy NVRAM by default, except when TPM or Secure Boot is explicitly requested.
 
-`tools/install-qemu.sh`:
+`QEMU_TPM=1` and `QEMU_SECURE_BOOT=1` are independent opt-in local VM features; both default to `0`. The launcher supervises QEMU and, when requested, `swtpm`, holding a per-disk lock across reset, creation and execution. Optional TPM and firmware state live under `.test/qemu-vms/<sha256-of-canonical-disk-path>/`, separate from the legacy NVRAM file. Secure Boot selects a QEMU-described raw q35 UEFI firmware pair with enrolled keys and SMM support. Firmware state persists across ISO installation and installed boot; guest-side verification is still required because persistent NVRAM is mutable. These options neither make TPM/Secure Boot mandatory in Sirius nor establish EAC Linux v2 compliance. See [the local testing guide](CONTRIBUTING.md#optional-tpm-20-and-secure-boot) for commands and dependencies.
+
+`python3 tools/install-qemu.py`:
 
 - Runs `quay.io/centos-bootc/bootc-image-builder:latest`.
 - Mounts local container storage.
@@ -631,7 +638,7 @@ Package changes must be made in the Containerfiles or build scripts and delivere
 
 Updates are downloaded automatically. `bootc-fetch-apply-updates.timer` (1 hour after boot, then every 8 hours) is enabled, and a drop-in replaces `bootc upgrade --apply` with `bootc upgrade`. The new image is staged and takes effect on the next reboot, so the desktop is never restarted by an update. The service is skipped while any NetworkManager device reports a metered connection.
 
-Installed systems track the channel named by `UPDATE_CHANNEL` in `config/versions.env`, for both local builds and the `publish` workflow. It is `testing` until a stable release exists:
+Installed systems track the channel named by `UPDATE_CHANNEL` in the build's `config/versions.env`, for both local builds and the `publish` workflow:
 
 | `UPDATE_CHANNEL` | `target_imgref` |
 | --- | --- |
@@ -641,19 +648,20 @@ Installed systems track the channel named by `UPDATE_CHANNEL` in `config/version
 Release metadata lives in `config/releases.env` on `main` and is read by every branch (see [docs/release-strategy.md](docs/release-strategy.md)):
 
 - `SUPPORTED_RELEASES`: releases that may be built.
-- `LATEST_RELEASE`: the only release allowed to move the floating `testing` and `latest` tags.
+- `LATEST_RELEASE`: the only release allowed to move the floating `testing` and `latest` tags and to write `<channel>/latest.json` on the download site.
+- `STABLE_LINES`: releases with an active `release/<fedora>` line. A stable build runs only on that branch, and only when its release is listed here on `main`; the branch's own `config/versions.env` sets `UPDATE_CHANNEL=stable`.
 
-`auto-testing` runs daily on `main`. It compares the live `fedora-bootc:<fedora>` digest with the `org.opencontainers.image.base.digest` label of the latest `testing-<fedora>` image and rebuilds only when it changed, or when the last build never got its git tag (a failed release step). Its builds are versioned `<fedora>.<YYYYMMDD>.<n>`; `tools/release-notes.sh` compares `rpm -qa` of the previous and new image for the release notes.
+`auto-testing` checks the Fedora base on `main`. Automatic builds are candidates, not evidence that a release has passed installation or update tests. `python3 tools/release-notes.py` compares `rpm -qa` of the previous and new image for release notes.
 
-Stable images are promoted from an existing testing build with `skopeo copy --all --preserve-digests`, never rebuilt, so a stable tag always has the same digest as the testing build that was validated.
+`auto-stable.yml` checks for Fedora base changes and carries image candidates built on protected `release/<fedora>` branches through private staging, stable scans and installation validation. Lines without a published stable release fail before preparation and need a manual full release. Publication stops at the `stable` GitHub Environment. The repository owner reviews the approval summary before approving; `release-stable` rechecks that summary before copying the validated digests with `skopeo copy --all --preserve-digests`. See the [stable release runbook](docs/release-strategy.md#stable-release-runbook) for approval, rejection, resumption and recovery.
 
 ### Image signatures
 
-`publish` and `auto-testing` sign `luminusos` and `luminusos-workstation` by digest with cosign, using the `COSIGN_PRIVATE_KEY`/`COSIGN_PASSWORD` repository secrets, and refuses to publish if the key is missing. Cosign stays on v2 because cosign 3 defaults to a bundle format that containers/image cannot read. A build pushes only its immutable version tag; the branch and channel tags (`testing-<fedora>`, `testing`) move with `skopeo copy --preserve-digests` after signing, so installed systems never follow an unsigned image. Stable promotion preserves digests, so the testing signatures also cover the stable tags.
+Release policy requires signing candidate image digests and verifying them against the expected public key before promotion. Cosign stays on v2 for containers/image compatibility. Signing alone is not approval: branch and channel tags may move only after the required quality, artifact, installation, and trust evidence has been validated. Stable promotion must preserve the approved payload digest; a rebuilt live root has its own identity and evidence.
 
-Installed systems ship `/etc/containers/policy.json`, which requires a `sigstoreSigned` signature from `/etc/pki/containers/luminusos.pub` for those two repositories only; every other image keeps the Fedora default. `/etc/containers/registries.d/luminusos.yaml` enables sigstore attachments for them. `bootc upgrade` and `bootc switch` therefore reject unsigned or foreign-signed LuminusOS images.
+The core installs `/etc/containers/policy.json`, `/etc/pki/containers/luminusos.pub` and `/etc/containers/registries.d/luminusos.yaml` from `shared/trust/`, so every edition inherits them. The policy requires a `sigstoreSigned` signature for the two LuminusOS repositories; other images keep the Fedora default. The `registries.d` file enables sigstore attachments for those two repositories only. Effective enforcement by `bootc upgrade` and `bootc switch` must be demonstrated on a system installed through Sirius; inspecting this configuration is not a substitute for unsigned-image and incorrect-key rejection tests.
 
-The Sirius `enforce_sigpolicy` stays `false`: the install source is the unsigned OCI layout embedded in the ISO, and bootc's enforcement also rejects a policy whose default is `insecureAcceptAnything`.
+The Sirius `enforce_sigpolicy` stays `false` for installation from the embedded OCI layout. This is distinct from the trust policy for subsequent registry updates. Do not change this setting solely from static inspection: prove offline installation and update enforcement together on an installed VM.
 
 Rotating the key means shipping the new `luminusos.pub` in an image signed with the old key first, then switching the secret.
 
@@ -673,24 +681,16 @@ flowchart TD
     Installed --> Ref --> Registry --> NewImage --> Update --> Deployment --> Reboot --> Active
 ```
 
-### Hardware feature extensions
+### Hardware feature validation
 
-Optional hardware support ships as systemd-sysext images tied to one exact workstation build, never as hardware-specific OCI images. Each feature has a manifest, `editions/workstation/features/<id>/feature.env`, with optional `/usr` and `/opt` content under `files/`. The `dummy` feature is a test fixture with no hardware effect.
-
-The workstation build sets `SYSEXT_LEVEL` to `IMAGE_VERSION` and checks that both equal the OCI version label. From the manifests it generates discovery metadata under `/usr/lib/luminusos/sysupdate-discovery/` (beside the inert, disabled `luminusos-discovery-probe`) and transfer templates under `/usr/lib/luminusos/sysupdate/*.transfer.in`. Nothing goes into `/usr/lib/sysupdate.d`, so stock `systemd-sysupdate` fetches nothing.
-
-`editions/workstation/build-sysext.sh <feature-dir> <image@sha256:digest> <out-dir>` installs the feature in a container of that image, diffs it against the base and runs `sysext/guard.py` in a builder container (`sysext/Containerfile.builder`, the only place with erofs-utils). The guard rejects changed, deleted or retyped base paths, paths under base symlinks, symlinks into base content, merged caches, privileged hooks outside the allowlist, units or rules naming other features, and budget overruns. It writes `luminusos-<id>_<version>.raw`, `.raw.xz` and build metadata. `sysext/release.py assemble` checks the whole feature matrix and writes `SHA256SUMS`, `SHA256SUMS.raw` and the `release.json` descriptor bound to the image digest; `sign` and `verify` handle the detached OpenPGP signatures. `just build sysext <feature>` runs both steps for the local workstation image into `.test/sysext/<version>/`.
-
-Published builds (`auto-testing`, `publish`) push the workstation image, and its ISO live root, to the private `ghcr.io/<ns>/luminusos-workstation-candidate` repository. The `sysext` job builds every feature against the candidate digest and signs the snapshot with the dedicated OpenPGP key. The gate claims the version, uploads the snapshot create-only and verifies it through the public endpoint with the candidate keyring and the keyrings from the existing testing and stable Fedora branch tags. It signs the private candidate for the public image identity, copies the verified cosign signature before copying the image by digest, and verifies the public digest and signature before recording pending channel targets and moving release tags. Stable promotion verifies both the snapshot and the existing image signature before moving tags. A different bundle for a claimed version fails before publication; a retry with the same bundle resumes.
-
-Publication, promotion and retention share the create-only `sysext/LOCK` lease. Pending channel targets are durable before tag moves and remain protected if a move fails. Retention reconciles every recorded channel against the live registry and refuses deletion on an unknown or unresolvable target; it also protects pending targets, previous channel targets, the last five testing builds and the recovery window. CI only reports the retention plan; `--apply` is manual. After three hours the lease stops authorizing new operations, but it is never taken over automatically: an in-flight registry operation could still finish. Before removing a stale lock, an operator must confirm the old writer and its outstanding registry and store operations have stopped, then remove only the inspected lock version. `tests/sysext-publish.sh` exercises the local stores and fake registry without publishing.
+The workstation image records `SYSEXT_LEVEL` alongside `IMAGE_VERSION` and generates offline discovery metadata from `editions/workstation/features/`. The lab verifies a signed extension against the exact build digest and keeps discovery separate from the stock sysupdate timers. The `dummy` fixture exists to exercise this contract. The pull request lab uses disposable images and signing keys; it does not publish a snapshot or run in a release environment.
 
 ## Consistency Rules
 
 When changing this repository, keep these points aligned:
 
 - `Justfile`, `README.md`, `ARCHITECTURE.md`, and `AGENTS.md` must agree on active commands and supported editions.
-- `disk.yaml` must keep root/home/var Btrfs with `/boot` ext4 (image-builder compatibility) and describe the same storage layout as the Sirius repart templates; image-builder takes the filesystem from `disk.yaml`, not from `--bootc-default-fs`.
+- `disk.yaml` must keep root, `/var` and home on one Btrfs `root` subvolume with `/boot` ext4 (image-builder compatibility) and describe the same storage layout as the Sirius repart templates; image-builder takes the filesystem from `disk.yaml`, not from `--bootc-default-fs`.
 - Live-only files belong under `editions/workstation/files/installer/`; the normal workstation Containerfile may consume only `files/system/` and shared branding assets.
 - Changes to `live-installer` must consider the Wayland session file, GNOME session file, GNOME Shell mode JSON, systemd user drop-in, and Aurora Shell metadata.
 - If the install flow changes, update `/etc/sirius/distro.toml` / `sirius.toml` and this document.
@@ -700,7 +700,6 @@ When changing this repository, keep these points aligned:
 ```bash
 just build core
 just build workstation
-just build sysext dummy
 just package workstation
 just package workstation iso
 just package workstation qcow2

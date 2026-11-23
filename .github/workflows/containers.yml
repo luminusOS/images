@@ -1,733 +1,284 @@
-name: Reusable Container Build
+name: Image Build Orchestration
 
 on:
   workflow_call:
     inputs:
-      fedora_version:
-        required: false
-        type: string
-        default: ""
-      channel:
-        required: false
-        type: string
-        default: testing
-      promote_version:
-        required: false
-        type: string
-        default: ""
-      sirius_version:
-        required: false
-        type: string
-        default: ""
-      sirius_sha256:
-        required: false
-        type: string
-        default: ""
-      skip_flatpaks:
-        required: false
-        type: string
-        default: "0"
-      build_installer:
-        required: false
-        type: boolean
-        default: false
-      publish:
-        required: false
-        type: boolean
-        default: false
-      builder_mode:
-        required: false
-        type: string
-        default: registry
-      build_sequence:
-        description: "Testing only: append a per-day sequence (45.20261004.2) so several builds can share a date"
-        required: false
-        type: boolean
-        default: false
+      detected_fedora_version: {type: string, default: "__not_supplied__"}
+      detected_base_digest: {type: string, default: "__not_supplied__"}
+      fedora_version: {type: string, default: ""}
+      channel: {type: string, default: testing}
+      sirius_version: {type: string, default: ""}
+      skip_flatpaks: {type: string, default: "0"}
+      build_installer: {type: boolean, default: false}
+      publish: {type: boolean, default: false}
+      builder_mode: {type: string, default: local}
+      build_sequence: {type: boolean, default: false}
+      candidate_id: {type: string, default: ""}
+      core_ref: {type: string, default: ""}
+      force_core: {type: boolean, default: false}
     outputs:
-      fedora_version:
-        value: ${{ jobs.build.outputs.fedora_version }}
-      fedora_bootc_digest:
-        value: ${{ jobs.build.outputs.fedora_bootc_digest }}
-      version_tag:
-        value: ${{ jobs.build.outputs.version_tag }}
-      build_version:
-        value: ${{ jobs.build.outputs.build_version }}
-      branch_tag:
-        value: ${{ jobs.build.outputs.branch_tag }}
-      channel_tag:
-        value: ${{ jobs.build.outputs.channel_tag }}
-      image_namespace:
-        value: ${{ jobs.build.outputs.image_namespace }}
-      release_tag:
-        value: ${{ jobs.build.outputs.release_tag }}
-      core_image:
-        value: ${{ jobs.build.outputs.core_image }}
-      workstation_image:
-        value: ${{ jobs.build.outputs.workstation_image }}
-      workstation_iso_image:
-        value: ${{ jobs.installer.outputs.ref }}
-      workstation_digest:
-        value: ${{ jobs.build.outputs.workstation_digest }}
+      fedora_version: {value: '${{ jobs.metadata.outputs.fedora_version }}'}
+      fedora_bootc_digest: {value: '${{ jobs.metadata.outputs.fedora_bootc_digest }}'}
+      version_tag: {value: '${{ jobs.metadata.outputs.version_tag }}'}
+      build_version: {value: '${{ jobs.metadata.outputs.build_version }}'}
+      branch_tag: {value: '${{ jobs.metadata.outputs.branch_tag }}'}
+      channel_tag: {value: '${{ jobs.metadata.outputs.channel_tag }}'}
+      image_namespace: {value: '${{ jobs.metadata.outputs.image_namespace }}'}
+      release_tag: {value: '${{ jobs.metadata.outputs.release_tag }}'}
+      core_image: {value: '${{ jobs.metadata.outputs.core_image }}'}
+      workstation_image: {value: '${{ jobs.metadata.outputs.workstation_image }}'}
+      workstation_iso_image: {value: '${{ jobs.metadata.outputs.workstation_iso_image }}'}
+      core_digest: {value: '${{ jobs.core.outputs.digest }}'}
+      core_built_oci_manifest_digest: {value: '${{ jobs.core.outputs.built_oci_manifest_digest }}'}
+      core_built_oci_skopeo_version: {value: '${{ jobs.core.outputs.built_oci_skopeo_version }}'}
+      core_built_oci_artifact_id: {value: '${{ jobs.core.outputs.built_oci_artifact_id }}'}
+      workstation_built_oci_manifest_digest: {value: '${{ jobs.workstation.outputs.built_oci_manifest_digest }}'}
+      workstation_built_oci_skopeo_version: {value: '${{ jobs.workstation.outputs.built_oci_skopeo_version }}'}
+      workstation_built_oci_artifact_id: {value: '${{ jobs.workstation.outputs.built_oci_artifact_id }}'}
+      installer_built_oci_manifest_digest: {value: '${{ jobs.installer.outputs.built_oci_manifest_digest }}'}
+      installer_built_oci_skopeo_version: {value: '${{ jobs.installer.outputs.built_oci_skopeo_version }}'}
+      installer_built_oci_artifact_id: {value: '${{ jobs.installer.outputs.built_oci_artifact_id }}'}
+      core_image_id: {value: '${{ jobs.core.outputs.image_id }}'}
+      workstation_image_id: {value: '${{ jobs.workstation.outputs.image_id }}'}
+      installer_image_id: {value: '${{ jobs.installer.outputs.image_id }}'}
+      core_fingerprint: {value: '${{ jobs.core.outputs.fingerprint }}'}
+      core_archive_sha256: {value: '${{ jobs.core.outputs.archive_sha256 }}'}
+      workstation_archive_sha256: {value: '${{ jobs.workstation.outputs.archive_sha256 }}'}
+      installer_archive_sha256: {value: '${{ jobs.installer.outputs.archive_sha256 }}'}
+      workstation_core_image_id: {value: '${{ jobs.workstation.outputs.core_image_id }}'}
+      workstation_core_digest: {value: '${{ jobs.workstation.outputs.core_digest }}'}
 
-# Published builds push the workstation image only to the private candidate
-# repository (luminusos-workstation-candidate, readable by CI only). The
-# sysext job builds and signs every hardware feature against that exact
-# digest, and the gate job copies the digest into the public repository, signs
-# it and moves its tags only after the feature snapshot verifies through
-# https://download.luminusos.org.
 jobs:
-  build:
-    name: Build core and workstation
-    runs-on: ubuntu-latest
-    timeout-minutes: 180
-    permissions:
-      contents: read
-      packages: write
+  metadata:
+    name: Resolve build metadata
+    runs-on: ubuntu-26.04
+    permissions: {contents: read}
     outputs:
-      fedora_version: ${{ steps.version.outputs.fedora_version }}
-      fedora_bootc_digest: ${{ steps.version.outputs.fedora_bootc_digest }}
-      version_tag: ${{ steps.version.outputs.version_tag }}
-      build_version: ${{ steps.version.outputs.build_version }}
-      release_tag: ${{ steps.version.outputs.release_tag }}
-      branch_tag: ${{ steps.version.outputs.branch_tag }}
-      channel_tag: ${{ steps.version.outputs.channel_tag }}
-      image_namespace: ${{ steps.version.outputs.image_namespace }}
-      core_image: ${{ steps.version.outputs.core_image }}
-      workstation_image: ${{ steps.version.outputs.workstation_image }}
-      workstation_iso_image: ${{ steps.version.outputs.workstation_iso_image }}
-      sirius_version: ${{ steps.version.outputs.sirius_version }}
-      sirius_rpm_version: ${{ steps.version.outputs.sirius_rpm_version }}
-      sirius_sha256: ${{ steps.version.outputs.sirius_sha256 }}
-      installer_target: ${{ steps.version.outputs.installer_target }}
-      workstation_digest: ${{ steps.build_ref.outputs.digest }}
-      workstation_build_ref: ${{ steps.build_ref.outputs.ref }}
-      publish_channel: ${{ steps.version.outputs.publish_channel }}
-    env:
-      REGISTRY: ghcr.io
+      fedora_version: '${{ steps.version.outputs.fedora_version }}'
+      fedora_bootc_digest: '${{ steps.version.outputs.fedora_bootc_digest }}'
+      version_tag: '${{ steps.version.outputs.version_tag }}'
+      build_version: '${{ steps.version.outputs.build_version }}'
+      release_tag: '${{ steps.version.outputs.release_tag }}'
+      branch_tag: '${{ steps.version.outputs.branch_tag }}'
+      channel_tag: '${{ steps.version.outputs.channel_tag }}'
+      image_namespace: '${{ steps.version.outputs.image_namespace }}'
+      target_tag: '${{ steps.version.outputs.target_tag }}'
+      core_image: '${{ steps.version.outputs.core_image }}'
+      workstation_image: '${{ steps.version.outputs.workstation_image }}'
+      workstation_iso_image: '${{ steps.version.outputs.workstation_iso_image }}'
+      sirius_version: '${{ steps.version.outputs.sirius_version }}'
+      sirius_rpm_version: '${{ steps.version.outputs.sirius_rpm_version }}'
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-
       - name: Resolve versions and image references
         id: version
-        shell: bash
         env:
-          INPUT_FEDORA_VERSION: ${{ inputs.fedora_version }}
-          CHANNEL: ${{ inputs.channel }}
-          INPUT_PROMOTE_VERSION: ${{ inputs.promote_version }}
-          INPUT_SIRIUS_VERSION: ${{ inputs.sirius_version }}
-          INPUT_SIRIUS_SHA256: ${{ inputs.sirius_sha256 }}
-          BUILDER_MODE: ${{ inputs.builder_mode }}
-        run: |
-          set -euo pipefail
-          source config/versions.env
+          FEDORA_VERSION: '${{ inputs.fedora_version }}'
+          DETECTED_FEDORA_VERSION: '${{ inputs.detected_fedora_version }}'
+          DETECTED_BASE_DIGEST: '${{ inputs.detected_base_digest }}'
+          CHANNEL: '${{ inputs.channel }}'
+          SIRIUS_VERSION: '${{ inputs.sirius_version }}'
+          BUILDER_MODE: '${{ inputs.builder_mode }}'
+          PUBLISH: '${{ inputs.publish }}'
+          BUILD_SEQUENCE: '${{ inputs.build_sequence }}'
+          CANDIDATE_ID: '${{ inputs.candidate_id }}'
+        run: python3 .github/scripts/workflow/build_metadata.py
 
-          case "${BUILDER_MODE}" in local|registry) ;; *) echo "Unknown builder_mode: ${BUILDER_MODE}" >&2; exit 1 ;; esac
-          case "${CHANNEL}" in testing|stable) ;; *) echo "Unknown channel: ${CHANNEL}" >&2; exit 1 ;; esac
-          case "${UPDATE_CHANNEL}" in testing|stable) ;; *) echo "Unknown UPDATE_CHANNEL: ${UPDATE_CHANNEL}" >&2; exit 1 ;; esac
-          if [ "${BUILDER_MODE}" = local ] && [ "${{ inputs.publish }}" = true ]; then
-            echo "publishing requires builder_mode=registry" >&2
-            exit 1
-          fi
-          if [ "${BUILDER_MODE}" = registry ] && [ "${{ inputs.publish }}" != true ]; then
-            echo "registry mode requires publish=true so downstream images can pull their base" >&2
-            exit 1
-          fi
-          if [ "${BUILDER_MODE}" = local ] && [ "${{ inputs.build_installer }}" = true ]; then
-            echo "installer builds require builder_mode=registry" >&2
-            exit 1
-          fi
-
-          if [ "${CHANNEL}" = stable ]; then
-            if ! [[ "${INPUT_PROMOTE_VERSION}" =~ ^([0-9]+)\.[0-9]{8}(\.[0-9]+)?$ ]]; then
-              echo "stable requires promote_version like 45.20260923 or 45.20260923.2 (an existing testing-<version> build)" >&2
-              exit 1
-            fi
-            if [ "${BUILDER_MODE}" != registry ]; then
-              echo "stable promotion requires builder_mode=registry" >&2
-              exit 1
-            fi
-            fedora_version="${BASH_REMATCH[1]}"
-            build_version="${INPUT_PROMOTE_VERSION}"
-            version_tag="${build_version}"
-            branch_tag="${fedora_version}"
-            channel_tag=latest
-            release_tag="v${build_version}"
-          else
-            if [ -n "${INPUT_FEDORA_VERSION}" ]; then
-              fedora_version="${INPUT_FEDORA_VERSION}"
-            elif [[ "${GITHUB_REF_NAME}" =~ ^f([0-9]+)$ ]]; then
-              fedora_version="${BASH_REMATCH[1]}"
-            else
-              fedora_version="${DEFAULT_FEDORA_VERSION}"
-            fi
-            build_version="${fedora_version}.$(date -u +%Y%m%d)"
-            if [ "${{ inputs.build_sequence }}" = true ]; then
-              last="$(git ls-remote --tags origin "refs/tags/testing-${build_version}.*" |
-                sed -n 's|.*refs/tags/testing-.*\.\([0-9][0-9]*\)$|\1|p' | sort -n | tail -n1)"
-              build_version="${build_version}.$(( ${last:-0} + 1 ))"
-            fi
-            version_tag="testing-${build_version}"
-            branch_tag="testing-${fedora_version}"
-            channel_tag=testing
-            release_tag="${version_tag}"
-          fi
-          git fetch --quiet --depth=1 origin main
-          # shellcheck disable=SC1090
-          source <(git show FETCH_HEAD:config/releases.env)
-          if ! [[ "${fedora_version}" =~ ^[0-9]+$ ]]; then
-            echo "Invalid Fedora version: ${fedora_version}" >&2
-            exit 1
-          fi
-          if [[ " ${SUPPORTED_RELEASES} " != *" ${fedora_version} "* ]]; then
-            echo "Fedora ${fedora_version} is not in SUPPORTED_RELEASES (${SUPPORTED_RELEASES}) on main" >&2
-            exit 1
-          fi
-          fedora_bootc_digest=""
-          if [ "${CHANNEL}" != stable ]; then
-            fedora_bootc_digest="$(tools/fedora-bootc-digest.sh "${fedora_version}")"
-          fi
-          if [ "${UPDATE_CHANNEL}" = stable ]; then
-            target_tag="${fedora_version}"
-          else
-            target_tag="testing-${fedora_version}"
-          fi
-          image_namespace="$(printf '%s' "${GITHUB_REPOSITORY_OWNER}" | tr '[:upper:]' '[:lower:]')"
-          # SIRIUS_* come from versions.env, not the sirius_* locals.
-          # shellcheck disable=SC2153
-          if [ -n "${INPUT_SIRIUS_VERSION}" ]; then
-            if ! [[ "${INPUT_SIRIUS_SHA256}" =~ ^[0-9a-f]{64}$ ]]; then
-              echo "sirius_version override requires sirius_sha256 of the release RPM" >&2
-              exit 1
-            fi
-            sirius_version="${INPUT_SIRIUS_VERSION}"
-            sirius_rpm_version="${INPUT_SIRIUS_VERSION}"
-            sirius_sha256="${INPUT_SIRIUS_SHA256}"
-          else
-            sirius_version="${SIRIUS_VERSION}"
-            sirius_rpm_version="${SIRIUS_RPM_VERSION}"
-            sirius_sha256="${SIRIUS_SHA256}"
-          fi
-
-          publish_channel=false
-          if [ "${fedora_version}" = "${LATEST_RELEASE}" ]; then
-            publish_channel=true
-          fi
-
-          core_image="${REGISTRY}/${image_namespace}/luminusos:${version_tag}"
-          workstation_image="${REGISTRY}/${image_namespace}/luminusos-workstation:${version_tag}"
-          workstation_candidate="${REGISTRY}/${image_namespace}/luminusos-workstation-candidate:${version_tag}"
-          workstation_iso_image="${workstation_candidate}-iso"
-          core_build_ref="${core_image}"
-          local_core_tag="${core_image}"
-          workstation_push_tag="${workstation_candidate}"
-          if [ "${BUILDER_MODE}" = local ]; then
-            core_build_ref="localhost/luminusos:${version_tag}"
-            local_core_tag="${core_build_ref}"
-            workstation_push_tag="localhost/luminusos-workstation:${version_tag}"
-          fi
-
-          {
-            echo "fedora_version=${fedora_version}"
-            echo "fedora_bootc_digest=${fedora_bootc_digest}"
-            echo "build_version=${build_version}"
-            echo "version_tag=${version_tag}"
-            echo "release_tag=${release_tag}"
-            echo "installer_target=${REGISTRY}/${image_namespace}/luminusos-workstation:${target_tag}"
-            echo "branch_tag=${branch_tag}"
-            echo "channel_tag=${channel_tag}"
-            echo "image_namespace=${image_namespace}"
-            echo "sirius_version=${sirius_version}"
-            echo "sirius_rpm_version=${sirius_rpm_version}"
-            echo "sirius_sha256=${sirius_sha256}"
-            echo "aurora_shell_version=${AURORA_SHELL_VERSION}"
-            echo "aurora_shell_sha256=${AURORA_SHELL_SHA256}"
-            echo "elastic_swap_version=${ELASTIC_SWAP_VERSION}"
-            echo "elastic_swap_sha256=${ELASTIC_SWAP_SHA256}"
-            echo "publish_channel=${publish_channel}"
-            echo "core_image=${core_image}"
-            echo "workstation_image=${workstation_image}"
-            echo "workstation_candidate=${workstation_candidate}"
-            echo "workstation_iso_image=${workstation_iso_image}"
-            echo "core_build_ref=${core_build_ref}"
-            echo "local_core_tag=${local_core_tag}"
-            echo "workstation_push_tag=${workstation_push_tag}"
-          } >>"${GITHUB_OUTPUT}"
-
-      - name: Log in to GHCR
-        if: inputs.publish
-        uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4.6.0
+  core:
+    name: Build core image
+    needs: [metadata]
+    runs-on: ubuntu-26.04
+    timeout-minutes: 150
+    permissions: {contents: read, packages: read}
+    outputs:
+      digest: '${{ steps.select.outputs.digest }}'
+      reused: '${{ steps.select.outputs.reused }}'
+      image_id: '${{ steps.save.outputs.image_id }}'
+      archive_sha256: '${{ steps.save.outputs.archive_sha256 }}'
+      fingerprint: '${{ steps.hash.outputs.fingerprint }}'
+      built_oci_manifest_digest: '${{ steps.upload-core-oci.outcome == ''success'' && steps.export-core-oci.outputs.manifest_digest || '''' }}'
+      built_oci_skopeo_version: '${{ steps.upload-core-oci.outcome == ''success'' && steps.export-core-oci.outputs.skopeo_version || '''' }}'
+      built_oci_artifact_id: '${{ steps.upload-core-oci.outcome == ''success'' && steps.upload-core-oci.outputs.artifact-id || '''' }}'
+    steps:
+      - uses: docker/setup-docker-action@3f1ab1ab0e29231562e4db4ca600c1a49653bac6 # v5.7.0
         with:
-          registry: ${{ env.REGISTRY }}
-          username: ${{ github.actor }}
-          password: ${{ secrets.GITHUB_TOKEN }}
-
-      - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
-        with:
-          driver: ${{ inputs.builder_mode == 'local' && 'docker' || 'docker-container' }}
-
+          set-host: true
+          daemon-config: '{"features":{"containerd-snapshotter":true}}'
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Hash core inputs
+        id: hash
+        env:
+          FEDORA_VERSION: '${{ needs.metadata.outputs.fedora_version }}'
+          BASE_DIGEST: '${{ needs.metadata.outputs.fedora_bootc_digest }}'
+        run: python3 .github/scripts/workflow/core_reuse.py hash
+      - name: Install core image tools
+        run: sudo apt-get update && sudo apt-get install -y skopeo
+      - uses: sigstore/cosign-installer@756fe2d284c7292c4e9b62c8a28f1e5629c59532 # v4.1.3
+        if: inputs.core_ref != '' && !inputs.force_core && github.event_name != 'schedule'
+        with: {cosign-release: v2.5.3}
+      - name: Select verified core
+        id: select
+        env:
+          CORE_REF: '${{ inputs.core_ref }}'
+          FEDORA_VERSION: '${{ needs.metadata.outputs.fedora_version }}'
+          FINGERPRINT: '${{ steps.hash.outputs.fingerprint }}'
+          IMAGE: '${{ needs.metadata.outputs.core_image }}'
+          FORCE_REBUILD: '${{ inputs.force_core || github.event_name == ''schedule'' }}'
+        run: python3 .github/scripts/workflow/core_reuse.py select
+      - uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
+        if: steps.select.outputs.reused != 'true'
+        with: {driver: docker}
       - name: Build core
-        if: inputs.channel != 'stable'
+        id: build
+        if: steps.select.outputs.reused != 'true'
         uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
         with:
           context: .
           file: editions/core/Containerfile
-          load: ${{ inputs.builder_mode == 'local' }}
-          push: ${{ inputs.builder_mode == 'registry' && inputs.publish }}
+          platforms: linux/amd64
+          load: true
+          push: false
+          no-cache: '${{ inputs.force_core || github.event_name == ''schedule'' }}'
+          cache-from: type=gha,scope=core-${{ needs.metadata.outputs.fedora_version }}-${{ runner.arch }}
+          cache-to: type=gha,scope=core-${{ needs.metadata.outputs.fedora_version }}-${{ runner.arch }},mode=max
           build-args: |
-            base=quay.io/fedora/fedora-bootc:${{ steps.version.outputs.fedora_version }}@${{ steps.version.outputs.fedora_bootc_digest }}
-            fedora_version=${{ steps.version.outputs.fedora_version }}
-            distro_version=${{ steps.version.outputs.build_version }}
+            base=quay.io/fedora/fedora-bootc:${{ needs.metadata.outputs.fedora_version }}@${{ needs.metadata.outputs.fedora_bootc_digest }}
+            fedora_version=${{ needs.metadata.outputs.fedora_version }}
+            distro_version=${{ needs.metadata.outputs.build_version }}
             distro_name=LuminusOS
             distro_pretty_name=Luminus OS
-          tags: |
-            ${{ steps.version.outputs.local_core_tag }}
-            ${{ steps.version.outputs.core_image }}
-          cache-from: ${{ inputs.builder_mode == 'registry' && 'type=gha' || '' }}
-          cache-to: ${{ inputs.builder_mode == 'registry' && 'type=gha,mode=max' || '' }}
+          labels: |
+            org.luminusos.core.fedora=${{ needs.metadata.outputs.fedora_version }}
+            org.luminusos.core.inputs-sha256=${{ steps.hash.outputs.fingerprint }}
+          tags: '${{ needs.metadata.outputs.core_image }}'
+      - name: Export built core OCI layout
+        id: export-core-oci
+        if: steps.select.outputs.reused != 'true' && steps.build.outcome == 'success'
+        env:
+          IMAGE: '${{ needs.metadata.outputs.core_image }}'
+        run: python3 .github/scripts/workflow/oci_layout.py export --image "$IMAGE" --layout core-oci --ref core --docker-host "${DOCKER_HOST:?Docker setup did not expose its socket}"
+      - name: Upload built core OCI layout
+        id: upload-core-oci
+        if: steps.export-core-oci.outcome == 'success'
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with: {name: core-oci, path: core-oci/, compression-level: 0, if-no-files-found: error}
+      - name: Save core image archive
+        id: save
+        env:
+          IMAGE: '${{ needs.metadata.outputs.core_image }}'
+          ARCHIVE: core-image.tar
+        run: python3 .github/scripts/workflow/image_archive.py save
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with: {name: core-image, path: core-image.tar, compression-level: 0, if-no-files-found: error}
 
+  workstation:
+    name: Build workstation image
+    needs: [metadata, core]
+    runs-on: ubuntu-26.04
+    timeout-minutes: 180
+    permissions: {contents: read, packages: read, actions: read}
+    outputs:
+      image_id: '${{ steps.save.outputs.image_id }}'
+      archive_sha256: '${{ steps.save.outputs.archive_sha256 }}'
+      core_image_id: '${{ needs.core.outputs.image_id }}'
+      core_digest: '${{ needs.core.outputs.digest }}'
+      built_oci_manifest_digest: '${{ steps.upload-workstation-oci.outcome == ''success'' && steps.export-workstation-oci.outputs.manifest_digest || '''' }}'
+      built_oci_skopeo_version: '${{ steps.upload-workstation-oci.outcome == ''success'' && steps.export-workstation-oci.outputs.skopeo_version || '''' }}'
+      built_oci_artifact_id: '${{ steps.upload-workstation-oci.outcome == ''success'' && steps.upload-workstation-oci.outputs.artifact-id || '''' }}'
+    steps:
+      - uses: docker/setup-docker-action@3f1ab1ab0e29231562e4db4ca600c1a49653bac6 # v5.7.0
+        with:
+          set-host: true
+          daemon-config: '{"features":{"containerd-snapshotter":true}}'
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Fetch verified canonical core OCI layout
+        id: fetch-core-oci
+        if: needs.core.outputs.reused != 'true'
+        env:
+          GH_TOKEN: '${{ github.token }}'
+          EXPECTED_DIGEST: '${{ needs.core.outputs.built_oci_manifest_digest }}'
+        run: python3 .github/scripts/workflow/oci_layout.py fetch-core --repository "$GITHUB_REPOSITORY" --run-id "$GITHUB_RUN_ID" --layout "$RUNNER_TEMP/core-oci" --expected-digest "$EXPECTED_DIGEST"
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        if: needs.core.outputs.reused == 'true'
+        with: {name: core-image}
+      - name: Load core image
+        if: needs.core.outputs.reused == 'true'
+        env:
+          IMAGE: '${{ needs.metadata.outputs.core_image }}'
+          ARCHIVE: core-image.tar
+          ARCHIVE_SHA256: '${{ needs.core.outputs.archive_sha256 }}'
+          IMAGE_ID: '${{ needs.core.outputs.image_id }}'
+        run: python3 .github/scripts/workflow/image_archive.py load
+      - uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
+        with: {driver: docker}
       - name: Build workstation
-        id: workstation
-        if: inputs.channel != 'stable'
+        id: build
         uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
         with:
           context: .
           file: editions/workstation/Containerfile
-          load: ${{ inputs.builder_mode == 'local' }}
-          push: ${{ inputs.builder_mode == 'registry' && inputs.publish }}
-          # A single image manifest, so the pushed digest is the one bootc
-          # reports and the feature descriptor binds.
-          provenance: false
+          platforms: linux/amd64
+          load: true
+          push: false
+          no-cache: '${{ inputs.force_core || github.event_name == ''schedule'' }}'
+          cache-from: type=gha,scope=workstation-${{ needs.metadata.outputs.fedora_version }}-${{ runner.arch }}
+          cache-to: type=gha,scope=workstation-${{ needs.metadata.outputs.fedora_version }}-${{ runner.arch }},mode=max
+          build-contexts: '${{ needs.core.outputs.reused != ''true'' && format(''luminusos-core-context.invalid/core=oci-layout://{0}/core-oci@{1}'', runner.temp, needs.core.outputs.built_oci_manifest_digest) || '''' }}'
           build-args: |
-            core_image=${{ steps.version.outputs.core_build_ref }}
-            fedora_bootc_base=quay.io/fedora/fedora-bootc:${{ steps.version.outputs.fedora_version }}@${{ steps.version.outputs.fedora_bootc_digest }}
-            fedora_version=${{ steps.version.outputs.fedora_version }}
-            fedora_bootc_digest=${{ steps.version.outputs.fedora_bootc_digest }}
-            image_version=${{ steps.version.outputs.build_version }}
+            core_image=${{ needs.core.outputs.reused != 'true' && 'luminusos-core-context.invalid/core' || needs.metadata.outputs.core_image }}
+            fedora_bootc_base=quay.io/fedora/fedora-bootc:${{ needs.metadata.outputs.fedora_version }}@${{ needs.metadata.outputs.fedora_bootc_digest }}
+            fedora_version=${{ needs.metadata.outputs.fedora_version }}
+            fedora_bootc_digest=${{ needs.metadata.outputs.fedora_bootc_digest }}
+            image_version=${{ needs.metadata.outputs.build_version }}
             edition_name=Workstation
             edition_id=workstation
+            image_channel=${{ inputs.channel }}
             skip_flatpaks=${{ inputs.skip_flatpaks }}
-            aurora_shell_version=${{ steps.version.outputs.aurora_shell_version }}
-            aurora_shell_sha256=${{ steps.version.outputs.aurora_shell_sha256 }}
-            elastic_swap_version=${{ steps.version.outputs.elastic_swap_version }}
-            elastic_swap_sha256=${{ steps.version.outputs.elastic_swap_sha256 }}
-          tags: ${{ steps.version.outputs.workstation_push_tag }}
-          cache-from: ${{ inputs.builder_mode == 'registry' && 'type=gha' || '' }}
-          cache-to: ${{ inputs.builder_mode == 'registry' && 'type=gha,mode=max' || '' }}
-
-      - name: Install skopeo
-        if: inputs.publish
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y skopeo
-
-      - name: Install cosign
-        if: inputs.publish && inputs.channel != 'stable'
-        uses: sigstore/cosign-installer@6f9f17788090df1f26f669e9d70d6ae9567deba6 # v4.1.2
-        with:
-          # ponytail: cosign 3's default bundle format is unreadable by containers/image (bootc).
-          cosign-release: v2.6.5
-
-      # The workstation digest is signed in the public repository by the gate job.
-      - name: Sign core
-        if: inputs.publish && inputs.channel != 'stable'
-        shell: bash
+          tags: '${{ needs.metadata.outputs.workstation_image }}'
+      - name: Install workstation OCI export tools
+        run: sudo apt-get update && sudo apt-get install -y skopeo
+      - name: Export built workstation OCI layout
+        id: export-workstation-oci
+        if: steps.build.outcome == 'success'
         env:
-          COSIGN_PRIVATE_KEY: ${{ secrets.COSIGN_PRIVATE_KEY }}
-          COSIGN_PASSWORD: ${{ secrets.COSIGN_PASSWORD }}
-          CORE_IMAGE: ${{ steps.version.outputs.core_image }}
-        run: |
-          set -euo pipefail
-          if [ -z "${COSIGN_PRIVATE_KEY}" ]; then
-            echo "COSIGN_PRIVATE_KEY is not set; refusing to publish unsigned images" >&2
-            exit 1
-          fi
-          digest="$(docker buildx imagetools inspect "${CORE_IMAGE}" --format '{{.Manifest.Digest}}')"
-          cosign sign --yes --key env://COSIGN_PRIVATE_KEY "${CORE_IMAGE%:*}@${digest}"
-
-      - name: Check that Fedora has released the stable base
-        if: inputs.channel == 'stable'
-        shell: bash
+          IMAGE: '${{ needs.metadata.outputs.workstation_image }}'
+        run: python3 .github/scripts/workflow/oci_layout.py export --image "$IMAGE" --layout workstation-oci --ref workstation --docker-host "${DOCKER_HOST:?Docker setup did not expose its socket}"
+      - name: Verify declared core ancestry
+        id: check-core-ancestry
+        if: needs.core.outputs.reused != 'true' && steps.export-workstation-oci.outcome == 'success'
         env:
-          FEDORA_VERSION: ${{ steps.version.outputs.fedora_version }}
-        run: |
-          set -euo pipefail
-          # Fedora's own `latest` moves to a release at GA; stable never ships on a prerelease.
-          fedora_ga="$(skopeo inspect --retry-times 3 docker://quay.io/fedora/fedora-bootc:latest |
-            jq -r '.Labels["org.opencontainers.image.version"]')"
-          if [ "${fedora_ga%%.*}" -lt "${FEDORA_VERSION}" ]; then
-            echo "Fedora ${FEDORA_VERSION} is not released yet (fedora-bootc:latest is ${fedora_ga})" >&2
-            exit 1
-          fi
-
-      # Testing: the candidate digest just pushed. Stable: the digest of the
-      # public testing build being promoted.
-      - name: Resolve the workstation build digest
-        id: build_ref
-        if: inputs.publish
-        shell: bash
-        env:
-          CHANNEL: ${{ inputs.channel }}
-          PUSHED_DIGEST: ${{ steps.workstation.outputs.digest }}
-          CANDIDATE: ${{ steps.version.outputs.workstation_candidate }}
-          NAMESPACE: ${{ steps.version.outputs.image_namespace }}
-          BUILD_VERSION: ${{ steps.version.outputs.build_version }}
-        run: |
-          set -euo pipefail
-          if [ "${CHANNEL}" = stable ]; then
-            repo="${REGISTRY}/${NAMESPACE}/luminusos-workstation"
-            digest="sha256:$(skopeo inspect --retry-times 3 --raw "docker://${repo}:testing-${BUILD_VERSION}" | sha256sum | cut -d' ' -f1)"
-          else
-            repo="${CANDIDATE%:*}"
-            digest="${PUSHED_DIGEST}"
-          fi
-          if ! [[ "${digest}" =~ ^sha256:[0-9a-f]{64}$ ]]; then
-            echo "cannot resolve the workstation digest (${digest})" >&2
-            exit 1
-          fi
-          {
-            echo "digest=${digest}"
-            echo "ref=${repo}@${digest}"
-          } >>"${GITHUB_OUTPUT}"
-
-  sysext:
-    name: Build hardware features
-    needs: [build]
-    if: inputs.publish && inputs.channel != 'stable'
-    runs-on: ubuntu-latest
-    timeout-minutes: 120
-    permissions:
-      contents: read
-      packages: read
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          persist-credentials: false
-
-      - name: Free disk space
-        uses: jlumbroso/free-disk-space@ceedf095f4ec1a097402bc6bd80831f2e1a6fde6 # v2.0.0
-        with:
-          tool-cache: true
-          android: true
-          dotnet: true
-          haskell: true
-          large-packages: true
-          docker-images: true
-          swap-storage: true
-
-      # Every feature is built in the same run as the image it extends, from
-      # the candidate digest, and the snapshot is signed with the dedicated
-      # OpenPGP key (never the cosign key) and checked against the keyring
-      # that image ships.
-      - name: Build, sign and verify every feature
-        shell: bash
-        env:
-          GHCR_USER: ${{ github.actor }}
-          GHCR_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          BUILD_REF: ${{ needs.build.outputs.workstation_build_ref }}
-          BUILD_DIGEST: ${{ needs.build.outputs.workstation_digest }}
-          BUILD_VERSION: ${{ needs.build.outputs.build_version }}
-          SYSEXT_SIGNING_KEY: ${{ secrets.SYSEXT_SIGNING_KEY }}
-          SYSEXT_SIGNING_PASSPHRASE: ${{ secrets.SYSEXT_SIGNING_PASSPHRASE }}
-        run: |
-          set -euo pipefail
-          printf '%s' "${GHCR_TOKEN}" | podman login ghcr.io -u "${GHCR_USER}" --password-stdin
-          podman pull --quiet "${BUILD_REF}" >/dev/null
-          for feature in editions/workstation/features/*/; do
-            bash editions/workstation/build-sysext.sh "${feature}" "${BUILD_REF}" dist/sysext
-          done
-          bash .github/scripts/sysext-release.sh keyring "${BUILD_REF}" dist/keyring/luminusos.pgp
-          bash .github/scripts/sysext-release.sh sign dist/sysext "${BUILD_VERSION}" "${BUILD_DIGEST}" dist/keyring/luminusos.pgp
-
-      # A rerun of the gate reuses these exact bytes, which is what lets an
-      # interrupted publication resume its claim.
-      - name: Upload feature snapshot
+          CORE_DIGEST: '${{ needs.core.outputs.built_oci_manifest_digest }}'
+          WORKSTATION_DIGEST: '${{ steps.export-workstation-oci.outputs.manifest_digest }}'
+        run: python3 .github/scripts/workflow/oci_layout.py ancestry --core-layout "$RUNNER_TEMP/core-oci" --layout workstation-oci --core-digest "$CORE_DIGEST" --expected-digest "$WORKSTATION_DIGEST"
+      - name: Upload built workstation OCI layout
+        id: upload-workstation-oci
+        if: success() && steps.export-workstation-oci.outcome == 'success' && (needs.core.outputs.reused == 'true' || steps.check-core-ancestry.outcome == 'success')
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
-        with:
-          name: sysext-snapshot
-          path: dist/
-          retention-days: 30
-          if-no-files-found: error
-
-  gate:
-    name: Verify features and publish tags
-    needs: [build, sysext]
-    if: >-
-      !cancelled() && inputs.publish && needs.build.result == 'success' &&
-      (needs.sysext.result == 'success' || (inputs.channel == 'stable' && needs.sysext.result == 'skipped'))
-    runs-on: ubuntu-latest
-    timeout-minutes: 150
-    permissions:
-      contents: read
-      packages: write
-    env:
-      REGISTRY: ghcr.io
-      R2_BUCKET: luminus-downloads
-      R2_ENDPOINT: https://89e6fc75aed6d04cd84a0c7d11a5594e.r2.cloudflarestorage.com
-      PUBLIC_URL: https://download.luminusos.org
-      NAMESPACE: ${{ needs.build.outputs.image_namespace }}
-      BUILD_VERSION: ${{ needs.build.outputs.build_version }}
-      BUILD_REF: ${{ needs.build.outputs.workstation_build_ref }}
-      VERSION_TAG: ${{ needs.build.outputs.version_tag }}
-      BRANCH_TAG: ${{ needs.build.outputs.branch_tag }}
-      CHANNEL_TAG: ${{ needs.build.outputs.channel_tag }}
-      PUBLISH_CHANNEL: ${{ needs.build.outputs.publish_channel }}
-      FEDORA_VERSION: ${{ needs.build.outputs.fedora_version }}
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          persist-credentials: false
-
-      - name: Log in to GHCR
-        uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4.6.0
-        with:
-          registry: ${{ env.REGISTRY }}
-          username: ${{ github.actor }}
-          password: ${{ secrets.GITHUB_TOKEN }}
-
-      - name: Install skopeo
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y skopeo
-
-      - name: Install cosign
-        uses: sigstore/cosign-installer@6f9f17788090df1f26f669e9d70d6ae9567deba6 # v4.1.2
-        with:
-          # ponytail: cosign 3's default bundle format is unreadable by containers/image (bootc).
-          cosign-release: v2.6.5
-
-      - name: Download feature snapshot
-        if: inputs.channel != 'stable'
-        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
-        with:
-          name: sysext-snapshot
-          path: dist
-
-      - name: Free disk space
-        uses: jlumbroso/free-disk-space@ceedf095f4ec1a097402bc6bd80831f2e1a6fde6 # v2.0.0
-        with:
-          tool-cache: true
-          android: true
-          dotnet: true
-          haskell: true
-          large-packages: true
-          docker-images: true
-          swap-storage: true
-
-      - name: Install QEMU and enable KVM
-        run: |
-          sudo apt-get install -y qemu-system-x86 qemu-utils ovmf socat tesseract-ocr libguestfs-tools
-          echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' \
-            | sudo tee /etc/udev/rules.d/99-kvm4all.rules
-          sudo udevadm control --reload-rules
-          sudo udevadm trigger --name-match=kvm
-          test -w /dev/kvm
-
-      - name: Read the keyring of the promoted build
-        if: inputs.channel == 'stable'
-        shell: bash
+        with: {name: workstation-oci, path: workstation-oci/, compression-level: 0, if-no-files-found: error}
+      - name: Save workstation image archive
+        id: save
         env:
-          GHCR_USER: ${{ github.actor }}
-          GHCR_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: |
-          set -euo pipefail
-          printf '%s' "${GHCR_TOKEN}" | podman login ghcr.io -u "${GHCR_USER}" --password-stdin
-          bash .github/scripts/sysext-release.sh keyring "${BUILD_REF}" dist/keyring/luminusos.pgp
-
-      # Nothing in the public workstation repository changes before the
-      # snapshot verifies through the public endpoint.
-      - name: Publish the workstation build through the feature gate
-        shell: bash
-        env:
-          CHANNEL: ${{ inputs.channel }}
-          AWS_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
-          AWS_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
-          COSIGN_PRIVATE_KEY: ${{ secrets.COSIGN_PRIVATE_KEY }}
-          COSIGN_PASSWORD: ${{ secrets.COSIGN_PASSWORD }}
-          GHCR_USER: ${{ github.actor }}
-          GHCR_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          BOOT_TEST_FEATURE: dummy
-          BOOT_TEST_FEATURE_UNIT: luminusos-dummy-hello.service
-          BOOT_TEST_CHANNEL: ${{ inputs.channel }}
-        run: |
-          set -euo pipefail
-          publish_gate() {
-            set -euo pipefail
-            channel_args=(--channel-tag "${BRANCH_TAG}")
-            if [ "${PUBLISH_CHANNEL}" = true ]; then
-              channel_args+=(--channel-tag "${CHANNEL_TAG}")
-            fi
-            printf '%s' "${GHCR_TOKEN}" | podman login ghcr.io -u "${GHCR_USER}" --password-stdin
-            repo="${REGISTRY}/${NAMESPACE}/luminusos-workstation"
-            consumer_args=()
-            declare -A consumers=()
-            known_consumers="$(python3 .github/scripts/sysext-publish.py consumer-digests --store "s3://${R2_BUCKET}")"
-            while IFS= read -r digest; do
-              [ -z "${digest}" ] || consumers["${digest}"]=1
-            done <<<"${known_consumers}"
-            for tag in "testing-${FEDORA_VERSION}" "${FEDORA_VERSION}"; do
-              if skopeo inspect --retry-times 3 --raw "docker://${repo}:${tag}" >dist/channel-manifest 2>dist/channel-error; then
-                digest="sha256:$(sha256sum dist/channel-manifest | cut -d' ' -f1)"
-                consumers["${digest}"]=1
-              elif grep -Eqi 'manifest unknown|manifest_unknown|name unknown' dist/channel-error; then
-                echo "No existing ${repo}:${tag}; skipping first-release consumer keyring"
-              else
-                cat dist/channel-error >&2
-                exit 1
-              fi
-            done
-            for digest in "${!consumers[@]}"; do
-              keyring="dist/keyring/consumer-${digest#sha256:}.pgp"
-              result=0
-              bash .github/scripts/sysext-release.sh keyring --allow-pre-feature "${repo}@${digest}" "${keyring}" || result=$?
-              podman image rm "${repo}@${digest}"
-              if [ "${result}" -eq 42 ]; then continue; fi
-              [ "${result}" -eq 0 ] || exit "${result}"
-              consumer_args+=(--consumer-keyring "${keyring}")
-            done
-            common=(--public-repo "${REGISTRY}/${NAMESPACE}/luminusos-workstation"
-              --version "${BUILD_VERSION}" --version-tag "${VERSION_TAG}" "${channel_args[@]}"
-              --store "s3://${R2_BUCKET}" --public-url "${PUBLIC_URL}" --keyring dist/keyring/luminusos.pgp
-              --boot-check .github/scripts/ci-boot-candidate.sh
-              "${consumer_args[@]}")
-            if [ "${CHANNEL}" = stable ]; then
-              bash .github/scripts/sysext-release.sh promote --source-tag "testing-${BUILD_VERSION}" \
-                --expected-digest "${BUILD_REF##*@}" "${common[@]}"
-            else
-              bash .github/scripts/sysext-release.sh publish --snapshot dist/sysext --candidate "${BUILD_REF}" "${common[@]}"
-            fi
-          }
-          python3 .github/scripts/sysext-publish.py locked-run --store "s3://${R2_BUCKET}" -- \
-            bash -c "$(declare -f publish_gate); publish_gate"
-
-      - name: Upload candidate boot evidence
-        if: always()
-        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
-        with:
-          name: candidate-boot
-          path: |
-            candidate-boot/serial.log
-            candidate-boot/final-screen.txt
-          if-no-files-found: warn
-
-      # Installed systems follow the branch and channel tags and reject
-      # unsigned images; core was signed by digest in the build job.
-      - name: Move core tags
-        shell: bash
-        env:
-          CHANNEL: ${{ inputs.channel }}
-        run: |
-          set -euo pipefail
-          repo="${REGISTRY}/${NAMESPACE}/luminusos"
-          src="docker://${repo}:${VERSION_TAG}"
-          tags=("${BRANCH_TAG}")
-          if [ "${CHANNEL}" = stable ]; then
-            src="docker://${repo}:testing-${BUILD_VERSION}"
-            tags=("${VERSION_TAG}" "${BRANCH_TAG}")
-          fi
-          if [ "${PUBLISH_CHANNEL}" = true ]; then
-            tags+=("${CHANNEL_TAG}")
-          fi
-          for tag in "${tags[@]}"; do
-            skopeo copy --all --preserve-digests "${src}" "docker://${repo}:${tag}"
-          done
-
-      # Report only: deleting old snapshots stays a manual --apply run.
-      - name: Feature snapshot retention plan
-        continue-on-error: true
-        shell: bash
-        env:
-          AWS_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
-          AWS_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
-        run: python3 .github/scripts/sysext-publish.py retention --store "s3://${R2_BUCKET}" --public-repo "${REGISTRY}/${NAMESPACE}/luminusos-workstation"
+          IMAGE: '${{ needs.metadata.outputs.workstation_image }}'
+          ARCHIVE: workstation-image.tar
+        run: python3 .github/scripts/workflow/image_archive.py save
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with: {name: workstation-image, path: workstation-image.tar, compression-level: 0, if-no-files-found: error}
 
   installer:
-    name: Build workstation ISO live root
-    needs: [build, gate]
-    if: inputs.build_installer && inputs.publish
-    runs-on: ubuntu-latest
-    timeout-minutes: 120
-    permissions:
-      contents: read
-      packages: write
-    outputs:
-      ref: ${{ steps.installer_ref.outputs.ref }}
-    env:
-      BUILD_REF: ${{ needs.build.outputs.workstation_build_ref }}
-      BUILD_VERSION: ${{ needs.build.outputs.build_version }}
-      BUILD_DIGEST: ${{ needs.build.outputs.workstation_digest }}
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          persist-credentials: false
-
-      - name: Free disk space
-        uses: jlumbroso/free-disk-space@ceedf095f4ec1a097402bc6bd80831f2e1a6fde6 # v2.0.0
-        with:
-          tool-cache: true
-          android: true
-          haskell: true
-          large-packages: true
-          docker-images: true
-          swap-storage: true
-
-      - name: Log in to GHCR
-        uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4.6.0
-        with:
-          registry: ghcr.io
-          username: ${{ github.actor }}
-          password: ${{ secrets.GITHUB_TOKEN }}
-
-      - name: Prepare verified offline snapshot and OCI payload
-        shell: bash
-        env:
-          GHCR_USER: ${{ github.actor }}
-          GHCR_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: |
-          set -euo pipefail
-          sudo apt-get update
-          sudo apt-get install -y skopeo
-          umask 022
-          printf '%s' "${GHCR_TOKEN}" | podman login ghcr.io -u "${GHCR_USER}" --password-stdin
-          mkdir -p .test/installer-inputs
-          keyring="${RUNNER_TEMP}/installer-keyring.pgp"
-          bash .github/scripts/sysext-release.sh keyring "${BUILD_REF}" "${keyring}"
-          python3 .github/scripts/sysext-publish.py verify-public \
-            --public-url https://download.luminusos.org --version "${BUILD_VERSION}" \
-            --image-digest "${BUILD_DIGEST}" --keyring "${keyring}" \
-            --installer-dir .test/installer-inputs/sysext
-          skopeo copy --preserve-digests "docker://${BUILD_REF}" "oci:.test/payload.oci:latest"
-
-      - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
-
-      - name: Build and push verified live root
-        id: installer_build
-        uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
-        with:
-          context: .
-          file: editions/workstation/Containerfile.installer
-          push: true
-          provenance: false
-          build-args: |
-            fedora_version=${{ needs.build.outputs.fedora_version }}
-            sirius_version=${{ needs.build.outputs.sirius_version }}
-            sirius_rpm_version=${{ needs.build.outputs.sirius_rpm_version }}
-            sirius_sha256=${{ needs.build.outputs.sirius_sha256 }}
-            image_version=${{ env.BUILD_VERSION }}
-            workstation_image=${{ env.BUILD_REF }}
-            workstation_target_image=${{ needs.build.outputs.installer_target }}
-            installer_features=1
-          tags: ${{ needs.build.outputs.workstation_iso_image }}
-          cache-from: type=gha
-          cache-to: type=gha,mode=max
-
-      - name: Pin packaged live root
-        id: installer_ref
-        env:
-          IMAGE: ${{ needs.build.outputs.workstation_iso_image }}
-          DIGEST: ${{ steps.installer_build.outputs.digest }}
-        run: |
-          [[ "${DIGEST}" =~ ^sha256:[0-9a-f]{64}$ ]]
-          printf 'ref=%s@%s\n' "${IMAGE%:*}" "${DIGEST}" >>"${GITHUB_OUTPUT}"
+    name: Build installer image
+    if: always() && inputs.build_installer && needs.metadata.result == 'success' && needs.workstation.result == 'success'
+    needs: [metadata, workstation]
+    permissions: {contents: read, packages: read, actions: read}
+    uses: ./.github/workflows/installer.yml
+    with:
+      fedora_version: ${{ needs.metadata.outputs.fedora_version }}
+      sirius_version: ${{ needs.metadata.outputs.sirius_version }}
+      sirius_rpm_version: ${{ needs.metadata.outputs.sirius_rpm_version }}
+      build_version: ${{ needs.metadata.outputs.build_version }}
+      workstation_image: ${{ needs.metadata.outputs.workstation_image }}
+      image_namespace: ${{ needs.metadata.outputs.image_namespace }}
+      target_tag: ${{ needs.metadata.outputs.target_tag }}
+      workstation_iso_image: ${{ needs.metadata.outputs.workstation_iso_image }}
+      workstation_built_oci_manifest_digest: ${{ needs.workstation.outputs.built_oci_manifest_digest }}
+      workstation_archive_sha256: ${{ needs.workstation.outputs.archive_sha256 }}
+      workstation_image_id: ${{ needs.workstation.outputs.image_id }}

@@ -1,16 +1,21 @@
-name: Build Containers
+name: Image Build Validation
 
 on:
   push:
-    branches: ["main", "f*"]
+    branches: ["main", "f*", "release/*"]
   pull_request:
-    branches: ["main", "f*"]
+    branches: ["main", "f*", "release/*"]
   workflow_dispatch:
     inputs:
       fedora_version:
         description: "Fedora version to build (validation only, nothing is published)"
         required: false
         default: ""
+      build_installer:
+        description: "Build the installer image (validation only, nothing is published)"
+        type: boolean
+        required: false
+        default: false
 
 concurrency:
   group: build-containers-${{ github.ref }}-${{ github.event_name }}
@@ -18,13 +23,15 @@ concurrency:
 
 jobs:
   build-containers:
-    name: Build core and workstation
+    name: Validate image builds
     permissions:
       contents: read
-      packages: write
+      packages: read
+      actions: read
     uses: ./.github/workflows/containers.yml
     with:
       fedora_version: ${{ inputs.fedora_version || '' }}
+      channel: ${{ startsWith(github.base_ref || github.ref_name, 'release/') && 'stable' || 'testing' }}
       builder_mode: local
       publish: false
-    secrets: inherit
+      build_installer: ${{ github.event_name == 'workflow_dispatch' && inputs.build_installer == true }}
