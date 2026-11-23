@@ -74,8 +74,15 @@ expect "stable promotes an existing testing build without rebuilding" \
   sh -c 'grep -Fq "skopeo copy --all --preserve-digests" "$1" && grep -Fq "testing-\${BUILD_VERSION}" "$1"' \
   _ "${ROOT}/.github/workflows/containers.yml"
 expect "installed systems follow UPDATE_CHANNEL" \
-  grep -Fq 'luminusos-workstation:${{ steps.version.outputs.target_tag }}' \
+  grep -Fq 'installer_target=${REGISTRY}/${image_namespace}/luminusos-workstation:${target_tag}' \
   "${ROOT}/.github/workflows/containers.yml"
+expect "hosted installer uses the verified snapshot and exact OCI payload after the publication gate" \
+  sh -c 'job=$(sed -n "/^  installer:$/,\$p" "$1") &&
+    printf "%s\n" "$job" | grep -Fq "needs: [build, gate]" &&
+    printf "%s\n" "$job" | grep -Fq -- "--installer-dir .test/installer-inputs/sysext" &&
+    printf "%s\n" "$job" | grep -Fq -- "skopeo copy --preserve-digests \"docker://\${BUILD_REF}\"" &&
+    printf "%s\n" "$job" | grep -Fq "installer_features=1"' \
+  _ "${ROOT}/.github/workflows/containers.yml"
 expect_contains "installed systems follow testing until stable is switched on" \
   'UPDATE_CHANNEL=testing' cat "${ROOT}/config/versions.env"
 expect "installed systems require signed LuminusOS images" \
@@ -105,8 +112,23 @@ expect "floating tags only follow LATEST_RELEASE" \
   _ "${ROOT}/.github/workflows"
 expect "stable is refused before the Fedora release is out" \
   grep -Fq 'docker://quay.io/fedora/fedora-bootc:latest' "${ROOT}/.github/workflows/containers.yml"
-expect "branch and channel tags move only after signing" \
-  sh -c 'f="$1"; sign=$(grep -n "Sign core and workstation" "$f" | cut -d: -f1); move=$(grep -n "Move branch and channel tags" "$f" | cut -d: -f1);
-    [ -n "$sign" ] && [ -n "$move" ] && [ "$sign" -lt "$move" ] &&
-    ! grep -q "docker push.*branch_tag\|docker push.*channel_tag" "$f" && ! grep -q "steps.version.outputs.channel_core_image }}\|steps.version.outputs.channel_workstation_image }}" "$f"' \
+expect "public workstation tags move only after the feature gate and signing" \
+  sh -c 'w="$1"; r="$2"; grep -Fq "luminusos-workstation-candidate" "$w" &&
+    grep -Fq "sysext-release.sh publish" "$w" && grep -Fq "sysext-release.sh promote" "$w" &&
+    ! grep -q "docker push.*branch_tag\|docker push.*channel_tag" "$w" &&
+    gate=$(grep -n "verify-public" "$r" | head -1 | cut -d: -f1) &&
+    sign=$(grep -n "cosign sign" "$r" | head -1 | cut -d: -f1) &&
+    verify=$(grep -nF "verify_image_signature \"\${public_repo}@\${digest}\"" "$r" | head -1 | cut -d: -f1) &&
+    move=$(grep -n "copy_tag \"\${public_repo}@" "$r" | head -1 | cut -d: -f1) &&
+    [ "$sign" -lt "$verify" ] && [ "$gate" -lt "$move" ] && [ "$verify" -lt "$move" ] &&
+    ! grep -q "sysext-staging-" "$r"' \
+  _ "${ROOT}/.github/workflows/containers.yml" "${ROOT}/.github/scripts/sysext-release.sh"
+expect "testing and stable use the same parametrized pre-cutover boot check" \
+  sh -c 'step=$(sed -n "/^      - name: Publish the workstation build through the feature gate$/,/^      - name: Upload candidate boot evidence$/p" "$1") &&
+    printf "%s\n" "$step" | grep -Eq "^          BOOT_TEST_FEATURE: [a-z][a-z0-9]+$" &&
+    printf "%s\n" "$step" | grep -Eq "^          BOOT_TEST_FEATURE_UNIT: luminusos-.*\.service$" &&
+    printf "%s\n" "$step" | grep -Fxq "          BOOT_TEST_CHANNEL: \${{ inputs.channel }}" &&
+    printf "%s\n" "$step" | grep -Fq -- "--boot-check .github/scripts/ci-boot-candidate.sh" &&
+    printf "%s\n" "$step" | grep -F "sysext-release.sh publish" | grep -Fq "\"\${common[@]}\"" &&
+    printf "%s\n" "$step" | grep -F -- "--expected-digest" | grep -Fq "\"\${common[@]}\""' \
   _ "${ROOT}/.github/workflows/containers.yml"

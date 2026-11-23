@@ -15,7 +15,9 @@ source "${ROOT}/tests/configs.sh"
 # shellcheck disable=SC1091
 source "${ROOT}/tests/contracts.sh"
 expect "R2 publication retains only the latest release per channel" bash "${ROOT}/tests/r2-publish.sh"
+expect "hardware feature snapshots gate every public tag" bash "${ROOT}/tests/sysext-publish.sh"
 expect "hardware feature runtime unit tests" python3 -B "${ROOT}/tests/sysext-runtime.py"
+expect "hardware feature boot-test logic" bash "${ROOT}/tests/boot-test-feature.sh"
 
 echo
 if [ "${fails}" -gt 0 ]; then

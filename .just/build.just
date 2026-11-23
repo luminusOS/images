@@ -93,11 +93,18 @@ workstation-iso:
       echo "Run 'just build workstation' first."
       exit 1
     fi
-    echo "Exporting installer payload as OCI layout to .test/payload.oci"
-    mkdir -p .test
-    sudo rm -rf .test/payload.oci
-    sudo skopeo copy "containers-storage:{{ workstation_image }}" "oci:.test/payload.oci:latest"
-    sudo chown -R "$(id -u):$(id -g)" .test/payload.oci
+    if [ "${INSTALLER_FEATURES:-0}" = 1 ]; then
+      test -f .test/payload.oci/index.json || {
+        echo "Stage the exact signed OCI payload at .test/payload.oci first." >&2
+        exit 1
+      }
+    else
+      echo "Exporting installer payload as OCI layout to .test/payload.oci"
+      mkdir -p .test
+      sudo rm -rf .test/payload.oci
+      sudo skopeo copy "containers-storage:{{ workstation_image }}" "oci:.test/payload.oci:latest"
+      sudo chown -R "$(id -u):$(id -g)" .test/payload.oci
+    fi
     sudo buildah bud --layers \
       --tag {{ workstation_iso_image }} \
       --file editions/workstation/Containerfile.installer \
@@ -105,6 +112,8 @@ workstation-iso:
       --build-arg sirius_version={{ sirius_version }} \
       --build-arg sirius_rpm_version={{ sirius_rpm_version }} \
       --build-arg sirius_sha256={{ sirius_sha256 }} \
+      --build-arg installer_features="${INSTALLER_FEATURES:-0}" \
+      --build-arg sirius_local_rpm="${SIRIUS_LOCAL_RPM:-0}" \
       --build-arg workstation_image={{ workstation_image }} \
       --build-arg workstation_target_image={{ workstation_target_image }} \
       --build-arg image_version={{ version }} \

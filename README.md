@@ -26,6 +26,14 @@ just qemu iso                 # boot it in QEMU/KVM
 
 See [CONTRIBUTING.md](CONTRIBUTING.md) for prerequisites, faster iteration flags, packaging, and QEMU testing.
 
+### Offline hardware feature lab ISO
+
+1. Use a local workstation image whose embedded trusted keyring verifies the feature snapshot. Export the exact image named in the signed descriptor with `skopeo copy --preserve-digests docker://REGISTRY/IMAGE@sha256:DIGEST oci:.test/payload.oci:latest`. Export from a registry that retains the original compressed blobs: exporting from `containers-storage:` can require recompression and change the digest.
+2. Put the raw payloads, `SHA256SUMS.raw`, `release.json`, and both detached signatures in `.test/installer-inputs/sysext/`. Do not copy signing keys into the build context.
+3. Put the locally built Sirius RPM in `.test/installer-inputs/sirius-installer.rpm`. Set `SIRIUS_RPM_VERSION` to its RPM version and `SIRIUS_SHA256` to the RPM file's SHA-256. Run `INSTALLER_FEATURES=1 SIRIUS_LOCAL_RPM=1 just build workstation-iso`.
+
+The build checks the OCI manifest and blobs, live version, signatures, and raw files. The snapshot must contain exactly the features that the live installer can discover, excluding the probe. The snapshot goes into the live root only. These flags do not enable hosted release integration.
+
 ## Versioning
 
 Every build has a channel-neutral version, `{FEDORA_VERSION}.{YYYYMMDD}`, written to `/usr/lib/os-release`. The channel only appears in image tags:

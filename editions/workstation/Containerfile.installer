@@ -4,6 +4,7 @@ ARG workstation_image=localhost/luminusos-workstation:latest
 FROM scratch AS ctx-scripts
 
 COPY shared/scripts /scripts
+COPY editions/workstation/sysext/release.py /verify-feature-release.py
 
 FROM ${workstation_image} AS live
 
@@ -12,6 +13,8 @@ ARG image_version
 ARG sirius_version
 ARG sirius_rpm_version
 ARG sirius_sha256
+ARG installer_features=0
+ARG sirius_local_rpm=0
 ARG workstation_image=localhost/luminusos-workstation:latest
 ARG workstation_target_image
 ARG aurora_shell_uuid=aurora-shell@luminusos.github.io
@@ -19,10 +22,21 @@ ARG source_url="https://github.com/LuminusOS/images"
 
 RUN --mount=type=cache,target=/var/cache/dnf \
     --mount=type=bind,from=ctx-scripts,source=/scripts,target=/scripts \
+    --mount=type=bind,source=.test,target=/installer-context \
     bash /scripts/rpmdb-repair.sh && \
-    curl -fsSL \
+    set -- && \
+    if [ "${installer_features}" = 1 ]; then \
+      set -- gnupg2-verify libselinux-utils ostree python3; \
+    fi && \
+    if [ "${sirius_local_rpm}" = 1 ]; then \
+      cp /installer-context/installer-inputs/sirius-installer.rpm /tmp/sirius-installer.rpm; \
+    elif [ "${sirius_local_rpm}" = 0 ]; then \
+      curl -fsSL \
       "https://github.com/luminusOS/sirius/releases/download/v${sirius_version}/sirius-installer-${sirius_rpm_version}-1.x86_64.rpm" \
-      -o /tmp/sirius-installer.rpm && \
+      -o /tmp/sirius-installer.rpm; \
+    else \
+      exit 1; \
+    fi && \
     echo "${sirius_sha256}  /tmp/sirius-installer.rpm" | sha256sum -c - && \
     dnf -y --releasever="${fedora_version}" install \
       bubblewrap \
@@ -37,6 +51,7 @@ RUN --mount=type=cache,target=/var/cache/dnf \
       polkit \
       squashfs-tools \
       xorriso \
+      "$@" \
       /tmp/sirius-installer.rpm && \
     rm -f /tmp/sirius-installer.rpm && \
     dnf clean all && \
@@ -105,6 +120,25 @@ RUN mkdir -p /boot/efi && \
 # Generated into the build context by the caller:
 #   skopeo copy <payload-image> oci:.test/payload.oci:latest
 COPY .test/payload.oci /usr/lib/luminusos/payload.oci
+
+RUN --mount=type=bind,source=.test,target=/installer-context \
+    --mount=type=bind,from=ctx-scripts,source=/verify-feature-release.py,target=/verify-feature-release.py \
+    if [ "${installer_features}" = 1 ]; then \
+      source=/installer-context/installer-inputs/sysext && \
+      destination=/usr/lib/luminusos/sysext && \
+      install -d -m 0755 "${destination}" && \
+      install -m 0644 "${source}"/luminusos-*.raw \
+        "${source}"/SHA256SUMS.raw "${source}"/SHA256SUMS.raw.gpg \
+        "${source}"/release.json "${source}"/release.json.gpg "${destination}/" && \
+      python3 /verify-feature-release.py verify-installer "${destination}" \
+        --payload /usr/lib/luminusos/payload.oci \
+        --os-release /usr/lib/os-release \
+        --discovery-dir /usr/lib/luminusos/sysupdate-discovery \
+        --keyring /usr/share/luminusos/sysupdate/luminusos.pgp && \
+      command -v ostree && command -v matchpathcon && command -v chcon; \
+    else \
+      test "${installer_features}" = 0; \
+    fi
 
 # osbuild deploys the ISO live root without applying OCI whiteout semantics,
 # so the merged filesystem is copied into a single whiteout-free layer.

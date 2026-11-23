@@ -76,9 +76,12 @@ flowchart TD
 │       ├── Containerfile
 │       ├── Containerfile.installer
 │       ├── build.sh
-│       └── files/
-│           ├── installer/
-│           └── system/
+│       ├── build-sysext.sh
+│       ├── features/
+│       ├── files/
+│       │   ├── installer/
+│       │   └── system/
+│       └── sysext/
 ├── shared/
 │   ├── bootc-image-builder.toml.example
 │   ├── flatpaks
@@ -164,6 +167,8 @@ flowchart TD
     Format -->|qcow2| QCOW2["image-builder<br/>qcow2"]
     Format -->|all| ISO
     Format -->|all| QCOW2
+
+    Edition -->|sysext feature| BuildSysext["build-sysext.sh<br/>guards, EROFS, release.py assemble"]
 
     Qemu --> Target{"target"}
     Target -->|iso| QemuISO["tools/qemu.sh iso"]
@@ -668,6 +673,18 @@ flowchart TD
     Installed --> Ref --> Registry --> NewImage --> Update --> Deployment --> Reboot --> Active
 ```
 
+### Hardware feature extensions
+
+Optional hardware support ships as systemd-sysext images tied to one exact workstation build, never as hardware-specific OCI images. Each feature has a manifest, `editions/workstation/features/<id>/feature.env`, with optional `/usr` and `/opt` content under `files/`. The `dummy` feature is a test fixture with no hardware effect.
+
+The workstation build sets `SYSEXT_LEVEL` to `IMAGE_VERSION` and checks that both equal the OCI version label. From the manifests it generates discovery metadata under `/usr/lib/luminusos/sysupdate-discovery/` (beside the inert, disabled `luminusos-discovery-probe`) and transfer templates under `/usr/lib/luminusos/sysupdate/*.transfer.in`. Nothing goes into `/usr/lib/sysupdate.d`, so stock `systemd-sysupdate` fetches nothing.
+
+`editions/workstation/build-sysext.sh <feature-dir> <image@sha256:digest> <out-dir>` installs the feature in a container of that image, diffs it against the base and runs `sysext/guard.py` in a builder container (`sysext/Containerfile.builder`, the only place with erofs-utils). The guard rejects changed, deleted or retyped base paths, paths under base symlinks, symlinks into base content, merged caches, privileged hooks outside the allowlist, units or rules naming other features, and budget overruns. It writes `luminusos-<id>_<version>.raw`, `.raw.xz` and build metadata. `sysext/release.py assemble` checks the whole feature matrix and writes `SHA256SUMS`, `SHA256SUMS.raw` and the `release.json` descriptor bound to the image digest; `sign` and `verify` handle the detached OpenPGP signatures. `just build sysext <feature>` runs both steps for the local workstation image into `.test/sysext/<version>/`.
+
+Published builds (`auto-testing`, `publish`) push the workstation image, and its ISO live root, to the private `ghcr.io/<ns>/luminusos-workstation-candidate` repository. The `sysext` job builds every feature against the candidate digest and signs the snapshot with the dedicated OpenPGP key. The gate claims the version, uploads the snapshot create-only and verifies it through the public endpoint with the candidate keyring and the keyrings from the existing testing and stable Fedora branch tags. It signs the private candidate for the public image identity, copies the verified cosign signature before copying the image by digest, and verifies the public digest and signature before recording pending channel targets and moving release tags. Stable promotion verifies both the snapshot and the existing image signature before moving tags. A different bundle for a claimed version fails before publication; a retry with the same bundle resumes.
+
+Publication, promotion and retention share the create-only `sysext/LOCK` lease. Pending channel targets are durable before tag moves and remain protected if a move fails. Retention reconciles every recorded channel against the live registry and refuses deletion on an unknown or unresolvable target; it also protects pending targets, previous channel targets, the last five testing builds and the recovery window. CI only reports the retention plan; `--apply` is manual. After three hours the lease stops authorizing new operations, but it is never taken over automatically: an in-flight registry operation could still finish. Before removing a stale lock, an operator must confirm the old writer and its outstanding registry and store operations have stopped, then remove only the inspected lock version. `tests/sysext-publish.sh` exercises the local stores and fake registry without publishing.
+
 ## Consistency Rules
 
 When changing this repository, keep these points aligned:
@@ -683,6 +700,7 @@ When changing this repository, keep these points aligned:
 ```bash
 just build core
 just build workstation
+just build sysext dummy
 just package workstation
 just package workstation iso
 just package workstation qcow2

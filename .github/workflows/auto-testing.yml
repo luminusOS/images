@@ -1,7 +1,9 @@
 name: Auto Testing
 
 # Daily check: when fedora-bootc:<N> has a new digest, publish a signed testing
-# container and a pre-release with generated notes. No ISO or qcow2.
+# container, its hardware feature snapshot and a pre-release with generated
+# notes. No ISO or qcow2. The public testing tags move only after the feature
+# snapshot verifies (see containers.yml).
 on:
   schedule:
     - cron: "17 10 * * *"
