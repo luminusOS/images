@@ -1,0 +1,12 @@
+[Transfer]
+Features=luminusos-discovery-probe
+
+[Source]
+Type=regular-file
+Path=/usr/lib/luminusos/sysupdate-discovery/probe-source/
+MatchPattern=probe_@v
+
+[Target]
+Type=regular-file
+Path=/usr/lib/luminusos/sysupdate-discovery/probe-target/
+MatchPattern=probe_@v

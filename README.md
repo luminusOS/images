@@ -19,6 +19,7 @@ Planned editions (not active build targets yet): **mobile**, **cast**, **play**,
 
 ```bash
 just build workstation        # build the desktop image
+just build sysext dummy       # build a hardware feature extension for it
 just package workstation iso  # produce the installer ISO
 just qemu iso                 # boot it in QEMU/KVM
 ```

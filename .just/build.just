@@ -110,3 +110,39 @@ workstation-iso:
       --build-arg image_version={{ version }} \
       .
     echo "No post-build squash needed for {{ workstation_iso_image }}: Containerfile.installer squashes itself into a single layer"
+
+# Build one hardware feature extension (name or directory) for the local workstation image.
+[no-cd]
+sysext feature:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    {{ sudo_keepalive }}
+    keep_sudo_alive
+    feature="{{ feature }}"
+    [ -d "${feature}" ] || feature="editions/workstation/features/${feature}"
+    [ -f "${feature}/feature.env" ] || { echo "No feature manifest at ${feature}/feature.env"; exit 1; }
+    image="${LOS_SYSEXT_IMAGE:-{{ workstation_image }}}"
+    if ! sudo podman image inspect "${image}" >/dev/null 2>&1; then
+      echo "Workstation image not found in local storage: ${image}"
+      echo "Run 'just build workstation' first."
+      exit 1
+    fi
+    digest="$(sudo podman image inspect --format '{{{{.Digest}}' "${image}")"
+    version="$(sudo podman image inspect --format '{{{{index .Labels "org.opencontainers.image.version"}}' "${image}")"
+    name="${image%@*}"
+    [[ "${name##*/}" == *:* ]] && name="${name%:*}"
+    out=".test/sysext/${version}"
+    mkdir -p "${out}"
+    sudo ./editions/workstation/build-sysext.sh "${feature}" "${name}@${digest}" "${out}"
+    sudo podman run --rm --network none --security-opt label=disable \
+      --volume "$PWD/editions/workstation/sysext:/run/sysext/bin:ro" \
+      --volume "$PWD/${out}:/run/sysext/out" \
+      "localhost/luminusos-sysext-builder:{{ fedora_ver }}" \
+      python3 /run/sysext/bin/release.py assemble /run/sysext/out \
+        --version "${version}" --image-digest "${digest}"
+    if [ -n "${SYSEXT_SIGNING_KEY:-}" ]; then
+      sudo chown -R "$(id -u):$(id -g)" "${out}"
+      python3 editions/workstation/sysext/release.py sign "${out}" --key "${SYSEXT_SIGNING_KEY}"
+    fi
+    sudo chown -R "$(id -u):$(id -g)" "${out}"
+    echo "Feature artifacts for ${version} (${digest}) in ${out}"

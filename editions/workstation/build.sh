@@ -27,3 +27,4 @@ firewall-offline-cmd --zone=public --remove-service-from-zone=ssh
 systemctl enable bootc-fetch-apply-updates.timer
 systemctl enable elastic-swap.service
 systemctl enable systemd-oomd.service
+systemctl enable luminusos-sysext-sync.timer luminusos-sysext-units.service

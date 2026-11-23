@@ -163,3 +163,59 @@ expect "the swap daemon and its prepare step stay off inside containers" \
 expect "the live ISO runs neither the swap daemon nor its prepare step" \
   sh -c 'for u in elastic-swap elastic-swap-prepare; do grep -qx "ConditionKernelCommandLine=!rd.live.image" "$1/usr/lib/systemd/system/$u.service.d/10-live-iso.conf" || exit 1; done' \
   _ "${INSTALLER_FILES}"
+
+discovery="${SYSTEM_FILES}/usr/lib/luminusos/sysupdate-discovery"
+expect "no transfer is installed for stock systemd-sysupdate" test ! -e "${SYSTEM_FILES}/usr/lib/sysupdate.d"
+expect "the discovery probe is disabled" grep -qx 'Enabled=no' "${discovery}/luminusos-discovery-probe.feature"
+expect "the discovery probe transfer is gated on the probe and stays local" sh -c '
+  grep -qx "Features=luminusos-discovery-probe" "$1" && grep -c "^Type=regular-file$" "$1" | grep -qx 2 && ! grep -q "url-" "$1"' \
+  _ "${discovery}/00-luminusos-discovery-probe.transfer"
+expect "luminus-features is the runtime CLI" \
+  test "$(readlink "${SYSTEM_FILES}/usr/bin/luminus-features")" = ../libexec/luminusos/sysext
+expect "the feature keyring ships at its dedicated path" test -f "${SYSTEM_FILES}/usr/share/luminusos/sysupdate/luminusos.pgp"
+expect "the runtime parses as Python" python3 -c 'import ast, sys; ast.parse(open(sys.argv[1]).read())' \
+  "${SYSTEM_FILES}/usr/libexec/luminusos/sysext"
+expect "download units cannot reach the live sysext refresh socket" sh -c '
+  for u in luminusos-sysext-sync.service luminusos-sysext-update.service; do
+    grep -qx "InaccessiblePaths=-/run/systemd/sysupdate/notify" "$1/$u" || exit 1
+  done' _ "${SYSTEM_FILES}/usr/lib/systemd/system"
+expect "activation runs before the merge with a 10 s deadline" sh -c '
+  f="$1/luminusos-sysext-activate.service"
+  grep -qx "DefaultDependencies=no" "$f" && grep -qx "TimeoutStartSec=10s" "$f" &&
+  grep -q "^Before=.*systemd-sysext.service" "$f" &&
+  grep -qx "RequiresMountsFor=/var/lib/luminusos/sysext" "$f"' _ "${SYSTEM_FILES}/usr/lib/systemd/system"
+while IFS= read -r -d '' ini; do
+  expect "INI parses: ${ini#"${ROOT}/"}" python3 -c '
+import configparser, sys
+p = configparser.ConfigParser(strict=False, interpolation=None, delimiters=("=",))
+p.optionxform = str
+p.read(sys.argv[1])
+' "${ini}"
+done < <(find "${SYSTEM_FILES}/usr/lib/systemd/system" "${discovery}" \
+  \( -name 'luminusos-*' -o -name '*luminusos*.conf' -o -name '*.feature' -o -name '*.transfer' \) -type f -print0)
+
+sysupdate=/usr/lib/systemd/systemd-sysupdate
+if [ -x "${sysupdate}" ]; then
+  sysupdate_defs="${TEST_TMP}/sysupdate"
+  mkdir -p "${sysupdate_defs}/transfer" "${sysupdate_defs}/tx"
+  bash "${ROOT}/editions/workstation/sysext/feature-manifest.sh" generate \
+    "${ROOT}/editions/workstation/features" "${sysupdate_defs}/gen"
+  cp -a "${discovery}/." "${sysupdate_defs}/gen/usr/lib/luminusos/sysupdate-discovery/"
+  expect "discovery lists every feature and the probe offline" sh -c '
+    out="$("$1" --definitions="$2" features --json=short)" &&
+    for f in "$3"/*.feature; do
+      id="$(basename "$f" .feature)"
+      printf "%s" "$out" | jq -e --arg id "$id" ".features | index(\$id)" >/dev/null || exit 1
+    done' _ "${sysupdate}" "${sysupdate_defs}/gen/usr/lib/luminusos/sysupdate-discovery" \
+    "${sysupdate_defs}/gen/usr/lib/luminusos/sysupdate-discovery"
+  for template in "${sysupdate_defs}"/gen/usr/lib/luminusos/sysupdate/*.transfer.in; do
+    id="$(basename "${template}" .transfer.in)"
+    sed -e 's|@BASE_URL@|https://download.luminusos.org/sysext|' -e 's|@VERSION@|45.1|' \
+      -e "s|@TXDIR@|${sysupdate_defs}/tx/|" "${template}" >"${sysupdate_defs}/transfer/50-${id}.transfer"
+    expect "rendered transfer template parses cleanly: ${id}" sh -c '
+      out="$("$1" --definitions="$2" --offline list 2>&1)" && ! printf "%s" "$out" | grep -q ignoring' \
+      _ "${sysupdate}" "${sysupdate_defs}/transfer"
+  done
+else
+  skip "systemd-sysupdate unavailable; tests/sysext-lab.sh parses discovery and templates"
+fi

@@ -1,0 +1,9 @@
+[Unit]
+Description=Periodically reconcile LuminusOS hardware features
+
+[Timer]
+OnBootSec=1min
+OnUnitInactiveSec=6h
+
+[Install]
+WantedBy=timers.target

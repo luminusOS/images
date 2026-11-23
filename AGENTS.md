@@ -21,6 +21,8 @@ Do not add other edition scaffolding unless the package set, target devices, ins
 - Install to a QEMU disk: `just qemu install`
 - Boot the installed QEMU disk: `just qemu run`
 - Build only the workstation ISO root image for debugging: `just build workstation-iso`
+- Build one hardware feature extension for the local workstation image: `just build sysext <feature>`
+- Run the hardware feature container lab (podman): `bash tests/sysext-lab.sh`
 
 Use `QEMU_RESET_DISK=1 just qemu iso` when the installer test needs a fresh disk.
 
@@ -31,6 +33,7 @@ Use `QEMU_RESET_DISK=1 just qemu iso` when the installer test needs a fresh disk
 - Do not add shared shell scripts unless there is a concrete cross-edition need that cannot live in `core`.
 - Edition scripts live under their edition, for example `editions/workstation/build.sh`.
 - Containerfiles may call edition scripts through a `/ctx` bind mount.
+- Hardware feature manifests live in `editions/workstation/features/<id>/feature.env`; their build, guard and release tools live in `editions/workstation/sysext/`. The contract is in `../docs/images/2026-11-15-hardware-features-sysext-plan.md`.
 
 ## Installer Notes
 

@@ -111,6 +111,17 @@ jobs:
       - name: Run test suite
         run: just test
 
+  sysext-lab:
+    name: Hardware feature lab
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ inputs.checkout_ref || github.sha }}
+
+      - name: Build, sign, fetch and discover the dummy feature
+        run: bash tests/sysext-lab.sh
+
   actionlint:
     name: Lint workflows
     runs-on: ubuntu-latest

@@ -1,0 +1,1 @@
+SUBSYSTEM=="net", KERNEL=="lo", ENV{LUMINUSOS_DUMMY}="1"

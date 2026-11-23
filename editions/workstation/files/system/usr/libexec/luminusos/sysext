@@ -1,0 +1,1084 @@
+#!/usr/bin/python3
+"""LuminusOS hardware feature runtime: activation, download worker and CLI.
+
+Implements the store layout, commit protocol, locking and activation rules
+of docs/images/2026-11-15-hardware-features-sysext-plan.md (accepted by the
+Phase 0 QEMU gate). Invoked as luminus-features it is the user CLI.
+
+/etc/luminusos/sysext-test-hooks.json, when present, enables the fault
+injection points used by the QEMU tests; it is root-only and never shipped.
+"""
+
+import contextlib
+import fcntl
+import hashlib
+import json
+import os
+import re
+import resource
+import shutil
+import subprocess
+import sys
+import tempfile
+import time
+import urllib.request
+import uuid
+
+STORE = "/var/lib/luminusos/sysext"
+BUILDS = f"{STORE}/builds"
+INCOMING = f"{STORE}/incoming"
+SELECTION = f"{STORE}/selection"
+STATUS = f"{STORE}/status.json"
+RUN = "/run/luminusos"
+WORKER_LOCK = f"{RUN}/sysext-worker.lock"
+STATE_LOCK = f"{RUN}/sysext-state.lock"
+MARKER = f"{RUN}/activated"
+CONFLICTS = f"{RUN}/conflicts.json"
+INVALID = f"{RUN}/invalid.json"
+DIGEST_RE = re.compile(r"^sha256:[0-9a-f]{64}$")
+RUN_EXT = "/run/extensions"
+ADMIN_DIRS = ["/etc/extensions", "/run/extensions", "/var/lib/extensions"]
+TEMPLATES = "/usr/lib/luminusos/sysupdate"
+DISCOVERY = "/usr/lib/luminusos/sysupdate-discovery"
+PROBE = "luminusos-discovery-probe"
+KEYRING = "/usr/share/luminusos/sysupdate/luminusos.pgp"
+SYSUPDATE = "/usr/lib/systemd/systemd-sysupdate"
+DEFAULTS = {
+    "base_url": "https://download.luminusos.org/sysext",
+    "store_cap_mib": 1024,
+    "max_builds": 10,
+    "reserve_mib": 2048,
+    "pull_timeout_s": 900,
+    "max_passes": 3,
+    "quarantine_keep": 4,
+}
+NAME_RE = re.compile(r"^luminusos-([a-z0-9][a-z0-9-]*)_(.+)\.raw$")
+
+
+def log(msg):
+    print(f"luminusos-sysext: {msg}", file=sys.stderr, flush=True)
+
+
+def config():
+    cfg = dict(DEFAULTS)
+    for path in ("/usr/lib/luminusos/sysext.json", "/etc/luminusos/sysext.json"):
+        with contextlib.suppress(FileNotFoundError):
+            with open(path) as f:
+                cfg.update(json.load(f))
+    return cfg
+
+
+def hooks():
+    try:
+        with open("/etc/luminusos/sysext-test-hooks.json") as f:
+            return json.load(f)
+    except FileNotFoundError:
+        return {}
+
+
+def crash_point(name):
+    """Test hook: pause at a named durability boundary so the harness can hard-reset."""
+    h = hooks()
+    if h.get("crash_at") != name:
+        return
+    with contextlib.suppress(OSError):
+        os.makedirs(RUN, exist_ok=True)
+        with open(f"{RUN}/hook-reached", "w") as f:
+            f.write(name + "\n")
+    log(f"test hook: paused at {name}")
+    time.sleep(h.get("crash_sleep", 60))
+
+
+def boot_id():
+    with open("/proc/sys/kernel/random/boot_id") as f:
+        return f.read().strip()
+
+
+def os_release_image_version():
+    with open("/usr/lib/os-release") as f:
+        for line in f:
+            if line.startswith("IMAGE_VERSION="):
+                return line.split("=", 1)[1].strip().strip('"')
+    return None
+
+
+def fsync_path(path):
+    fd = os.open(path, os.O_RDONLY)
+    try:
+        os.fsync(fd)
+    finally:
+        os.close(fd)
+
+
+def atomic_write(path, data, mode=0o644):
+    d = os.path.dirname(path)
+    fd, tmp = tempfile.mkstemp(dir=d, prefix=".tmp-")
+    try:
+        os.fchmod(fd, mode)
+        with os.fdopen(fd, "wb") as f:
+            f.write(data if isinstance(data, bytes) else data.encode())
+            f.flush()
+            os.fsync(f.fileno())
+        crash_point(f"{os.path.basename(path)}:tmp")
+        os.rename(tmp, path)
+    except BaseException:
+        with contextlib.suppress(FileNotFoundError):
+            os.unlink(tmp)
+        raise
+    crash_point(f"{os.path.basename(path)}:renamed")
+    fsync_path(d)
+
+
+def makedirs_durable(path, mode=0o700):
+    missing = []
+    p = path
+    while not os.path.isdir(p):
+        missing.append(p)
+        p = os.path.dirname(p)
+    for d in reversed(missing):
+        os.mkdir(d, mode)
+        crash_point(f"mkdir:{os.path.basename(d)}")
+        fsync_path(d)
+        fsync_path(os.path.dirname(d))
+
+
+def ensure_store():
+    os.makedirs(RUN, exist_ok=True)
+    if not os.path.isdir(STORE):
+        makedirs_durable(STORE, 0o755)
+    for d, m in ((BUILDS, 0o755), (INCOMING, 0o700)):
+        if not os.path.isdir(d):
+            makedirs_durable(d, m)
+    for d in (os.path.dirname(STORE), STORE, BUILDS):
+        os.chmod(d, 0o755)
+    for f in (SELECTION, STATUS):
+        with contextlib.suppress(FileNotFoundError):
+            os.chmod(f, 0o644)
+    for x in os.listdir(STORE):
+        with contextlib.suppress(FileNotFoundError):
+            if x.startswith(".tmp-") and time.time() - os.lstat(f"{STORE}/{x}").st_mtime > 300:
+                os.unlink(f"{STORE}/{x}")
+    fmt = f"{STORE}/FORMAT"
+    if not os.path.exists(fmt):
+        atomic_write(fmt, "1\n")
+
+
+@contextlib.contextmanager
+def flock(path, timeout=None):
+    os.makedirs(os.path.dirname(path), exist_ok=True)
+    fd = os.open(path, os.O_RDWR | os.O_CREAT, 0o600)
+    try:
+        deadline = None if timeout is None else time.monotonic() + timeout
+        while True:
+            try:
+                fcntl.flock(fd, fcntl.LOCK_EX | (fcntl.LOCK_NB if deadline else 0))
+                break
+            except BlockingIOError:
+                if time.monotonic() > deadline:
+                    raise TimeoutError(path)
+                time.sleep(0.1)
+        yield
+    finally:
+        os.close(fd)
+
+
+def read_selection():
+    try:
+        with open(SELECTION) as f:
+            return [l.strip() for l in f if l.strip() and not l.startswith("#")]
+    except FileNotFoundError:
+        return []
+
+
+def write_selection(ids):
+    ensure_store()
+    atomic_write(SELECTION, "".join(f"{i}\n" for i in sorted(set(ids))))
+
+
+def write_status(**kv):
+    with contextlib.suppress(Exception):
+        ensure_store()
+        cur = {}
+        with contextlib.suppress(Exception):
+            with open(STATUS) as f:
+                cur = json.load(f)
+        cur.update(kv)
+        cur["updated"] = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
+        atomic_write(STATUS, json.dumps(cur, indent=2, sort_keys=True) + "\n")
+
+
+def bootc_status(timeout=30):
+    cmd = hooks().get("bootc_status_cmd") or ["bootc", "status", "--json"]
+    out = subprocess.run(cmd, check=True,
+                         capture_output=True, text=True, timeout=timeout).stdout
+    return json.loads(out)
+
+
+def try_bootc_status(timeout=30):
+    """bootc status blocks while bootc stages; a busy or failing bootc means
+    "retry later", never a crashed worker."""
+    try:
+        return bootc_status(timeout)
+    except (subprocess.TimeoutExpired, subprocess.CalledProcessError, ValueError) as e:
+        log(f"bootc status unavailable ({type(e).__name__}); retrying on the next run")
+        return None
+
+
+def deployment_identity(entry):
+    if not entry:
+        return None
+    img = entry.get("image") or {}
+    version = img.get("version")
+    digest = img.get("imageDigest")
+    if not version or not digest:
+        return None
+    return {"version": version, "digest": digest}
+
+
+def target_identity(status, which):
+    st = status.get("status") or {}
+    return deployment_identity(st.get(which))
+
+
+def build_dir(ident):
+    return f"{BUILDS}/{ident['version']}/{ident['digest']}"
+
+
+def feature_file(fid, version):
+    return f"luminusos-{fid}_{version}.raw"
+
+
+def sha256_file(path):
+    h = hashlib.sha256()
+    with open(path, "rb") as f:
+        for chunk in iter(lambda: f.read(1 << 20), b""):
+            h.update(chunk)
+    return h.hexdigest()
+
+
+def gpg_verify(data_path, sig_path, keyring=KEYRING):
+    os.makedirs(RUN, exist_ok=True)
+    with tempfile.TemporaryDirectory(dir=RUN, prefix="gnupg-") as home:
+        env = dict(os.environ, GNUPGHOME=home)
+        subprocess.run(["gpg", "--batch", "--quiet", "--import", keyring],
+                       env=env, check=True, capture_output=True)
+        r = subprocess.run(["gpg", "--batch", "--status-fd", "1", "--verify", sig_path, data_path],
+                           env=env, capture_output=True, text=True)
+        return r.returncode == 0 and "[GNUPG:] VALIDSIG" in r.stdout
+
+
+def fetch(url, dest, timeout=60):
+    with urllib.request.urlopen(url, timeout=timeout) as r, open(dest, "wb") as f:
+        shutil.copyfileobj(r, f)
+
+
+def store_usage_bytes():
+    total = 0
+    for root, _dirs, files in os.walk(STORE):
+        for n in files:
+            with contextlib.suppress(FileNotFoundError):
+                total += os.lstat(os.path.join(root, n)).st_blocks * 512
+    return total
+
+
+def count_builds():
+    n = 0
+    for v in os.listdir(BUILDS):
+        with contextlib.suppress(NotADirectoryError, FileNotFoundError):
+            n += len(os.listdir(f"{BUILDS}/{v}"))
+    return n
+
+
+def own_cgroup():
+    with open("/proc/self/cgroup") as f:
+        for line in f:
+            if line.startswith("0::"):
+                return "/sys/fs/cgroup" + line.split("::", 1)[1].strip()
+    return None
+
+
+def setup_delegation():
+    """Move the worker into <unit>/supervisor so pull subgroups can be created.
+
+    Needs Delegate=yes. Returns the unit cgroup or None when not delegated.
+    """
+    cg = own_cgroup()
+    if not cg:
+        return None
+    if os.path.basename(cg) == "supervisor":
+        return os.path.dirname(cg)
+    try:
+        os.makedirs(f"{cg}/supervisor", exist_ok=True)
+        with open(f"{cg}/supervisor/cgroup.procs", "w") as f:
+            f.write(str(os.getpid()))
+        return cg
+    except OSError as e:
+        log(f"no delegated cgroup ({e}); downloads disabled")
+        return None
+
+
+def cgroup_populated(path):
+    """True unless the cgroup is proven empty. A cgroup that no longer exists
+    cannot hold processes (the kernel refuses to remove a populated one); any
+    other read or parse problem counts as populated."""
+    try:
+        with open(f"{path}/cgroup.events") as f:
+            for line in f:
+                k, v = line.split()
+                if k == "populated":
+                    return v != "0"
+    except FileNotFoundError:
+        # The kernel refuses to remove a populated cgroup, so an absent
+        # directory proves emptiness; a present one without events does not.
+        return os.path.lexists(path)
+    except (OSError, ValueError):
+        return True
+    return True
+
+
+def kill_and_wait_empty(cg, wait_s):
+    with contextlib.suppress(OSError):
+        with open(f"{cg}/cgroup.kill", "w") as f:
+            f.write("1")
+    deadline = time.monotonic() + wait_s
+    while cgroup_populated(cg) and time.monotonic() < deadline:
+        time.sleep(0.1)
+    return not cgroup_populated(cg)
+
+
+def prelaunch(txdir):
+    """pull_one creates payload/ only after meta.json is durable and starts the
+    pull only after that, so a transaction holding nothing but interrupted
+    temporaries never launched a pull. Anything else without metadata is a
+    lost record and is kept."""
+    try:
+        return all(n.startswith(".tmp-") for n in os.listdir(txdir))
+    except OSError:
+        return False
+
+
+def reap_incoming():
+    """Delete abandoned transactions. Caller holds the worker lock."""
+    me = boot_id()
+    for tx in sorted(os.listdir(INCOMING)):
+        path = f"{INCOMING}/{tx}"
+        meta, meta_state = None, "absent"
+        try:
+            with open(f"{path}/meta.json") as f:
+                meta = json.load(f)
+            meta_state = "ok" if isinstance(meta, dict) and isinstance(meta.get("boot_id"), str) else "bad"
+        except FileNotFoundError:
+            pass
+        except (OSError, ValueError):
+            meta_state = "bad"
+        cg = meta.get("cgroup") if meta_state == "ok" else None
+        cg_ok = isinstance(cg, str) and re.fullmatch(
+            r"/sys/fs/cgroup/system\.slice/luminusos-sysext-(sync|update)\.service/pull-" + re.escape(tx), cg)
+        if meta_state == "ok" and meta["boot_id"] != me:
+            reason = "earlier boot"
+        elif meta_state == "ok" and cg_ok and not cgroup_populated(cg):
+            reason = "pull subgroup empty"
+        elif meta_state == "absent" and prelaunch(path) and time.time() - os.lstat(path).st_mtime > 60:
+            reason = "no metadata (pre-launch)"
+        else:
+            if meta_state == "ok" and not cg_ok:
+                meta_state = "bad cgroup"
+            log(f"transaction {tx} may still be live (metadata {meta_state}, cgroup {cg}); leaving it")
+            continue
+        log(f"reaping transaction {tx}: {reason}")
+        shutil.rmtree(path, ignore_errors=True)
+        if cg_ok:
+            with contextlib.suppress(OSError):
+                os.rmdir(cg)
+    fsync_path(INCOMING)
+
+
+def render_transfer(fid, version, txdir, base_url):
+    with open(f"{TEMPLATES}/{fid}.transfer.in") as f:
+        t = f.read()
+    return (t.replace("@BASE_URL@", base_url).replace("@VERSION@", version)
+             .replace("@TXDIR@", txdir + "/").replace("@ID@", fid))
+
+
+def fetch_descriptor(cfg, ident, workdir):
+    base = f"{cfg['base_url']}/{ident['version']}"
+    rj, sig = f"{workdir}/release.json", f"{workdir}/release.json.gpg"
+    fetch(f"{base}/release.json", rj)
+    fetch(f"{base}/release.json.gpg", sig)
+    if not gpg_verify(rj, sig):
+        raise RuntimeError("descriptor signature invalid")
+    with open(rj) as f:
+        desc = json.load(f)
+    if desc.get("version") != ident["version"] or desc.get("image_digest") != ident["digest"]:
+        raise RuntimeError(
+            f"descriptor names {desc.get('version')}/{desc.get('image_digest')}, "
+            f"target is {ident['version']}/{ident['digest']}")
+    return desc
+
+
+def admission_ok(cfg, expanded_mib):
+    need = expanded_mib << 20
+    used = store_usage_bytes()
+    if used + need > cfg["store_cap_mib"] << 20:
+        return f"store cap {cfg['store_cap_mib']} MiB would be exceeded ({used >> 20} MiB used)"
+    st = os.statvfs(STORE)
+    free = st.f_bavail * st.f_frsize
+    if free - need < cfg["reserve_mib"] << 20:
+        return f"free-space reserve {cfg['reserve_mib']} MiB would be violated ({free >> 20} MiB free)"
+    return None
+
+
+def pull_one(cfg, unit_cg, ident, fid, entry):
+    txid = uuid.uuid4().hex
+    txdir = f"{INCOMING}/{txid}"
+    os.mkdir(txdir, 0o700)
+    fsync_path(INCOMING)
+    pull_cg = f"{unit_cg}/pull-{txid}"
+    os.mkdir(pull_cg)
+    meta = {"boot_id": boot_id(), "cgroup": pull_cg, "feature": fid,
+            "target": ident, "started": time.time(), "pid": os.getpid()}
+    atomic_write(f"{txdir}/meta.json", json.dumps(meta))
+    defs = tempfile.mkdtemp(prefix=f"defs-{txid}-", dir=RUN)
+    payload = f"{txdir}/payload"
+    os.mkdir(payload, 0o700)
+    with open(f"{defs}/50-{fid}.transfer", "w") as f:
+        f.write(render_transfer(fid, ident["version"], payload, cfg["base_url"]))
+    limit = int(entry["expanded_budget_mib"]) << 20
+
+    def child_setup():
+        with open(f"{pull_cg}/cgroup.procs", "w") as f:
+            f.write(str(os.getpid()))
+        resource.setrlimit(resource.RLIMIT_FSIZE, (limit, limit))
+
+    env = dict(os.environ, SYSTEMD_OPENPGP_KEYRING=KEYRING)
+    cmd = [SYSUPDATE, f"--definitions={defs}", "--verify=yes", "update", ident["version"]]
+    log(f"pulling {fid} {ident['version']} into {txid} (limit {limit >> 20} MiB)")
+    try:
+        r = subprocess.run(cmd, env=env, preexec_fn=child_setup, timeout=cfg["pull_timeout_s"],
+                           capture_output=True, text=True)
+        sys.stderr.write(r.stdout + r.stderr)
+        ok = r.returncode == 0
+    except subprocess.TimeoutExpired:
+        log(f"pull of {fid} exceeded {cfg['pull_timeout_s']}s; killing")
+        with contextlib.suppress(OSError):
+            with open(f"{pull_cg}/cgroup.kill", "w") as f:
+                f.write("1")
+        ok = False
+    finally:
+        shutil.rmtree(defs, ignore_errors=True)
+    deadline = time.monotonic() + 10
+    while cgroup_populated(pull_cg) and time.monotonic() < deadline:
+        time.sleep(0.1)
+    if cgroup_populated(pull_cg) and not kill_and_wait_empty(pull_cg, 10):
+        log(f"pull subgroup {pull_cg} still populated; leaving transaction {txid} untouched")
+        return txid, txdir, pull_cg, None, True
+    name = feature_file(fid, ident["version"])
+    path = f"{payload}/{name}"
+    if ok and os.path.exists(path):
+        if sha256_file(path) != entry["raw_sha256"]:
+            log(f"{name}: expanded hash does not match descriptor")
+            ok = False
+    else:
+        log(f"{fid}: systemd-sysupdate failed or produced no file")
+        ok = False
+    return txid, txdir, pull_cg, path if ok else None, False
+
+
+def commit(ident, desc_dir, fid, path):
+    """Caller holds the state lock."""
+    bd = build_dir(ident)
+    if not os.path.isdir(bd):
+        makedirs_durable(bd, 0o755)
+    with open(f"{desc_dir}/release.json", "rb") as f:
+        new = f.read()
+    if os.path.lexists(f"{bd}/release.json"):
+        with open(f"{bd}/release.json", "rb") as f:
+            if f.read() != new:
+                raise DescriptorConflict(f"{bd}/release.json differs from the verified descriptor")
+    else:
+        # Signature first: a visible release.json always has its signature.
+        with open(f"{desc_dir}/release.json.gpg", "rb") as f:
+            atomic_write(f"{bd}/release.json.gpg", f.read())
+        atomic_write(f"{bd}/release.json", new)
+    crash_point("feature:before-rename")
+    name = os.path.basename(path)
+    dst = f"{bd}/{name}"
+    if os.path.lexists(dst):
+        log(f"{name} already committed; keeping existing file")
+        return False
+    fd = os.open(path, os.O_RDONLY)
+    os.fsync(fd)
+    os.close(fd)
+    os.chmod(path, 0o444)
+    os.rename(path, dst)
+    crash_point("feature:renamed")
+    fsync_path(bd)
+    crash_point("feature:committed")
+    return True
+
+
+class DescriptorConflict(Exception):
+    pass
+
+
+QUARANTINE = f"{STORE}/quarantine"
+
+
+def prune_quarantine(keep):
+    """Quarantined bytes count against the store cap; keep only the newest
+    entries. Caller holds the worker lock. Never touches committed builds."""
+    if not os.path.isdir(QUARANTINE):
+        return
+    xs = sorted(os.listdir(QUARANTINE), key=lambda n: os.lstat(f"{QUARANTINE}/{n}").st_mtime)
+    for n in xs[:max(0, len(xs) - keep)]:
+        os.unlink(f"{QUARANTINE}/{n}")
+        log(f"pruned quarantined {n}")
+    fsync_path(QUARANTINE)
+
+
+def stored_descriptor(ident):
+    """The committed descriptor of a build if its signature and identity verify.
+    Returns (desc, None), (None, None) when absent, or (None, reason)."""
+    bd = build_dir(ident)
+    rj = f"{bd}/release.json"
+    if not os.path.exists(rj):
+        return None, None
+    if not gpg_verify(rj, f"{rj}.gpg"):
+        return None, "committed descriptor signature invalid"
+    with open(rj) as f:
+        desc = json.load(f)
+    if desc.get("version") != ident["version"] or desc.get("image_digest") != ident["digest"]:
+        return None, "committed descriptor names another build"
+    return desc, None
+
+
+def pending_features(ident, repair):
+    """Selected features not validly committed for ident, as (missing, blocked).
+
+    With repair=True (caller holds the worker lock) interrupted temporaries are
+    removed, a feature file that does not match its verified committed
+    descriptor is moved to quarantine, and an invalid descriptor that no
+    committed feature depends on is set aside; all of these are then fetched
+    again. Without repair the same cases only count as missing, so the caller
+    goes on to take the worker lock. An invalid descriptor with committed
+    features blocks the build."""
+    bd = build_dir(ident)
+    selected = read_selection()
+    if not os.path.isdir(bd):
+        return selected, None
+
+    def set_aside(name):
+        makedirs_durable(QUARANTINE, 0o700)
+        dst = f"{QUARANTINE}/{int(time.time())}-{ident['digest'][7:19]}-{name}"
+        os.rename(f"{bd}/{name}", dst)
+        fsync_path(bd)
+        fsync_path(QUARANTINE)
+        return dst
+
+    if repair:
+        with flock(STATE_LOCK):
+            for x in os.listdir(bd):
+                if x.startswith(".tmp-"):
+                    os.unlink(f"{bd}/{x}")
+                    log(f"removed interrupted temporary file {bd}/{x}")
+    desc, why = stored_descriptor(ident)
+    if why and not any(x.endswith(".raw") for x in os.listdir(bd)):
+        if not repair:
+            return selected, None
+        with flock(STATE_LOCK):
+            for n in ("release.json", "release.json.gpg"):
+                if os.path.exists(f"{bd}/{n}"):
+                    set_aside(n)
+        log(f"{ident['version']}: {why} and no committed feature; descriptor set aside, refetching")
+        desc, why = None, None
+    if why:
+        return [], why
+    missing = []
+    for fid in selected:
+        name = feature_file(fid, ident["version"])
+        if not os.path.lexists(f"{bd}/{name}"):
+            missing.append(fid)
+            continue
+        want = ((desc or {}).get("features") or {}).get(fid, {}).get("raw_sha256")
+        p = f"{bd}/{name}"
+        try:
+            if want and not os.path.islink(p) and os.path.isfile(p) and sha256_file(p) == want:
+                continue
+            why = "does not match its committed descriptor"
+        except OSError as e:
+            why = f"cannot be read ({e.strerror or e})"
+            log(f"{name} {why}")
+            note_failure(f"{fid} {ident['version']}: committed file {why}")
+        if repair:
+            try:
+                with flock(STATE_LOCK):
+                    dst = set_aside(name)
+            except OSError as e:
+                log(f"{name} {why} and could not be set aside ({e.strerror or e}); skipping {fid}")
+                note_failure(f"{fid} {ident['version']}: could not set aside unreadable file")
+                continue
+            log(f"{name} {why}; moved to {dst}")
+        missing.append(fid)
+    return missing, None
+
+
+FAIL = {}
+
+
+def note_failure(msg):
+    reasons = FAIL.setdefault(CUR_TARGET[0], [])
+    if msg not in reasons:
+        reasons.append(msg)
+
+
+CUR_TARGET = [None]
+
+
+def update(which):
+    FAIL.clear()
+    try:
+        return _update(which)
+    finally:
+        record_target_status()
+
+
+def merge_target_status(results):
+    """degraded is the union of the latest result of each target; a run
+    replaces only the targets it evaluated, so a later target cannot clear
+    an earlier one and a staged-only run cannot clear the booted result.
+    The "activation" entry is this boot's projection result."""
+    cur = {}
+    with contextlib.suppress(Exception):
+        with open(STATUS) as f:
+            cur = json.load(f).get("degraded_by_target") or {}
+    cur.update(results)
+    cur = {k: v for k, v in cur.items() if v}
+    write_status(degraded_by_target=cur, degraded="; ".join(f"{k}: {v}" for k, v in sorted(cur.items())) or None)
+
+
+def record_target_status():
+    merge_target_status({tgt: "; ".join(FAIL.get(tgt, [])) or None for tgt in EVALUATED})
+
+
+EVALUATED = []
+
+
+def _update(which):
+    EVALUATED.clear()
+    cfg = config()
+    ensure_store()
+    with flock(WORKER_LOCK):
+        reap_incoming()
+        prune_quarantine(cfg["quarantine_keep"])
+    selected = read_selection()
+    targets = ["booted", "staged"] if which == "sync" else [which]
+    if not selected:
+        EVALUATED.extend(targets)
+        log("no feature selected; nothing to do")
+        return 0
+    unit_cg = None
+    for t in targets:
+        CUR_TARGET[0] = t
+        EVALUATED.append(t)
+        last = None
+        for _ in range(cfg["max_passes"]):
+            st = try_bootc_status()
+            if st is None:
+                note_failure("bootc status unavailable; will retry")
+                return 0
+            ident = target_identity(st, t)
+            if not ident:
+                log(f"no usable {t} deployment identity; nothing to do")
+                break
+            if ident == last:
+                break
+            last = ident
+            if t == "booted" and ident["version"] != os_release_image_version():
+                log(f"booted bootc version {ident['version']} != IMAGE_VERSION; refusing")
+                note_failure(f"booted identity mismatch {ident['version']}")
+                break
+            missing, blocked = pending_features(ident, repair=False)
+            if blocked:
+                log(f"{t} {ident['version']}: {blocked}; leaving the build untouched")
+                note_failure(f"{ident['version']}: {blocked}")
+                continue
+            if not missing:
+                log(f"{t} {ident['version']}: every selected feature committed; no request")
+                continue
+            if unit_cg is None:
+                unit_cg = setup_delegation()
+                if unit_cg is None:
+                    return 1
+            rc = reconcile(cfg, unit_cg, ident, missing, t)
+            if rc:
+                return rc
+    return 0
+
+
+def reconcile(cfg, unit_cg, ident, missing, which):
+    with flock(WORKER_LOCK):
+        reap_incoming()
+        missing, blocked = pending_features(ident, repair=True)
+        if blocked:
+            log(f"{ident['version']}: {blocked}; leaving the build untouched")
+            note_failure(f"{ident['version']}: {blocked}")
+            return 0
+        if not missing:
+            log(f"{ident['version']}: every selected feature committed meanwhile; no request")
+            return 0
+        work = tempfile.mkdtemp(prefix="desc-", dir=RUN)
+        try:
+            try:
+                desc = fetch_descriptor(cfg, ident, work)
+            except Exception as e:
+                log(f"descriptor for {ident['version']} rejected: {e}")
+                note_failure(f"descriptor {ident['version']}: {e}")
+                return 2
+            for fid in missing:
+                entry = (desc.get("features") or {}).get(fid)
+                if not entry:
+                    log(f"{fid} not published for {ident['version']}")
+                    note_failure(f"{fid} not published for {ident['version']}")
+                    continue
+                why = admission_ok(cfg, int(entry["expanded_budget_mib"]))
+                if not why and count_builds() >= cfg["max_builds"] and not os.path.isdir(build_dir(ident)):
+                    why = f"build directory cap {cfg['max_builds']} reached"
+                if why:
+                    log(f"not fetching {fid}: {why}")
+                    note_failure(f"{fid} {ident['version']}: {why}")
+                    continue
+                txid, txdir, pull_cg, path, live = pull_one(cfg, unit_cg, ident, fid, entry)
+                if live:
+                    note_failure(f"{fid} {ident['version']}: pull did not exit; transaction kept")
+                    continue
+                try:
+                    if not path:
+                        note_failure(f"{fid} {ident['version']}: download or verification failed")
+                        continue
+                    still, unknown = True, False
+                    if which != "booted":
+                        st = try_bootc_status()
+                        unknown = st is None
+                        still = not unknown and target_identity(st, which) == ident
+                    with flock(STATE_LOCK):
+                        if unknown:
+                            log(f"bootc status unavailable before committing {fid}; discarding it, retrying on the next run")
+                            note_failure(f"{fid} {ident['version']}: staged identity unconfirmed at commit; will retry")
+                        elif not still:
+                            log(f"{ident['version']} no longer staged; discarding {fid}")
+                            return 0
+                        elif fid not in read_selection():
+                            log(f"{fid} deselected during download; discarding")
+                        else:
+                            try:
+                                if commit(ident, work, fid, path):
+                                    log(f"committed {fid} for {ident['version']}")
+                                    write_status(last_commit=f"{fid} {ident['version']}")
+                            except DescriptorConflict as e:
+                                log(f"not committing {fid}: {e}")
+                                note_failure(f"{ident['version']}: {e}")
+                                return 2
+                finally:
+                    shutil.rmtree(txdir, ignore_errors=True)
+                    with contextlib.suppress(OSError):
+                        os.rmdir(pull_cg)
+                    fsync_path(INCOMING)
+        finally:
+            shutil.rmtree(work, ignore_errors=True)
+    return 0
+
+
+def is_managed_link(path):
+    """Exactly /run/extensions/luminusos-<id>_<v>.raw -> BUILDS/<v>/sha256:<hex>/<same name>."""
+    if os.path.dirname(path) != RUN_EXT or not os.path.islink(path):
+        return False
+    name = os.path.basename(path)
+    m = NAME_RE.match(name)
+    if not m:
+        return False
+    parts = os.readlink(path).split("/")
+    want = BUILDS.split("/") + [m.group(2), None, name]
+    return len(parts) == len(want) and all(w is None or p == w for p, w in zip(parts, want)) \
+        and DIGEST_RE.match(parts[-2]) is not None
+
+
+def managed_links():
+    if not os.path.isdir(RUN_EXT):
+        return []
+    return sorted(n for n in os.listdir(RUN_EXT) if is_managed_link(f"{RUN_EXT}/{n}"))
+
+
+def remove_managed_links():
+    for n in managed_links():
+        os.unlink(f"{RUN_EXT}/{n}")
+
+
+def admin_collision(name):
+    stem = name[:-4]
+    for d in ADMIN_DIRS:
+        for cand in (name, stem):
+            p = f"{d}/{cand}"
+            if os.path.lexists(p) and not (d == RUN_EXT and is_managed_link(p)):
+                return p
+    return None
+
+
+def activate():
+    h = hooks()
+    os.makedirs(RUN, exist_ok=True)
+    conflicts, invalid = [], []
+    try:
+        with contextlib.suppress(FileNotFoundError):
+            os.unlink(MARKER)
+        remove_managed_links()
+        if h.get("activate_stall_s"):
+            time.sleep(h["activate_stall_s"])
+        if not read_selection():
+            log("activation: no feature selected")
+            atomic_write(MARKER, "")
+            return 0
+        t0 = time.monotonic()
+        ident = target_identity(bootc_status(timeout=8), "booted")
+        version = os_release_image_version()
+        if not ident or ident["version"] != version or not DIGEST_RE.match(ident["digest"]):
+            log(f"activation: booted identity {ident} does not match IMAGE_VERSION {version}; exposing nothing")
+            return 0
+        bd = build_dir(ident)
+        made = []
+        with flock(STATE_LOCK, timeout=1):
+            selected = read_selection()
+            desc, why = stored_descriptor(ident)
+            if why:
+                log(f"activation: {why} for {version}; exposing nothing")
+                invalid.extend({"id": f, "reason": why} for f in selected)
+                return 0
+            os.makedirs(RUN_EXT, exist_ok=True)
+            for fid in selected:
+                name = feature_file(fid, version)
+                src = f"{bd}/{name}"
+                if not os.path.lexists(src):
+                    log(f"activation: {fid} not committed for {version} ({ident['digest']})")
+                    continue
+                want = ((desc or {}).get("features") or {}).get(fid, {}).get("raw_sha256")
+                reason = "committed file failed verification"
+                try:
+                    ok = os.path.isfile(src) and not os.path.islink(src) and bool(want) and sha256_file(src) == want
+                except OSError as e:
+                    log(f"activation: cannot read {name} ({e})")
+                    reason = f"committed file cannot be read ({e.strerror or e})"
+                    ok = False
+                if not ok:
+                    log(f"activation: {name} is not a regular file matching its signed hash; skipping")
+                    invalid.append({"id": fid, "reason": reason})
+                    continue
+                hit = admin_collision(name)
+                if hit:
+                    log(f"activation: {name} conflicts with administrator entry {hit}; skipping")
+                    conflicts.append({"id": fid, "entry": hit})
+                    continue
+                os.symlink(src, f"{RUN_EXT}/{name}")
+                made.append(name)
+                if h.get("activate_die_after_links") and len(made) >= h["activate_die_after_links"]:
+                    os.kill(os.getpid(), 9)
+            atomic_write(MARKER, "".join(f"{n}\n" for n in made))
+        log(f"activation: exposed {made} for {version} in {time.monotonic() - t0:.2f}s")
+        return 0
+    except Exception as e:
+        log(f"activation failed ({e!r}); removing managed links")
+        with contextlib.suppress(Exception):
+            remove_managed_links()
+        with contextlib.suppress(FileNotFoundError):
+            os.unlink(MARKER)
+        return 0
+    finally:
+        with contextlib.suppress(Exception):
+            atomic_write(CONFLICTS, json.dumps(conflicts))
+            atomic_write(INVALID, json.dumps(invalid))
+        with contextlib.suppress(Exception):
+            merge_target_status({"activation": "; ".join(dict.fromkeys(
+                [f"{i['id']} invalid: {i['reason']}" for i in invalid]
+                + [f"{c['id']} conflicts with {c['entry']}" for c in conflicts])) or None})
+
+
+def precheck():
+    if hooks().get("precheck_ro_run_extensions"):
+        log("precheck: test hook remounts /run/extensions read-only")
+        subprocess.run(["mount", "--bind", RUN_EXT, RUN_EXT], check=True)
+        subprocess.run(["mount", "-o", "remount,bind,ro", RUN_EXT], check=True)
+    present = managed_links()
+    try:
+        with open(MARKER) as f:
+            listed = sorted(l.strip() for l in f if l.strip())
+    except FileNotFoundError:
+        listed = None
+    if listed == present:
+        return 0
+    log(f"precheck: marker {listed} does not match links {present}; removing managed links")
+    try:
+        remove_managed_links()
+    except OSError as e:
+        log(f"precheck: cleanup failed ({e}); skipping merge")
+        return 1
+    return 0
+
+
+UDEV_SELECTOR_RE = re.compile(r"^--(subsystem|sysname|attr|property|tag)-match=[A-Za-z0-9_.:*?=/+-]+$")
+
+
+def merged_managed():
+    out = subprocess.run(["systemd-sysext", "status", "--json=short"], check=True,
+                         capture_output=True, text=True).stdout
+    names = set()
+    for h in json.loads(out):
+        if h.get("hierarchy") == "/usr":
+            names.update(f"{e}.raw" for e in h.get("extensions") or [])
+    return names
+
+
+def post_merge():
+    """Start feature units and replay udev for features that actually merged.
+
+    EXTENSION_RESTART_UNITS= cannot be used at boot: systemd-sysext waits for
+    the jobs while ordered Before=sysinit.target, and feature units are
+    ordered After=sysinit.target.
+    """
+    projected = []
+    with contextlib.suppress(FileNotFoundError):
+        with open(MARKER) as f:
+            projected = [l.strip() for l in f if l.strip()]
+    if not projected:
+        log("post-merge: no managed feature projected")
+        return 0
+    out = subprocess.run(["systemctl", "show", "systemd-sysext.service", "-p", "Result", "-p", "ActiveState"],
+                         capture_output=True, text=True).stdout
+    res = dict(l.split("=", 1) for l in out.splitlines() if "=" in l)
+    if res != {"Result": "success", "ActiveState": "active"}:
+        log(f"post-merge: systemd-sysext.service is {res}; not starting feature units")
+        return 1
+    merged = sorted(set(projected) & merged_managed())
+    if set(projected) - set(merged):
+        log(f"post-merge: projected but not merged: {sorted(set(projected) - set(merged))}")
+    if not merged:
+        log("post-merge: no managed feature merged")
+        return 0
+    rc = 0
+    triggers = []
+    for name in merged:
+        m = NAME_RE.match(name)
+        rel = f"/usr/lib/extension-release.d/extension-release.luminusos-{m.group(1)}_{m.group(2)}"
+        with contextlib.suppress(FileNotFoundError):
+            with open(rel) as f:
+                for line in f:
+                    if line.startswith("LUMINUSOS_UDEV_TRIGGER="):
+                        args = line.split("=", 1)[1].strip().strip('"').split()
+                        if args and all(UDEV_SELECTOR_RE.match(a) for a in args):
+                            triggers.append(args)
+                        else:
+                            log(f"post-merge: {name}: rejecting udev selector {args}")
+                            rc = 1
+    if triggers:
+        if subprocess.run(["udevadm", "control", "--reload"]).returncode:
+            rc = 1
+        for args in triggers:
+            if subprocess.run(["udevadm", "trigger", "--action=add", *args]).returncode:
+                log(f"post-merge: udev replay {args} failed")
+                rc = 1
+        log(f"post-merge: udev replay {triggers}")
+    if subprocess.run(["systemctl", "start", "--no-block", "luminusos-features.target"]).returncode:
+        rc = 1
+    log(f"post-merge: started luminusos-features.target for {merged}")
+    return rc
+
+
+def discovery():
+    out = subprocess.run([SYSUPDATE, f"--definitions={DISCOVERY}", "features", "--json=short"],
+                         check=True, capture_output=True, text=True).stdout
+    ids = sorted(i for i in json.loads(out).get("features", []) if i != PROBE)
+    feats = []
+    for fid in ids:
+        d = subprocess.run([SYSUPDATE, f"--definitions={DISCOVERY}", "features", fid, "--json=short"],
+                           check=True, capture_output=True, text=True).stdout
+        feats.append(json.loads(d))
+    return feats
+
+
+def features_cli(argv):
+    cmd = argv[0] if argv else "list"
+    if cmd == "list":
+        sel = set(read_selection())
+        merged = set()
+        with contextlib.suppress(FileNotFoundError):
+            with open(MARKER) as f:
+                merged = {NAME_RE.match(l.strip()).group(1) for l in f if l.strip()}
+        for feat in discovery():
+            fid = feat.get("id")
+            state = ("merged" if fid in merged else "pending") if fid in sel else "disabled"
+            sug = " suggested" if feat.get("suggested") else ""
+            print(f"{fid}\t{state}{sug}\t{feat.get('description', '')}")
+        return 0
+    if cmd in ("enable", "disable") and len(argv) == 2:
+        fid = argv[1]
+        known = {f.get("id") for f in discovery()}
+        if fid not in known:
+            print(f"unknown feature {fid}", file=sys.stderr)
+            return 2
+        with flock(STATE_LOCK, timeout=30):
+            sel = set(read_selection())
+            sel = sel | {fid} if cmd == "enable" else sel - {fid}
+            write_selection(sel)
+        if cmd == "enable":
+            subprocess.run(["systemctl", "start", "--no-block", "luminusos-sysext-sync.service"])
+            print(f"{fid} enabled; downloading in the background. Restart required to activate.")
+        else:
+            print(f"{fid} disabled. Restart required to deactivate.")
+        return 0
+    if cmd == "status":
+        def load(p, default):
+            with contextlib.suppress(FileNotFoundError, ValueError):
+                with open(p) as f:
+                    return json.load(f)
+            return default
+        projected = set()
+        with contextlib.suppress(FileNotFoundError):
+            with open(MARKER) as f:
+                projected = {l.strip() for l in f if l.strip()}
+        merged = set()
+        with contextlib.suppress(FileNotFoundError, subprocess.CalledProcessError):
+            merged = {NAME_RE.match(n).group(1) for n in projected & merged_managed()}
+        conflict = {c["id"] for c in load(CONFLICTS, [])}
+        bad = {c["id"] for c in load(INVALID, [])}
+        for fid in read_selection():
+            state = ("conflict" if fid in conflict else "provisioned" if fid in merged
+                     else "invalid" if fid in bad else "pending")
+            print(f"{fid}\t{state}")
+        with contextlib.suppress(FileNotFoundError):
+            with open(STATUS) as f:
+                sys.stdout.write(f.read())
+        with contextlib.suppress(FileNotFoundError):
+            with open(CONFLICTS) as f:
+                c = json.load(f)
+                if c:
+                    print("conflicts:", json.dumps(c))
+        return 0
+    print("usage: luminus-features list|status|enable <id>|disable <id>", file=sys.stderr)
+    return 2
+
+
+def main():
+    if os.path.basename(sys.argv[0]) == "luminus-features":
+        return features_cli(sys.argv[1:])
+    if len(sys.argv) >= 2 and sys.argv[1] == "update" and len(sys.argv) == 3 \
+            and sys.argv[2] in ("booted", "staged", "sync"):
+        return update(sys.argv[2])
+    if sys.argv[1:] == ["activate"]:
+        return activate()
+    if sys.argv[1:] == ["precheck"]:
+        return precheck()
+    if sys.argv[1:] == ["post-merge"]:
+        return post_merge()
+    print("usage: sysext update booted|staged|sync | activate | precheck", file=sys.stderr)
+    return 2
+
+
+if __name__ == "__main__":
+    sys.exit(main())
