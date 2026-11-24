@@ -14,6 +14,7 @@ import release_pipeline as pipeline
 
 MIB = 1024 * 1024
 MAX_ARCHIVE = 8 * MIB
+MIRROR_METADATA = ("release.json", "release.json.gpg", "SHA256SUMS", "SHA256SUMS.gpg")
 RELEASE = Path(__file__).resolve().parents[3] / "editions/workstation/sysext/release.py"
 STAGING_KEYRING = RELEASE.with_name("testing-feature-staging.pgp")
 REPOSITORY = "luminusOS/images"
@@ -208,6 +209,10 @@ def verify(directory: Path, candidate: dict) -> str:
         and pipeline.release_kind(candidate) == "image",
         "snapshot intake requires a verified testing image candidate",
     )
+    return verify_payload(directory, candidate, STAGING_KEYRING)
+
+
+def verify_payload(directory: Path, candidate: dict, keyring: Path) -> str:
     version = candidate["build_version"]
     manifest = feature.platform_manifest(
         directory, pipeline.binding(candidate)["candidate_digest"]
@@ -221,23 +226,29 @@ def verify(directory: Path, candidate: dict) -> str:
         and set(descriptor["features"]) == {"dummy"},
         "unexpected testing snapshot descriptor",
     )
-    subprocess.run(
-        [
-            sys.executable,
-            str(RELEASE),
-            "verify",
-            str(directory),
-            "--keyring",
-            str(STAGING_KEYRING),
-            "--version",
-            version,
-            "--image-digest",
-            manifest,
-            "--raw",
-        ],
-        check=True,
-        timeout=60,
-    )
+    with tempfile.TemporaryDirectory(prefix="testing-snapshot-gpgv-") as home:
+        subprocess.run(
+            [
+                sys.executable,
+                str(RELEASE),
+                "verify",
+                str(directory),
+                "--keyring",
+                str(keyring),
+                "--version",
+                version,
+                "--image-digest",
+                manifest,
+                "--raw",
+            ],
+            check=True,
+            timeout=60,
+            env={
+                "PATH": os.environ.get("PATH", os.defpath),
+                "HOME": home,
+                "GNUPGHOME": home,
+            },
+        )
     return manifest
 
 
