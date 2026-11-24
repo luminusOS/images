@@ -37,6 +37,7 @@ HERE = Path(__file__).resolve().parent
 ROOT = HERE.parents[2]
 sys.path.insert(0, str(HERE))
 sys.path.insert(0, str(ROOT / "tools"))
+import full_testing_boot
 import install_feasibility as vmlib
 import release_pipeline
 import testing_snapshot
@@ -484,7 +485,14 @@ def kind_inputs(args: argparse.Namespace, candidate: dict) -> str:
             "private snapshot validation requires a testing image candidate"
         )
     given = (args.disk is not None, args.candidate_mirror is not None)
-    if given != ((True, True) if kind == "image" else (False, False)):
+    validation = getattr(args, "validation_snapshot", None) is not None
+    if validation and (
+        kind != "full"
+        or candidate["channel"] != "testing"
+        or getattr(args, "feature_snapshot", None) is not None
+    ):
+        raise CheckFailed("exact snapshot boot requires a full testing candidate")
+    if given != (kind == "image", kind == "image" or validation):
         raise CheckFailed(
             f"a {kind} candidate needs "
             + ("a base disk and a candidate mirror" if kind == "image" else "neither")
@@ -555,6 +563,42 @@ def _validate_full(args, candidate, receipts, diagnostics, work, vm, iso) -> Non
         base_digest = first_boot(guest, receipts, candidate, candidate_diff_ids)
         live_isolation(guest, receipts)
         installed_checks(guest, machine, receipts, fixtures, base_digest, phase)
+        validation = getattr(args, "validation_snapshot", None)
+        if validation is not None:
+            phase.write_text("exact testing feature boot\n")
+            run_id, _, sha = full_testing_boot.run_identity(os.environ)
+            full_testing_boot.require_candidate(candidate, run_id, sha)
+            manifest, descriptor, served = full_testing_boot.verify_payload(
+                validation, candidate
+            )
+            mirror = mirror_candidate(
+                work, args.candidate_mirror, candidate, args.fixture_base, diagnostics
+            )
+            if mirror["manifest"] != manifest:
+                raise CheckFailed("testing boot mirror differs from signed snapshot")
+            machine.start(None)
+            install_candidate_trust(guest, mirror["repository"])
+            _, switch = guest.run(
+                "testing-switch",
+                f"bootc switch {CANDIDATE_REPOSITORY}@{mirror['index']}",
+                timeout=3600,
+            )
+            if switch.returncode != 0:
+                raise CheckFailed("signed testing candidate was refused")
+            machine.stop()
+            machine.start(None)
+            restore_official_trust(guest)
+            observation = check_feature_snapshot(
+                guest,
+                machine,
+                candidate,
+                manifest,
+                validation,
+                verified=(descriptor, served),
+            )
+            release_pipeline.write(
+                diagnostics / "validation-boot-observation.json", observation
+            )
     except BaseException as error:
         with phase.open("a") as handle:
             handle.write(f"failed: {type(error).__name__}: {error}\n")
@@ -667,13 +711,25 @@ def feature_mirror(files: dict[str, bytes]):
             thread.join()
 
 
-def check_feature_snapshot(guest, machine, candidate, manifest, directory):
-    if testing_snapshot.verify(directory, candidate) != manifest:
-        raise CheckFailed("private snapshot does not match the booted candidate")
+def check_feature_snapshot(
+    guest, machine, candidate, manifest, directory, *, verified=None
+):
     version = candidate["build_version"]
     raw = f"luminusos-dummy_{version}.raw"
     committed = f"/var/lib/luminusos/sysext/builds/{version}/{manifest}/{raw}"
-    descriptor = release_pipeline.load(directory / "release.json")
+    if verified is None:
+        if testing_snapshot.verify(directory, candidate) != manifest:
+            raise CheckFailed("private snapshot does not match the booted candidate")
+        descriptor = release_pipeline.load(directory / "release.json")
+        served = (*testing_snapshot.MIRROR_METADATA, f"{raw}.xz")
+    else:
+        descriptor, served = verified
+        _, _, document = status(guest, "testing-first-boot")
+        if (
+            booted(document).get("imageDigest") != manifest
+            or booted(document).get("version") != version
+        ):
+            raise CheckFailed("testing guest did not boot the exact signed candidate")
     raw_hash = descriptor["features"]["dummy"]["raw_sha256"]
     if not release_pipeline.SHA.fullmatch(raw_hash):
         raise CheckFailed("invalid signed raw hash")
@@ -685,18 +741,10 @@ def check_feature_snapshot(guest, machine, candidate, manifest, directory):
         return result.stdout.strip()
 
     listed = require_guest("feature-discovery", "luminus-features list")
-    if [line.split("\t", 1)[0] for line in listed.splitlines()] != ["dummy"]:
-        raise CheckFailed(
-            "candidate does not discover exactly the signed dummy feature"
-        )
+    discovered = [line.split("\t", 1)[0] for line in listed.splitlines()]
+    if sorted(discovered) != sorted(descriptor["features"]):
+        raise CheckFailed("candidate discovery differs from the signed feature matrix")
     require_guest("feature-not-cached", f"test ! -e '{committed}'")
-    served = (
-        "release.json",
-        "release.json.gpg",
-        "SHA256SUMS",
-        "SHA256SUMS.gpg",
-        f"{raw}.xz",
-    )
     files = {f"/{version}/{name}": (directory / name).read_bytes() for name in served}
     with feature_mirror(files) as (port, fetched_paths):
         require_guest(
@@ -722,6 +770,10 @@ def check_feature_snapshot(guest, machine, candidate, manifest, directory):
         boot_id = require_guest(
             "feature-before-reboot", "cat /proc/sys/kernel/random/boot_id"
         )
+        _, _, before_document = status(guest, "feature-before-reboot-digest")
+        before_manifest = booted(before_document).get("imageDigest")
+        if before_manifest != manifest:
+            raise CheckFailed("feature manifest differs from candidate before reboot")
         machine.stop()
         machine.start(None)
         after_boot = require_guest(
@@ -744,10 +796,10 @@ def check_feature_snapshot(guest, machine, candidate, manifest, directory):
         observed = {
             "before_boot_id": boot_id,
             "after_boot_id": after_boot,
+            "before_manifest_digest": before_manifest,
+            "after_manifest_digest": booted(document)["imageDigest"],
             "platform_manifest_digest": booted(document)["imageDigest"],
-            "discovered_features": [
-                line.split("\t", 1)[0] for line in listed.splitlines()
-            ],
+            "discovered_features": discovered,
             "raw_sha256": raw_hash,
             "fetched": sorted(fetched_paths()),
             "selinux": "Enforcing",
@@ -1432,6 +1484,7 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--disk", type=Path)
     parser.add_argument("--candidate-mirror", type=Path)
     parser.add_argument("--feature-snapshot", type=Path)
+    parser.add_argument("--validation-snapshot", type=Path)
     parser.add_argument("--cid", type=int, default=3 + os.getpid() % 10000)
     args = parser.parse_args(argv)
     previous = signal.signal(signal.SIGTERM, cancelled)

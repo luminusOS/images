@@ -178,7 +178,17 @@ class DriverTests(unittest.TestCase):
                     unittest.mock.patch.object(
                         driver,
                         "status",
-                        return_value=(None, None, json.loads(bootc(digest))),
+                        side_effect=lambda _, name, digest=digest: (
+                            None,
+                            None,
+                            json.loads(
+                                bootc(
+                                    manifest
+                                    if name == "feature-before-reboot-digest"
+                                    else digest
+                                )
+                            ),
+                        ),
                     ),
                     unittest.mock.patch.object(driver, "system_health"),
                 ):

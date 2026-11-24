@@ -32,6 +32,10 @@ def build(work: Path, run_id: int, attempt: int, sha: str) -> None:
             ) from error
         raise
     candidate = snapshot.read_candidate(work / "candidate", run_id, sha)
+    build_payload(work, candidate, KEYRING)
+
+
+def build_payload(work: Path, candidate: dict, keyring: Path) -> None:
     reference = candidate["images"]["workstation"]
     repository, index = reference.split("@")
     directory = work / "snapshot"
@@ -85,7 +89,7 @@ def build(work: Path, run_id: int, attempt: int, sha: str) -> None:
             env=env,
         )
         pipeline.require(
-            installed_keyring == KEYRING.read_bytes(), "candidate keyring mismatch"
+            installed_keyring == keyring.read_bytes(), "candidate keyring mismatch"
         )
         subprocess.run(
             [
@@ -101,6 +105,27 @@ def build(work: Path, run_id: int, attempt: int, sha: str) -> None:
 
 
 def seal(work: Path, candidate: dict) -> None:
+    sign_payload(work, candidate, KEYRING)
+    version = candidate["build_version"]
+    directory = work / "snapshot"
+    names = snapshot.members(version)
+    with tarfile.open(
+        work / "snapshot.tar", "x", format=tarfile.USTAR_FORMAT
+    ) as archive:
+        for name in sorted(names):
+            path = pipeline.safe_file(directory, name)
+            pipeline.require(
+                0 < path.stat().st_size <= names[name],
+                "snapshot member exceeds its budget",
+            )
+            archive.add(path, arcname=name, recursive=False)
+    pipeline.require(
+        (work / "snapshot.tar").stat().st_size <= snapshot.MAX_ARCHIVE,
+        "snapshot exceeds its budget",
+    )
+
+
+def sign_payload(work: Path, candidate: dict, keyring: Path) -> None:
     version = candidate["build_version"]
     directory = work / "snapshot"
     manifest = snapshot.feature.platform_manifest(
@@ -157,22 +182,7 @@ def seal(work: Path, candidate: dict) -> None:
             )
         finally:
             subprocess.run(["gpgconf", "--kill", "gpg-agent"], env=env, check=False)
-        snapshot.verify(directory, candidate)
-    names = snapshot.members(version)
-    with tarfile.open(
-        work / "snapshot.tar", "x", format=tarfile.USTAR_FORMAT
-    ) as archive:
-        for name in sorted(names):
-            path = pipeline.safe_file(directory, name)
-            pipeline.require(
-                0 < path.stat().st_size <= names[name],
-                "snapshot member exceeds its budget",
-            )
-            archive.add(path, arcname=name, recursive=False)
-    pipeline.require(
-        (work / "snapshot.tar").stat().st_size <= snapshot.MAX_ARCHIVE,
-        "snapshot exceeds its budget",
-    )
+    snapshot.verify_payload(directory, candidate, keyring)
 
 
 def main() -> None:
