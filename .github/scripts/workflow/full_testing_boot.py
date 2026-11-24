@@ -120,6 +120,7 @@ def main():
     else:
         manifest, _, _ = verify_payload(work / "snapshot", candidate)
         receipts = work / "receipts"
+        receipts.mkdir(mode=0o700)
         subprocess.run(
             [
                 sys.executable,
