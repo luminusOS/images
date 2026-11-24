@@ -23,7 +23,7 @@ import zipfile
 from pathlib import Path
 
 import release_chain
-from stable_detect import require_published_base
+from stable_detect import FirstReleasePending, require_published_base
 
 AUTO_STABLE = ".github/workflows/auto-stable.yml"
 LINE = re.compile(r"release/([1-9][0-9]*)")
@@ -189,6 +189,7 @@ def run_line(
 
 def main(argv: list[str]) -> int:
     repository = os.environ["GITHUB_REPOSITORY"]
+    scheduled = os.environ.get("GITHUB_EVENT_NAME") == "schedule"
     try:
         lines = stable_lines(Path("config/releases.env"))
         if argv == ["lines"]:
@@ -203,8 +204,17 @@ def main(argv: list[str]) -> int:
             release_chain.GitHub(repository),
             int(os.environ["GITHUB_RUN_ID"]),
             # The child is always workflow_dispatch, even for a scheduled parent.
-            scheduled=os.environ["GITHUB_EVENT_NAME"] == "schedule",
+            scheduled=scheduled,
         )
+    except FirstReleasePending as pending:
+        # A line waiting for its first manual full release is not a failed
+        # release attempt; only the schedule treats it as a notice, and nothing
+        # was dispatched.
+        if not scheduled:
+            print(f"stable release chain failed: {pending}", file=sys.stderr)
+            return 1
+        print(f"::notice::{pending}", flush=True)
+        return 0
     except (
         KeyError,
         ValueError,

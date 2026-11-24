@@ -24,13 +24,17 @@ ACTIVE = ("queued", "in_progress", "waiting", "pending", "requested")
 DIGEST = re.compile(r"sha256:[0-9a-f]{64}")
 
 
+class FirstReleasePending(ValueError):
+    """The line has no published stable release yet."""
+
+
 def require_published_base(repository: str, fedora: str) -> None:
     try:
         published_base.newest_release(
             published_base.list_releases(repository), repository, "stable", fedora
         )
     except published_base.NoPublishedRelease as error:
-        raise ValueError(
+        raise FirstReleasePending(
             f"{error}; start preparation with: gh workflow run publish.yml "
             f"--repo {repository} --ref release/{fedora} "
             "-f channel=stable -f artifacts=full"

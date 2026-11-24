@@ -442,6 +442,89 @@ class DetectTests(unittest.TestCase):
             published.assert_not_called()
             detect.require_published_base(REPO, "46")
 
+    def test_scheduled_line_without_a_stable_release_is_a_notice(self) -> None:
+        testing = {
+            "tag_name": "testing-45.20261118.1",
+            "draft": False,
+            "prerelease": True,
+        }
+        env = {
+            "GITHUB_REPOSITORY": REPO,
+            "GITHUB_RUN_ID": "77",
+            "GITHUB_EVENT_NAME": "schedule",
+        }
+        github = FakeGitHub()
+        with (
+            mock.patch.dict(chain.os.environ, env, clear=True),
+            mock.patch.object(chain, "stable_lines", return_value={"45"}),
+            mock.patch.object(chain.release_chain, "GitHub", return_value=github),
+            mock.patch.object(
+                detect.published_base, "list_releases", return_value=[testing]
+            ),
+            mock.patch.object(chain.sys, "stdout", new_callable=io.StringIO) as out,
+            mock.patch.object(chain.sys, "stderr", new_callable=io.StringIO) as err,
+        ):
+            self.assertEqual(chain.main(["line", "45"]), 0)
+            self.assertIn("::notice::", out.getvalue())
+            self.assertIn(detect.published_base.FIRST_RELEASE, out.getvalue())
+            self.assertIn("-f artifacts=full", out.getvalue())
+            self.assertEqual(err.getvalue(), "")
+            self.assertEqual(github.dispatched, [])
+            with mock.patch.dict(
+                chain.os.environ, {"GITHUB_EVENT_NAME": "workflow_dispatch"}
+            ):
+                self.assertEqual(chain.main(["line", "45"]), 1)
+            self.assertIn(detect.published_base.FIRST_RELEASE, err.getvalue())
+            self.assertEqual(github.dispatched, [])
+
+    def test_scheduled_release_lookup_errors_still_fail(self) -> None:
+        env = {
+            "GITHUB_REPOSITORY": REPO,
+            "GITHUB_RUN_ID": "77",
+            "GITHUB_EVENT_NAME": "schedule",
+        }
+        unsigned = {
+            "tag_name": "45.20261118.1",
+            "draft": False,
+            "prerelease": False,
+            "author": {"login": "someone-else"},
+            "url": f"https://api.github.com/repos/{REPO}/releases/1",
+        }
+        failures = (
+            subprocess.CalledProcessError(1, ["gh", "api"]),
+            OSError("network down"),
+        )
+        for failure in failures:
+            github = FakeGitHub()
+            with (
+                self.subTest(failure=type(failure).__name__),
+                mock.patch.dict(chain.os.environ, env, clear=True),
+                mock.patch.object(chain, "stable_lines", return_value={"45"}),
+                mock.patch.object(chain.release_chain, "GitHub", return_value=github),
+                mock.patch.object(
+                    detect.published_base, "list_releases", side_effect=failure
+                ),
+                mock.patch.object(chain.sys, "stdout", new_callable=io.StringIO) as out,
+                mock.patch.object(chain.sys, "stderr", new_callable=io.StringIO),
+            ):
+                self.assertEqual(chain.main(["line", "45"]), 1)
+                self.assertNotIn("::notice::", out.getvalue())
+                self.assertEqual(github.dispatched, [])
+        github = FakeGitHub()
+        with (
+            mock.patch.dict(chain.os.environ, env, clear=True),
+            mock.patch.object(chain, "stable_lines", return_value={"45"}),
+            mock.patch.object(chain.release_chain, "GitHub", return_value=github),
+            mock.patch.object(
+                detect.published_base, "list_releases", return_value=[unsigned]
+            ),
+            mock.patch.object(chain.sys, "stdout", new_callable=io.StringIO) as out,
+            mock.patch.object(chain.sys, "stderr", new_callable=io.StringIO),
+        ):
+            self.assertEqual(chain.main(["line", "45"]), 1)
+            self.assertNotIn("::notice::", out.getvalue())
+            self.assertEqual(github.dispatched, [])
+
     def test_lines_must_be_numbers(self):
         self.assertEqual(detect.parse_lines('STABLE_LINES="45 46"\n'), {"45", "46"})
         for config in ('STABLE_LINES="45;x"\n', "", 'STABLE_LINES="04"\n'):
