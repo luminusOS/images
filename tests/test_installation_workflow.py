@@ -316,6 +316,18 @@ class RunnerTests(unittest.TestCase):
 
 
 class WorkflowTests(unittest.TestCase):
+    def test_snapshot_tools_are_available_before_private_download(self):
+        steps = load_workflow("installation-validation.yml")["jobs"]["installation"][
+            "steps"
+        ]
+        names = [label(step) for step in steps]
+        tooling = names.index("Ensure private snapshot tools are available")
+        self.assertLess(
+            tooling, names.index("Download and verify the bounded private snapshot")
+        )
+        self.assertEqual(steps[tooling]["if"], "inputs.testing_feature_snapshot")
+        self.assertIn("gpgv", steps[tooling]["run"])
+
     def test_workflow_restricts_runner_environment_and_permissions(self):
         workflow = yaml.load(
             (ROOT / ".github/workflows/installation-validation.yml").read_text(),
@@ -327,7 +339,9 @@ class WorkflowTests(unittest.TestCase):
         job = workflow["jobs"]["installation"]
         self.assertEqual(
             job["if"],
-            "(github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/heads/release/')) && github.event_name == 'workflow_dispatch'",
+            "(github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/heads/release/'))"
+            " && github.event_name == 'workflow_dispatch'"
+            " && (!inputs.testing_feature_snapshot || (github.repository_id == '1118572971' && github.ref == 'refs/heads/main'))",
         )
         self.assertEqual(job["runs-on"], "ubuntu-26.04")
         self.assertEqual(job["environment"], "candidate-staging")
@@ -365,9 +379,19 @@ class WorkflowTests(unittest.TestCase):
         uploads = [s for s in job["steps"] if "upload-artifact" in s.get("uses", "")]
         self.assertEqual(
             [u["with"]["name"] for u in uploads],
-            ["installation-validation", "installation-validation-diagnostics"],
+            [
+                "isolated-testing-feature-boot",
+                "installation-validation",
+                "installation-validation-diagnostics",
+            ],
         )
-        self.assertEqual(uploads[1]["if"], "${{ failure() || cancelled() }}")
+        self.assertEqual(uploads[0]["if"], "inputs.testing_feature_snapshot")
+        self.assertEqual(len(uploads[0]["with"]["path"].strip().splitlines()), 2)
+        self.assertEqual(uploads[1]["if"], "${{ !inputs.testing_feature_snapshot }}")
+        self.assertEqual(
+            uploads[2]["if"],
+            "${{ !inputs.testing_feature_snapshot && (failure() || cancelled()) }}",
+        )
         cleanup = steps["Remove the staged candidate image"]
         self.assertEqual(cleanup["if"], "${{ always() }}")
         self.assertIn('rm -rf "$RUNNER_TEMP/fixture-base"', cleanup["run"])
@@ -416,7 +440,16 @@ class KindWorkflowTests(unittest.TestCase):
         return {label(step): step for step in job["steps"]}
 
     def test_full_candidates_run_the_existing_installation_steps(self):
-        full = [label(s) for s in self.installation["steps"] if not image_only(s)]
+        full = [
+            label(s)
+            for s in self.installation["steps"]
+            if not image_only(s)
+            and s.get("if")
+            not in (
+                "inputs.testing_feature_snapshot",
+                "always() && inputs.testing_feature_snapshot",
+            )
+        ]
         self.assertEqual(full, FULL_STEPS)
         for step in self.disk["steps"]:
             if label(step) in (
@@ -442,11 +475,34 @@ class KindWorkflowTests(unittest.TestCase):
             {
                 "RELEASE_KIND": "${{ steps.candidate.outputs.release_kind }}",
                 "DISK_KIND": "${{ needs.disk.outputs.release_kind }}",
+                "SNAPSHOT_KEY": "${{ steps.candidate.outputs.snapshot_key }}",
+                "DISK_SNAPSHOT_KEY": "${{ needs.disk.outputs.snapshot_key }}",
             },
         )
         for job in (self.disk, self.installation):
             fetch = self.steps(job)["Fetch and verify candidate"]
             self.assertEqual(fetch["id"], "candidate")
+
+    def test_isolated_validation_cannot_emit_promotion_evidence(self):
+        steps = self.steps(self.installation)
+        self.assertEqual(
+            self.workflow["on"]["workflow_dispatch"]["inputs"][
+                "testing_feature_snapshot"
+            ]["default"],
+            "false",
+        )
+        download = steps["Download and verify the bounded private snapshot"]
+        self.assertEqual(download["if"], "inputs.testing_feature_snapshot")
+        self.assertIn(
+            "R2_READ_SECRET_ACCESS_KEY", download["env"]["AWS_SECRET_ACCESS_KEY"]
+        )
+        self.assertEqual(
+            steps["Record and sign observed validation"]["if"],
+            "${{ !inputs.testing_feature_snapshot }}",
+        )
+        for name, step in steps.items():
+            if name != download["name"]:
+                self.assertNotIn("AWS_SECRET_ACCESS_KEY", step.get("env", {}))
 
     def test_disk_is_built_on_the_runner_that_builds_release_qcow2(self):
         publish = load_workflow("publish.yml")["jobs"]

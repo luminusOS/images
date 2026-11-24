@@ -14,6 +14,7 @@ FROM scratch AS ctx-sysext
 
 COPY editions/workstation/sysext/feature-manifest.sh /feature-manifest.sh
 COPY editions/workstation/features /features
+COPY editions/workstation/sysext/testing-feature-staging.pgp /testing-feature-staging.pgp
 
 FROM scratch AS ctx-flatpaks
 
@@ -216,6 +217,14 @@ RUN --mount=type=cache,target=/var/cache/dnf \
 # The system overlay mirrors the installed filesystem. Live-installer files
 # live in a separate overlay consumed only by Containerfile.installer.
 COPY editions/workstation/files/system/ /
+ARG isolated_feature_keyring=0
+RUN --mount=type=bind,from=ctx-sysext,source=/testing-feature-staging.pgp,target=/testing-feature-staging.pgp,ro \
+    case "${isolated_feature_keyring}" in \
+      0) ;; \
+      1) test "${image_channel}" = testing && test -s /testing-feature-staging.pgp && \
+         install -m 0644 /testing-feature-staging.pgp /usr/share/luminusos/sysupdate/luminusos.pgp ;; \
+      *) exit 1 ;; \
+    esac
 COPY shared/trust/ /
 # GDM renders the login-screen logo at natural size, so keep it small.
 COPY editions/workstation/assets/gdm-logo.png /usr/share/pixmaps/luminusos-gdm-logo.png

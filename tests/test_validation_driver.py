@@ -2,6 +2,7 @@ import gzip
 import hashlib
 import io
 import json
+import re
 import subprocess
 import sys
 import tarfile
@@ -9,6 +10,7 @@ import tempfile
 import unittest
 import unittest.mock
 from pathlib import Path
+from urllib.request import urlopen
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / ".github/scripts/workflow"))
@@ -103,6 +105,113 @@ def mounts(sysroot="btrfs", var="btrfs", boot="ext4"):
 
 
 class DriverTests(unittest.TestCase):
+    def test_feature_observation_requires_payload_fetch_reboot_and_same_manifest(self):
+        document = candidate()
+        version = document["build_version"]
+        manifest = "sha256:" + "a" * 64
+        payload = f"luminusos-dummy_{version}.raw.xz"
+        raw = "b" * 64
+        boot_id = "00000000-0000-0000-0000-000000000001"
+        reboot_id = "00000000-0000-0000-0000-000000000002"
+        cases = {
+            "valid": None,
+            "missing-fetch": "did not fetch",
+            "no-reboot": "did not reboot",
+            "different-image": "changed the booted candidate digest",
+        }
+        for case, error in cases.items():
+            with self.subTest(case=case), tempfile.TemporaryDirectory() as directory:
+                root = Path(directory)
+                (root / "release.json").write_text(
+                    json.dumps({"features": {"dummy": {"raw_sha256": raw}}})
+                )
+                for name in (
+                    "release.json.gpg",
+                    "SHA256SUMS",
+                    "SHA256SUMS.gpg",
+                    payload,
+                ):
+                    (root / name).write_bytes(b"fixture")
+
+                class Guest(FakeGuest):
+                    fetch_payload = case != "missing-fetch"
+
+                    def run(self, name, command, **kwargs):
+                        if name == "feature-fetch" and self.fetch_payload:
+                            port = re.search(
+                                r"http://10\.0\.2\.2:(\d+)",
+                                self.commands["feature-mirror"],
+                            )[1]
+                            for filename in ("release.json.gpg", payload):
+                                with urlopen(
+                                    f"http://127.0.0.1:{port}/{version}/{filename}",
+                                    timeout=3,
+                                ) as response:
+                                    self.assert_payload(response.read())
+                        return super().run(name, command, **kwargs)
+
+                    @staticmethod
+                    def assert_payload(data):
+                        if data != b"fixture":
+                            raise AssertionError("unexpected mirror payload")
+
+                guest = Guest(
+                    {
+                        "feature-discovery": done("dummy\tDummy"),
+                        "feature-not-cached": done(),
+                        "feature-mirror": done(),
+                        "feature-fetch": done(),
+                        "feature-hash": done(),
+                        "feature-before-reboot": done(boot_id),
+                        "feature-after-reboot": done(
+                            boot_id if case == "no-reboot" else reboot_id
+                        ),
+                        "feature-active": done(),
+                    }
+                )
+                machine = unittest.mock.Mock()
+                digest = "sha256:" + "0" * 64 if case == "different-image" else manifest
+                with (
+                    unittest.mock.patch.object(
+                        driver.testing_snapshot, "verify", return_value=manifest
+                    ),
+                    unittest.mock.patch.object(
+                        driver,
+                        "status",
+                        return_value=(None, None, json.loads(bootc(digest))),
+                    ),
+                    unittest.mock.patch.object(driver, "system_health"),
+                ):
+                    if error:
+                        with self.assertRaisesRegex(driver.CheckFailed, error):
+                            driver.check_feature_snapshot(
+                                guest, machine, document, manifest, root
+                            )
+                        self.assertNotIn("feature-active", guest.commands)
+                    else:
+                        observation = driver.check_feature_snapshot(
+                            guest, machine, document, manifest, root
+                        )
+                        self.assertEqual(observation["before_boot_id"], boot_id)
+                        self.assertEqual(observation["after_boot_id"], reboot_id)
+                        self.assertEqual(
+                            observation["platform_manifest_digest"], manifest
+                        )
+                        self.assertEqual(
+                            observation["fetched"],
+                            sorted(
+                                f"/{version}/{name}"
+                                for name in ("release.json.gpg", payload)
+                            ),
+                        )
+                        self.assertIn("getenforce", guest.commands["feature-active"])
+                        self.assertIn(
+                            "systemctl is-active", guest.commands["feature-active"]
+                        )
+                        machine.assert_has_calls(
+                            [unittest.mock.call.stop(), unittest.mock.call.start(None)]
+                        )
+
     def setUp(self):
         self.tmp = Path(tempfile.mkdtemp())
         self.receipts = driver.Receipts(self.tmp, candidate())

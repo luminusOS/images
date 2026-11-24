@@ -4,6 +4,7 @@ import os
 import re
 import subprocess
 import sys
+import tempfile
 import urllib.error
 import urllib.parse
 import urllib.request
@@ -65,6 +66,44 @@ def require_private_staging(repository: str) -> None:
     _require_denied(repository, PLACEHOLDER)
 
 
+def isolated_workstation_index(tag: str, source: str) -> str:
+    with tempfile.TemporaryDirectory() as home:
+        metadata = Path(home) / "index.json"
+        subprocess.run(
+            [
+                "docker",
+                "buildx",
+                "imagetools",
+                "create",
+                "--prefer-index=true",
+                "--tag",
+                tag,
+                "--metadata-file",
+                str(metadata),
+                source,
+            ],
+            env={
+                key: value
+                for key, value in os.environ.items()
+                if key not in ("CANDIDATE_COSIGN_PRIVATE_KEY", "COSIGN_PASSWORD")
+            },
+            check=True,
+        )
+        descriptor = json.loads(metadata.read_text())["containerimage.descriptor"]
+    digest = descriptor.get("digest")
+    if (
+        descriptor.get("mediaType")
+        not in (
+            "application/vnd.oci.image.index.v1+json",
+            "application/vnd.docker.distribution.manifest.list.v2+json",
+        )
+        or not isinstance(digest, str)
+        or not re.fullmatch(r"sha256:[0-9a-f]{64}", digest)
+    ):
+        raise ValueError("isolated workstation staging did not produce an image index")
+    return f"{tag.rsplit(':', 1)[0]}@{digest}"
+
+
 def push_and_sign(image: str) -> str:
     if os.environ.get("SECURITY_FINDINGS_BYPASS", "false") != "false":
         raise ValueError("diagnostic bypass cannot publish or sign candidates")
@@ -84,6 +123,10 @@ def push_and_sign(image: str) -> str:
     if len(matches) != 1:
         raise ValueError(f"push did not return one manifest digest for {image}")
     immutable = f"{image.rsplit(':', 1)[0]}@{matches[0]}"
+    if os.environ.get("ISOLATED_FEATURE_CANDIDATE") == "true" and image.split(":", 1)[
+        1
+    ].startswith("workstation-candidate-"):
+        immutable = isolated_workstation_index(image, immutable)
     subprocess.run(
         [
             "cosign",

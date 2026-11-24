@@ -28,7 +28,10 @@ import sys
 import tarfile
 import time
 import urllib.request
+from contextlib import contextmanager
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
+from threading import Lock, Thread
 
 HERE = Path(__file__).resolve().parent
 ROOT = HERE.parents[2]
@@ -36,6 +39,7 @@ sys.path.insert(0, str(HERE))
 sys.path.insert(0, str(ROOT / "tools"))
 import install_feasibility as vmlib
 import release_pipeline
+import testing_snapshot
 from qemu_security import secure_firmware
 
 REGISTRY_HOST = "registry.validation.test"
@@ -473,6 +477,12 @@ def validate(args: argparse.Namespace) -> None:
 
 def kind_inputs(args: argparse.Namespace, candidate: dict) -> str:
     kind = release_pipeline.release_kind(candidate)
+    if getattr(args, "feature_snapshot", None) is not None and (
+        kind != "image" or candidate["channel"] != "testing"
+    ):
+        raise CheckFailed(
+            "private snapshot validation requires a testing image candidate"
+        )
     given = (args.disk is not None, args.candidate_mirror is not None)
     if given != ((True, True) if kind == "image" else (False, False)):
         raise CheckFailed(
@@ -592,7 +602,17 @@ def _validate_image(args, candidate, receipts, diagnostics, work, vm) -> None:
         )
         if base_digest != mirror["manifest"]:
             raise CheckFailed("the checked system is not the mirrored candidate")
+        observation = None
+        if getattr(args, "feature_snapshot", None) is not None:
+            phase.write_text("testing feature snapshot\n")
+            observation = check_feature_snapshot(
+                guest, machine, candidate, base_digest, args.feature_snapshot
+            )
         installed_checks(guest, machine, receipts, fixtures, base_digest, phase)
+        if observation is not None:
+            release_pipeline.write(
+                diagnostics / "feature-observation.json", observation
+            )
     except BaseException as error:
         with phase.open("a") as handle:
             handle.write(f"failed: {type(error).__name__}: {error}\n")
@@ -602,6 +622,142 @@ def _validate_image(args, candidate, receipts, diagnostics, work, vm) -> None:
         if registry is not None:
             terminate(registry)
     require_complete(receipts)
+
+
+@contextmanager
+def feature_mirror(files: dict[str, bytes]):
+    fetched = set()
+    delivery = Lock()
+
+    def fetched_paths():
+        with delivery:
+            return fetched.copy()
+
+    class Handler(BaseHTTPRequestHandler):
+        def do_GET(self):
+            self.send_file(include_body=True)
+
+        def do_HEAD(self):
+            self.send_file(include_body=False)
+
+        def send_file(self, *, include_body):
+            data = files.get(self.path)
+            if data is None:
+                self.send_error(404)
+                return
+            self.send_response(200)
+            self.send_header("Content-Length", str(len(data)))
+            self.end_headers()
+            if include_body:
+                self.connection.settimeout(10)
+                with delivery:
+                    self.wfile.write(data)
+                    fetched.add(self.path)
+
+        def log_message(self, *_):
+            pass
+
+    with ThreadingHTTPServer(("127.0.0.1", 0), Handler) as server:
+        thread = Thread(target=server.serve_forever, daemon=True)
+        thread.start()
+        try:
+            yield server.server_port, fetched_paths
+        finally:
+            server.shutdown()
+            thread.join()
+
+
+def check_feature_snapshot(guest, machine, candidate, manifest, directory):
+    if testing_snapshot.verify(directory, candidate) != manifest:
+        raise CheckFailed("private snapshot does not match the booted candidate")
+    version = candidate["build_version"]
+    raw = f"luminusos-dummy_{version}.raw"
+    committed = f"/var/lib/luminusos/sysext/builds/{version}/{manifest}/{raw}"
+    descriptor = release_pipeline.load(directory / "release.json")
+    raw_hash = descriptor["features"]["dummy"]["raw_sha256"]
+    if not release_pipeline.SHA.fullmatch(raw_hash):
+        raise CheckFailed("invalid signed raw hash")
+
+    def require_guest(name, command):
+        _, result = guest.run(name, command)
+        if result.returncode != 0:
+            raise CheckFailed(f"guest feature check failed: {name}")
+        return result.stdout.strip()
+
+    listed = require_guest("feature-discovery", "luminus-features list")
+    if [line.split("\t", 1)[0] for line in listed.splitlines()] != ["dummy"]:
+        raise CheckFailed(
+            "candidate does not discover exactly the signed dummy feature"
+        )
+    require_guest("feature-not-cached", f"test ! -e '{committed}'")
+    served = (
+        "release.json",
+        "release.json.gpg",
+        "SHA256SUMS",
+        "SHA256SUMS.gpg",
+        f"{raw}.xz",
+    )
+    files = {f"/{version}/{name}": (directory / name).read_bytes() for name in served}
+    with feature_mirror(files) as (port, fetched_paths):
+        require_guest(
+            "feature-mirror",
+            "install -d /etc/luminusos && "
+            f"""printf '%s\\n' '{{"base_url":"http://10.0.2.2:{port}"}}' > /etc/luminusos/sysext.json""",
+        )
+        require_guest(
+            "feature-fetch",
+            "luminus-features enable dummy && systemctl start luminusos-sysext-sync.service",
+        )
+        require_guest(
+            "feature-hash",
+            f"printf '%s  %s\\n' '{raw_hash}' '{committed}' | sha256sum -c",
+        )
+        if (
+            not {f"/{version}/{raw}.xz", f"/{version}/release.json.gpg"}
+            <= fetched_paths()
+        ):
+            raise CheckFailed(
+                "guest did not fetch the private payload and its signed descriptor"
+            )
+        boot_id = require_guest(
+            "feature-before-reboot", "cat /proc/sys/kernel/random/boot_id"
+        )
+        machine.stop()
+        machine.start(None)
+        after_boot = require_guest(
+            "feature-after-reboot", "cat /proc/sys/kernel/random/boot_id"
+        )
+        if after_boot == boot_id:
+            raise CheckFailed("feature activation did not reboot")
+        _, _, document = status(guest, "feature-reboot-digest")
+        if booted(document).get("imageDigest") != manifest:
+            raise CheckFailed("feature reboot changed the booted candidate digest")
+        system_health(guest, "feature-reboot")
+        require_guest(
+            "feature-active",
+            f'test "$(getenforce)" = Enforcing && '
+            f"printf '%s  %s\\n' '{raw_hash}' '{committed}' | sha256sum -c && "
+            "luminus-features status | grep -Fx \"$(printf 'dummy\\tprovisioned')\" && "
+            "systemctl is-active luminusos-dummy-hello.service && "
+            "test \"$(/usr/libexec/luminusos-dummy/hello)\" = 'LuminusOS test feature is active'",
+        )
+        observed = {
+            "before_boot_id": boot_id,
+            "after_boot_id": after_boot,
+            "platform_manifest_digest": booted(document)["imageDigest"],
+            "discovered_features": [
+                line.split("\t", 1)[0] for line in listed.splitlines()
+            ],
+            "raw_sha256": raw_hash,
+            "fetched": sorted(fetched_paths()),
+            "selinux": "Enforcing",
+            "service": "active",
+            "merge": "provisioned",
+        }
+        testing_snapshot.feature.validate_observation(
+            observed, version, manifest, raw_hash
+        )
+        return observed
 
 
 def require_complete(receipts: Receipts) -> None:
@@ -1275,6 +1431,7 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--fixture-base", type=Path, required=True)
     parser.add_argument("--disk", type=Path)
     parser.add_argument("--candidate-mirror", type=Path)
+    parser.add_argument("--feature-snapshot", type=Path)
     parser.add_argument("--cid", type=int, default=3 + os.getpid() % 10000)
     args = parser.parse_args(argv)
     previous = signal.signal(signal.SIGTERM, cancelled)
