@@ -63,6 +63,25 @@ jobs:
       - name: Run tests
         run: just test
 
+  sysext-lab:
+    name: Hardware feature lab
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-26.04
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ inputs.checkout_ref || github.sha }}
+          persist-credentials: false
+
+      - name: Install container tooling
+        run: |
+          sudo apt-get update
+          sudo apt-get install --no-install-recommends -y jq podman
+
+      - name: Build, sign, fetch and discover the dummy feature
+        run: bash tests/sysext-lab.sh
+
   actionlint:
     name: Lint workflows
     runs-on: ubuntu-24.04

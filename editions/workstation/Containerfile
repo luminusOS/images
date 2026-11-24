@@ -10,6 +10,12 @@ FROM scratch AS ctx-workstation-script
 
 COPY editions/workstation/build.py /workstation/build.py
 
+FROM scratch AS ctx-sysext
+
+COPY editions/workstation/sysext/feature-manifest.sh /feature-manifest.sh
+COPY editions/workstation/features /features
+COPY editions/workstation/sysext/testing-feature-staging.pgp /testing-feature-staging.pgp
+
 FROM scratch AS ctx-flatpaks
 
 COPY shared/flatpaks /flatpaks
@@ -72,6 +78,7 @@ RUN --mount=type=cache,target=/var/cache/dnf \
       grub2-efi-x64 grub2-efi-x64-modules grub2-efi-x64-cdboot \
       shim-x64 dosfstools \
       bootc \
+      python3 systemd-container \
       toolbox \
       flatpak \
       glibc-all-langpacks \
@@ -210,6 +217,14 @@ RUN --mount=type=cache,target=/var/cache/dnf \
 # The system overlay mirrors the installed filesystem. Live-installer files
 # live in a separate overlay consumed only by Containerfile.installer.
 COPY editions/workstation/files/system/ /
+ARG isolated_feature_keyring=0
+RUN --mount=type=bind,from=ctx-sysext,source=/testing-feature-staging.pgp,target=/testing-feature-staging.pgp,ro \
+    case "${isolated_feature_keyring}" in \
+      0) ;; \
+      1) test "${image_channel}" = testing && test -s /testing-feature-staging.pgp && \
+         install -m 0644 /testing-feature-staging.pgp /usr/share/luminusos/sysupdate/luminusos.pgp ;; \
+      *) exit 1 ;; \
+    esac
 COPY shared/trust/ /
 # GDM renders the login-screen logo at natural size, so keep it small.
 COPY editions/workstation/assets/gdm-logo.png /usr/share/pixmaps/luminusos-gdm-logo.png
@@ -241,6 +256,9 @@ RUN --mount=type=bind,from=ctx-workstation-script,source=/,target=/ctx \
     --mount=type=bind,from=python-tools,source=/usr,target=/opt/python,ro \
     env PYTHONHOME=/opt/python LD_LIBRARY_PATH=/opt/python/lib64 /opt/python/bin/python3 /ctx/workstation/build.py
 
+RUN --mount=type=bind,from=ctx-sysext,source=/,target=/ctx \
+    bash /ctx/feature-manifest.sh generate /ctx/features /
+
 # Dynamic branding stays late so version-only changes reuse package layers.
 RUN --mount=type=bind,from=ctx-scripts,source=/scripts,target=/scripts \
     --mount=type=bind,from=python-tools,source=/usr,target=/opt/python,ro \
@@ -249,6 +267,7 @@ RUN --mount=type=bind,from=ctx-scripts,source=/scripts,target=/scripts \
       VERSION "${image_version}" \
       BUILD_ID "${image_version}" \
       IMAGE_VERSION "${image_version}" \
+      SYSEXT_LEVEL "${image_version}" \
       VARIANT "${edition_name}" \
       VARIANT_ID "${edition_id}" \
       LOGO "luminusos-logo-icon"
@@ -332,6 +351,39 @@ RUN set -eux; \
     test -f /usr/share/pixmaps/fedora_whitelogo_med.png && \
     test -f /usr/share/icons/hicolor/scalable/apps/luminusos-logo-icon.svg && \
     grep -q '^LOGO="luminusos-logo-icon"$' /usr/lib/os-release && \
+    ( . /usr/lib/os-release && test -n "${image_version}" && \
+      test "${IMAGE_VERSION}" = "${image_version}" && \
+      test "${SYSEXT_LEVEL}" = "${image_version}" ) && \
+    test ! -e /usr/lib/sysupdate.d && \
+    test -x /usr/lib/systemd/systemd-pull && \
+    test -x /usr/bin/python3 && \
+    test -x /usr/libexec/luminusos/sysext && \
+    test "$(readlink -f /usr/bin/luminus-features)" = /usr/libexec/luminusos/sysext && \
+    test -f /usr/share/luminusos/sysupdate/luminusos.pgp && \
+    test ! -e /etc/systemd/import-pubring.pgp && \
+    systemctl is-enabled luminusos-sysext-sync.timer && \
+    systemctl is-enabled luminusos-sysext-units.service && \
+    systemctl is-enabled systemd-sysext.service && \
+    grep -qx 'Wants=luminusos-sysext-activate.service' /usr/lib/systemd/system/systemd-sysext.service.d/10-luminusos.conf && \
+    grep -qx 'ExecStartPost=-/usr/bin/systemctl --no-block start luminusos-sysext-update.service' \
+      /usr/lib/systemd/system/bootc-fetch-apply-updates.service.d/20-luminusos-sysext.conf && \
+    for u in luminusos-sysext-sync.service luminusos-sysext-update.service; do \
+      grep -qx 'InaccessiblePaths=-/run/systemd/sysupdate/notify' "/usr/lib/systemd/system/${u}" || exit 1; \
+    done && \
+    for u in systemd-sysupdate-update.timer systemd-sysupdate-reboot.timer systemd-sysupdate-auto-enable.service; do \
+      state="$(systemctl is-enabled "${u}" 2>/dev/null || true)"; \
+      case "${state}" in enabled|enabled-runtime|static|alias|indirect|generated) \
+        echo "${u} must stay disabled (${state})"; exit 1 ;; esac; \
+    done && \
+    test -f /usr/lib/luminusos/sysupdate-discovery/luminusos-discovery-probe.feature && \
+    for f in /usr/lib/luminusos/sysupdate-discovery/*.feature; do \
+      id="$(basename "${f}" .feature)"; \
+      [ "${id}" = luminusos-discovery-probe ] || \
+        test -f "/usr/lib/luminusos/sysupdate/${id}.transfer.in" || exit 1; \
+    done && \
+    /usr/lib/systemd/systemd-sysupdate --definitions=/usr/lib/luminusos/sysupdate-discovery features --json=short | \
+      jq -e --argjson n "$(ls /usr/lib/luminusos/sysupdate-discovery/*.feature | wc -l)" \
+        '(.features | length) == $n and (.features | index("luminusos-discovery-probe"))' && \
     GSETTINGS_BACKEND=memory gsettings get org.gnome.login-screen logo | grep -q luminusos && \
     GSETTINGS_BACKEND=memory gsettings --schemadir \
       /usr/share/gnome-shell/extensions/${aurora_shell_uuid}/schemas \

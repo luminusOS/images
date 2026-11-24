@@ -90,6 +90,16 @@ def run_validation(candidate_dir, runner_temp, run_id, repository, fixture_base)
     ):
         raise ValueError("validation must run on the candidate's release line")
     extra = kind_inputs(candidate, runner_temp)
+    if os.environ.get("FEATURE_SNAPSHOT") == "true":
+        if (
+            candidate["channel"] != "testing"
+            or release_pipeline.release_kind(candidate) != "image"
+        ):
+            raise ValueError("private snapshots require a testing image candidate")
+        extra += [
+            "--feature-snapshot",
+            str(owned_directory(runner_temp / "testing-feature-snapshot")),
+        ]
     receipts = Path(tempfile.mkdtemp(prefix="luminusos-validation-", dir=runner_temp))
     os.chmod(receipts, 0o700)
     environment = {

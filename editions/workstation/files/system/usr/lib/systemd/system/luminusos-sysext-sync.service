@@ -1,0 +1,14 @@
+[Unit]
+Description=Reconcile LuminusOS hardware features for the booted and staged builds
+Wants=network-online.target
+After=network-online.target
+
+[Service]
+Type=oneshot
+Delegate=yes
+# systemd-sysupdate refreshes the live merge through this socket after every
+# successful update; activation is boot-only, so the worker must not reach it.
+InaccessiblePaths=-/run/systemd/sysupdate/notify
+TimeoutStartSec=1h
+ExecCondition=/bin/sh -c '! nmcli -t -f GENERAL.METERED device show 2>/dev/null | grep -q ":yes"'
+ExecStart=/usr/libexec/luminusos/sysext update sync

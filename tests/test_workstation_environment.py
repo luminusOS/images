@@ -24,7 +24,16 @@ class WorkstationEnvironmentTests(unittest.TestCase):
         ):
             runpy.run_path(str(script))
             self.assertEqual(dict(os.environ), contaminated)
-            self.assertEqual(run.call_count, 7)
+            self.assertEqual(run.call_count, 8)
+            self.assertIn(
+                [
+                    "systemctl",
+                    "enable",
+                    "luminusos-sysext-sync.timer",
+                    "luminusos-sysext-units.service",
+                ],
+                [call.args[0] for call in run.call_args_list],
+            )
             for call in run.call_args_list:
                 self.assertTrue(call.kwargs["check"])
                 self.assertEqual(

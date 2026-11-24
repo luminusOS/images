@@ -1,0 +1,11 @@
+[Unit]
+Description=LuminusOS test feature marker
+ConditionPathExists=/usr/libexec/luminusos-dummy/hello
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ExecStart=/usr/libexec/luminusos-dummy/hello
+
+[Install]
+WantedBy=luminusos-features.target

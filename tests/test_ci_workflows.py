@@ -2394,7 +2394,9 @@ class ContainerWorkflowTests(unittest.TestCase):
         self.assertNotIn("release", prepare["needs"])
         self.assertTrue(
             any(
-                step.get("with", {}).get("name") == "release-candidate"
+                step.get("with", {})
+                .get("name", "")
+                .endswith("|| 'release-candidate' }}")
                 for step in prepare["steps"]
             )
         )
@@ -2413,6 +2415,45 @@ class ContainerWorkflowTests(unittest.TestCase):
         ]
         self.assertEqual(len(gates), 1)
         self.assertIn("SOURCE_IMAGE_SHA", gates[0]["env"])
+
+    def test_isolated_producer_signs_the_workstation_index_not_its_push_digest(self):
+        image = "ghcr.io/luminusos/luminusos-candidates:workstation-candidate-123-2"
+        repository = image.split(":", 1)[0]
+        pushed = "sha256:" + "c" * 64
+        index = "sha256:" + "d" * 64
+        tag = f"{repository}@{index}"
+
+        def run(command, **_):
+            if command[:2] == ["docker", "push"]:
+                return types.SimpleNamespace(stdout=f"digest: {pushed}", stderr="")
+            if command[:4] == ["docker", "buildx", "imagetools", "create"]:
+                self.assertEqual(command[-1], f"{repository}@{pushed}")
+                metadata = Path(command[command.index("--metadata-file") + 1])
+                metadata.write_text(
+                    json.dumps(
+                        {
+                            "containerimage.descriptor": {
+                                "mediaType": "application/vnd.oci.image.index.v1+json",
+                                "digest": index,
+                            }
+                        }
+                    )
+                )
+            elif command[0] == "cosign":
+                self.assertEqual(command[-1], tag)
+
+        with (
+            patch.dict(
+                sign_candidates.os.environ,
+                {
+                    "CANDIDATE_COSIGN_PRIVATE_KEY": "fixture",
+                    "ISOLATED_FEATURE_CANDIDATE": "true",
+                },
+                clear=True,
+            ),
+            patch.object(sign_candidates.subprocess, "run", side_effect=run),
+        ):
+            self.assertEqual(sign_candidates.push_and_sign(image), tag)
 
     def test_validation_caller_is_read_only_and_does_not_inherit_secrets(self):
         workflow = self.load_workflow("build-containers.yml")

@@ -7,6 +7,10 @@ on:
         description: Successful release candidate run ID from this branch's release line
         type: string
         required: true
+      testing_feature_snapshot:
+        description: Validate a private snapshot from the isolated testing producer (main only)
+        type: boolean
+        default: false
 
 permissions:
   contents: read
@@ -21,7 +25,7 @@ jobs:
   # profile on ubuntu-26.04, so an image candidate's disposable base disk is
   # built where publish.yml builds its qcow2 and booted by the next job.
   disk:
-    if: (github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/heads/release/')) && github.event_name == 'workflow_dispatch'
+    if: (github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/heads/release/')) && github.event_name == 'workflow_dispatch' && (!inputs.testing_feature_snapshot || (github.repository_id == '1118572971' && github.ref == 'refs/heads/main'))
     runs-on: ubuntu-24.04
     timeout-minutes: 180
     permissions:
@@ -29,6 +33,7 @@ jobs:
       actions: read
     outputs:
       release_kind: ${{ steps.candidate.outputs.release_kind }}
+      snapshot_key: ${{ steps.candidate.outputs.snapshot_key }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -41,7 +46,13 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           CANDIDATE_RUN_ID: ${{ inputs.candidate_run_id }}
-        run: python3 .github/scripts/workflow/release_pipeline.py fetch-candidate --repository "$GITHUB_REPOSITORY" --run-id "$CANDIDATE_RUN_ID" --output candidate --public-key shared/release/candidate.pub
+          FEATURE_SNAPSHOT: ${{ inputs.testing_feature_snapshot }}
+        run: |
+          if [ "$FEATURE_SNAPSHOT" = true ]; then
+            python3 .github/scripts/workflow/testing_snapshot.py fetch-candidate "$CANDIDATE_RUN_ID" candidate
+          else
+            python3 .github/scripts/workflow/release_pipeline.py fetch-candidate --repository "$GITHUB_REPOSITORY" --run-id "$CANDIDATE_RUN_ID" --output candidate --public-key shared/release/candidate.pub
+          fi
       - name: Free disk space
         if: steps.candidate.outputs.release_kind == 'image'
         uses: jlumbroso/free-disk-space@ceedf095f4ec1a097402bc6bd80831f2e1a6fde6 # v2.0.0
@@ -102,7 +113,7 @@ jobs:
 
   installation:
     needs: disk
-    if: (github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/heads/release/')) && github.event_name == 'workflow_dispatch'
+    if: (github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/heads/release/')) && github.event_name == 'workflow_dispatch' && (!inputs.testing_feature_snapshot || (github.repository_id == '1118572971' && github.ref == 'refs/heads/main'))
     runs-on: ubuntu-26.04
     environment: candidate-staging
     timeout-minutes: 350
@@ -134,12 +145,38 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           CANDIDATE_RUN_ID: ${{ inputs.candidate_run_id }}
-        run: python3 .github/scripts/workflow/release_pipeline.py fetch-candidate --repository "$GITHUB_REPOSITORY" --run-id "$CANDIDATE_RUN_ID" --output candidate --public-key shared/release/candidate.pub
+          FEATURE_SNAPSHOT: ${{ inputs.testing_feature_snapshot }}
+        run: |
+          if [ "$FEATURE_SNAPSHOT" = true ]; then
+            python3 .github/scripts/workflow/testing_snapshot.py fetch-candidate "$CANDIDATE_RUN_ID" candidate
+          else
+            python3 .github/scripts/workflow/release_pipeline.py fetch-candidate --repository "$GITHUB_REPOSITORY" --run-id "$CANDIDATE_RUN_ID" --output candidate --public-key shared/release/candidate.pub
+          fi
       - name: Require the kind the disk job saw
         env:
           RELEASE_KIND: ${{ steps.candidate.outputs.release_kind }}
           DISK_KIND: ${{ needs.disk.outputs.release_kind }}
-        run: test -n "$RELEASE_KIND" && test "$RELEASE_KIND" = "$DISK_KIND"
+          SNAPSHOT_KEY: ${{ steps.candidate.outputs.snapshot_key }}
+          DISK_SNAPSHOT_KEY: ${{ needs.disk.outputs.snapshot_key }}
+        run: test -n "$RELEASE_KIND" && test "$RELEASE_KIND" = "$DISK_KIND" && test "$SNAPSHOT_KEY" = "$DISK_SNAPSHOT_KEY"
+      - name: Ensure private snapshot tools are available
+        if: inputs.testing_feature_snapshot
+        run: |
+          if ! command -v gpgv >/dev/null; then
+            sudo apt-get update
+            sudo apt-get install -y --no-install-recommends gnupg
+          fi
+          gpgv --version
+          aws --version
+      - name: Download and verify the bounded private snapshot
+        if: inputs.testing_feature_snapshot
+        env:
+          SNAPSHOT_KEY: ${{ steps.candidate.outputs.snapshot_key }}
+          TESTING_FEATURE_R2_ACCOUNT_ID: ${{ vars.TESTING_FEATURE_R2_ACCOUNT_ID }}
+          TESTING_FEATURE_R2_BUCKET: ${{ vars.TESTING_FEATURE_R2_BUCKET }}
+          AWS_ACCESS_KEY_ID: ${{ secrets.TESTING_FEATURE_R2_READ_ACCESS_KEY_ID }}
+          AWS_SECRET_ACCESS_KEY: ${{ secrets.TESTING_FEATURE_R2_READ_SECRET_ACCESS_KEY }}
+        run: python3 .github/scripts/workflow/testing_snapshot.py download candidate "$RUNNER_TEMP/testing-feature-snapshot"
       - name: Enable KVM and vhost-vsock for the runner user
         run: |
           printf '%s\n' \
@@ -198,7 +235,29 @@ jobs:
         env:
           CANDIDATE_RUN_ID: ${{ inputs.candidate_run_id }}
           FIXTURE_BASE: ${{ runner.temp }}/fixture-base
+          FEATURE_SNAPSHOT: ${{ inputs.testing_feature_snapshot }}
         run: python3 .github/scripts/workflow/validation_runner.py
+      - name: Sign observed isolated feature boot
+        if: inputs.testing_feature_snapshot
+        env:
+          SNAPSHOT_KEY: ${{ steps.candidate.outputs.snapshot_key }}
+          RECEIPTS: ${{ steps.validate.outputs.receipts }}
+          CANDIDATE_COSIGN_PRIVATE_KEY: ${{ secrets.CANDIDATE_COSIGN_PRIVATE_KEY }}
+          COSIGN_PASSWORD: ${{ secrets.CANDIDATE_COSIGN_PASSWORD }}
+        run: python3 .github/scripts/workflow/testing_snapshot.py record-feature-boot candidate "$RUNNER_TEMP/testing-feature-snapshot" "$RECEIPTS"
+      - name: Upload signed isolated boot facts
+        if: inputs.testing_feature_snapshot
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: isolated-testing-feature-boot
+          path: |
+            ${{ steps.validate.outputs.receipts }}/isolated-feature-receipt/feature-boot.json
+            ${{ steps.validate.outputs.receipts }}/isolated-feature-receipt/feature-boot.json.sig
+          retention-days: 7
+          if-no-files-found: error
+      - name: Remove the private testing snapshot
+        if: always() && inputs.testing_feature_snapshot
+        run: rm -rf "$RUNNER_TEMP/testing-feature-snapshot"
       - name: Remove the staged candidate image
         if: ${{ always() }}
         run: rm -rf "$RUNNER_TEMP/fixture-base"
@@ -206,19 +265,21 @@ jobs:
         if: ${{ always() && steps.candidate.outputs.release_kind == 'image' }}
         run: rm -rf "$RUNNER_TEMP/base-disk" "$RUNNER_TEMP/candidate-mirror" "$RUNNER_TEMP/validation-vm"
       - name: Record and sign observed validation
+        if: ${{ !inputs.testing_feature_snapshot }}
         env:
           RECEIPTS: ${{ steps.validate.outputs.receipts }}
           CANDIDATE_COSIGN_PRIVATE_KEY: ${{ secrets.CANDIDATE_COSIGN_PRIVATE_KEY }}
           COSIGN_PASSWORD: ${{ secrets.CANDIDATE_COSIGN_PASSWORD }}
         run: python3 .github/scripts/workflow/release_pipeline.py record-validation --candidate candidate/candidate.json --receipts "$RECEIPTS" --output "$RECEIPTS/validation.json" --public-key shared/release/candidate.pub
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        if: ${{ !inputs.testing_feature_snapshot }}
         with:
           name: installation-validation
           path: ${{ steps.validate.outputs.receipts }}/
           include-hidden-files: true
           if-no-files-found: error
       - name: Upload failure diagnostics
-        if: ${{ failure() || cancelled() }}
+        if: ${{ !inputs.testing_feature_snapshot && (failure() || cancelled()) }}
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: installation-validation-diagnostics

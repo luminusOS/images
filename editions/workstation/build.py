@@ -39,5 +39,11 @@ for command in (
     ["systemctl", "enable", "elastic-swap.service"],
     ["systemctl", "enable", "systemd-oomd.service"],
     ["systemctl", "enable", "luminus-flatpak-remotes.service"],
+    [
+        "systemctl",
+        "enable",
+        "luminusos-sysext-sync.timer",
+        "luminusos-sysext-units.service",
+    ],
 ):
     run_system(command)

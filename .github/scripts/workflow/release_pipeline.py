@@ -270,7 +270,7 @@ def verify(path: Path, key: Path) -> None:
     )
 
 
-def sign(path: Path, key: Path) -> None:
+def sign(path: Path, key: Path, *, tlog_upload: bool = True) -> None:
     require(key.resolve() == CANDIDATE_PUBLIC_KEY.resolve(), "untrusted candidate key")
     require("COSIGN_PRIVATE_KEY" not in os.environ, "official private key present")
     require(
@@ -284,6 +284,7 @@ def sign(path: Path, key: Path) -> None:
             "cosign",
             "sign-blob",
             "--yes",
+            *([] if tlog_upload else ["--tlog-upload=false"]),
             "--key",
             "env://CANDIDATE_COSIGN_PRIVATE_KEY",
             "--output-signature",

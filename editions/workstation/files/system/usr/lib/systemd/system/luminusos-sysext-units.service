@@ -1,0 +1,12 @@
+[Unit]
+Description=Start units and udev replay for merged LuminusOS hardware features
+After=systemd-sysext.service sysinit.target systemd-udevd.service
+ConditionPathExists=/run/luminusos/activated
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ExecStart=/usr/libexec/luminusos/sysext post-merge
+
+[Install]
+WantedBy=multi-user.target

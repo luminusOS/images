@@ -1,0 +1,14 @@
+[Unit]
+Description=Project selected LuminusOS hardware features for systemd-sysext
+DefaultDependencies=no
+RequiresMountsFor=/var/lib/luminusos/sysext
+After=local-fs.target
+Before=systemd-sysext.service sysinit.target
+Conflicts=shutdown.target
+Before=shutdown.target
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+TimeoutStartSec=10s
+ExecStart=/usr/libexec/luminusos/sysext activate

@@ -681,6 +681,10 @@ flowchart TD
     Installed --> Ref --> Registry --> NewImage --> Update --> Deployment --> Reboot --> Active
 ```
 
+### Hardware feature validation
+
+The workstation image records `SYSEXT_LEVEL` alongside `IMAGE_VERSION` and generates offline discovery metadata from `editions/workstation/features/`. The lab verifies a signed extension against the exact build digest and keeps discovery separate from the stock sysupdate timers. The `dummy` fixture exists to exercise this contract. The pull request lab uses disposable images and signing keys; it does not publish a snapshot or run in a release environment.
+
 ## Consistency Rules
 
 When changing this repository, keep these points aligned:

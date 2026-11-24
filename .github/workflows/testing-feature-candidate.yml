@@ -1,0 +1,76 @@
+name: Isolated Testing Feature Candidate
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: testing-feature-candidate-${{ github.repository }}
+  cancel-in-progress: false
+
+jobs:
+  preflight:
+    if: github.repository_id == '1118572971' && github.ref == 'refs/heads/main' && github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-26.04
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          persist-credentials: false
+      - run: test -s editions/workstation/sysext/testing-feature-staging.pgp
+
+  prepare:
+    needs: preflight
+    permissions:
+      contents: write
+      packages: write
+      actions: read
+    uses: ./.github/workflows/publish.yml
+    with:
+      channel: testing
+      artifacts: image
+      force_core: true
+      isolated_feature_candidate: true
+    secrets:
+      CANDIDATE_COSIGN_PRIVATE_KEY: ${{ secrets.CANDIDATE_COSIGN_PRIVATE_KEY }}
+      CANDIDATE_COSIGN_PASSWORD: ${{ secrets.CANDIDATE_COSIGN_PASSWORD }}
+
+  snapshot:
+    needs: prepare
+    environment: testing-feature-staging
+    runs-on: ubuntu-26.04
+    timeout-minutes: 90
+    permissions:
+      contents: read
+      actions: read
+      packages: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          persist-credentials: false
+      - uses: sigstore/cosign-installer@756fe2d284c7292c4e9b62c8a28f1e5629c59532
+        with:
+          cosign-release: v2.6.5
+      - name: Install snapshot tools
+        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends podman skopeo jq gnupg
+      - name: Build dummy against the exact signed workstation manifest
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: python3 .github/scripts/workflow/testing_feature_producer.py build "$RUNNER_TEMP/testing-feature"
+      - name: Seal the snapshot with the embedded keyring
+        env:
+          TESTING_FEATURE_OPENPGP_KEY: ${{ secrets.TESTING_FEATURE_OPENPGP_KEY }}
+          SYSEXT_SIGNING_PASSPHRASE: ${{ secrets.TESTING_FEATURE_OPENPGP_PASSPHRASE }}
+          TESTING_FEATURE_OPENPGP_FINGERPRINT: ${{ vars.TESTING_FEATURE_OPENPGP_FINGERPRINT }}
+        run: python3 .github/scripts/workflow/testing_feature_producer.py seal "$RUNNER_TEMP/testing-feature"
+      - name: Store the snapshot privately and only once
+        env:
+          TESTING_FEATURE_R2_ACCOUNT_ID: ${{ vars.TESTING_FEATURE_R2_ACCOUNT_ID }}
+          TESTING_FEATURE_R2_BUCKET: ${{ vars.TESTING_FEATURE_R2_BUCKET }}
+          AWS_ACCESS_KEY_ID: ${{ secrets.TESTING_FEATURE_R2_ACCESS_KEY_ID }}
+          AWS_SECRET_ACCESS_KEY: ${{ secrets.TESTING_FEATURE_R2_SECRET_ACCESS_KEY }}
+        run: python3 .github/scripts/workflow/testing_feature_producer.py upload "$RUNNER_TEMP/testing-feature"
+      - name: Remove the private snapshot and candidate files
+        if: always()
+        run: rm -rf "$RUNNER_TEMP/testing-feature"

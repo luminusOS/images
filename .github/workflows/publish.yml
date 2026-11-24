@@ -46,6 +46,7 @@ name: Image Publication
       build_sequence: {type: boolean, default: false}
       force_core: {type: boolean, default: false}
       security_findings_bypass: {type: boolean, default: false}
+      isolated_feature_candidate: {type: boolean, default: false}
     secrets:
       R2_INERT_HANDOFF_ACCESS_KEY_ID:
         description: "Dedicated inert R2 producer credential; probe uses the inert-r2-handoff environment"
@@ -79,7 +80,7 @@ env:
 # days for approval must not queue another line or testing, or let GitHub
 # cancel a run already pending.
 concurrency:
-  group: ${{ github.event_name == 'workflow_dispatch' && inputs.inert_r2_probe == true && format('luminus-inert-r2-{0}', github.repository) || format('luminus-release-{0}-{1}-{2}', github.repository, inputs.channel, github.ref_name) }}
+  group: ${{ inputs.isolated_feature_candidate && format('luminus-feature-preparation-{0}', github.repository) || github.event_name == 'workflow_dispatch' && inputs.inert_r2_probe == true && format('luminus-inert-r2-{0}', github.repository) || format('luminus-release-{0}-{1}-{2}', github.repository, inputs.channel, github.ref_name) }}
   cancel-in-progress: false
 
 jobs:
@@ -167,6 +168,7 @@ jobs:
       # an unsequenced release of the same day.
       build_sequence: ${{ inputs.build_sequence || needs.inputs.outputs.release_kind == 'image' }}
       force_core: ${{ inputs.force_core || false }}
+      isolated_feature_candidate: ${{ inputs.isolated_feature_candidate || false }}
 
   publish-images:
     name: Publish candidate containers
@@ -226,6 +228,9 @@ jobs:
           registry: ghcr.io
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
+      - uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
+        if: inputs.isolated_feature_candidate
+        with: {driver: docker}
       - name: Push candidate images
         id: candidates
         env:
@@ -233,6 +238,7 @@ jobs:
           WORKSTATION_IMAGE: ${{ needs.containers.outputs.workstation_image }}
           INSTALLER_IMAGE: ${{ needs.containers.outputs.workstation_iso_image }}
           RELEASE_KIND: ${{ needs.inputs.outputs.release_kind }}
+          ISOLATED_FEATURE_CANDIDATE: ${{ inputs.isolated_feature_candidate }}
           CANDIDATE_COSIGN_PRIVATE_KEY: ${{ secrets.CANDIDATE_COSIGN_PRIVATE_KEY }}
           COSIGN_PASSWORD: ${{ secrets.CANDIDATE_COSIGN_PASSWORD }}
         run: |
@@ -590,7 +596,7 @@ jobs:
         run: python3 .github/scripts/workflow/release_publish.py prepare-results candidate
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
-          name: release-candidate
+          name: ${{ inputs.isolated_feature_candidate && format('testing-feature-candidate-{0}', github.run_attempt) || 'release-candidate' }}
           path: candidate/
           compression-level: 0
           if-no-files-found: error
@@ -598,7 +604,7 @@ jobs:
   release-evidence:
     name: Assemble candidate evidence
     needs: [quality, inputs]
-    if: ${{ !(github.event_name == 'workflow_dispatch' && inputs.inert_r2_probe == true) && (!inputs.security_findings_bypass && ((inputs.channel == 'testing' && github.ref == 'refs/heads/main') || (inputs.channel == 'stable' && startsWith(github.ref, 'refs/heads/release/'))) && inputs.candidate_run_id != '' && inputs.validation_run_id != '') }}
+    if: ${{ !inputs.isolated_feature_candidate && !(github.event_name == 'workflow_dispatch' && inputs.inert_r2_probe == true) && (!inputs.security_findings_bypass && ((inputs.channel == 'testing' && github.ref == 'refs/heads/main') || (inputs.channel == 'stable' && startsWith(github.ref, 'refs/heads/release/'))) && inputs.candidate_run_id != '' && inputs.validation_run_id != '') }}
     runs-on: ubuntu-26.04
     environment: candidate-staging
     permissions:
@@ -657,7 +663,7 @@ jobs:
   release:
     name: Promote validated candidate
     needs: [quality, inputs, release-evidence]
-    if: ${{ !(github.event_name == 'workflow_dispatch' && inputs.inert_r2_probe == true) && (!inputs.security_findings_bypass && inputs.channel == 'testing' && github.ref == 'refs/heads/main' && inputs.candidate_run_id != '' && inputs.validation_run_id != '') }}
+    if: ${{ !inputs.isolated_feature_candidate && !(github.event_name == 'workflow_dispatch' && inputs.inert_r2_probe == true) && (!inputs.security_findings_bypass && inputs.channel == 'testing' && github.ref == 'refs/heads/main' && inputs.candidate_run_id != '' && inputs.validation_run_id != '') }}
     runs-on: ubuntu-26.04
     # The official publishing credentials live only in this environment
     # (main only) and in stable, never at repository level.
@@ -727,7 +733,7 @@ jobs:
   release-stable:
     name: Promote approved stable candidate
     needs: [quality, inputs, release-evidence]
-    if: ${{ !(github.event_name == 'workflow_dispatch' && inputs.inert_r2_probe == true) && (!inputs.security_findings_bypass && inputs.channel == 'stable' && startsWith(github.ref, 'refs/heads/release/') && inputs.candidate_run_id != '' && inputs.validation_run_id != '') }}
+    if: ${{ !inputs.isolated_feature_candidate && !(github.event_name == 'workflow_dispatch' && inputs.inert_r2_probe == true) && (!inputs.security_findings_bypass && inputs.channel == 'stable' && startsWith(github.ref, 'refs/heads/release/') && inputs.candidate_run_id != '' && inputs.validation_run_id != '') }}
     runs-on: ubuntu-26.04
     # Required reviewers approve here; the job starts only after approval.
     environment: stable

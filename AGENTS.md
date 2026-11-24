@@ -21,6 +21,7 @@ Do not add other edition scaffolding unless the package set, target devices, ins
 - Install to a QEMU disk: `just qemu install`
 - Boot the installed QEMU disk: `just qemu run`
 - Build only the workstation ISO root image for debugging: `just build workstation-iso`
+- Verify the hardware feature build and runtime contracts: `bash tests/sysext-lab.sh` (rootless Podman)
 
 Use `QEMU_RESET_DISK=1 just qemu iso` when the installer test needs a fresh disk.
 
@@ -34,6 +35,10 @@ Use `QEMU_RESET_DISK=1 just qemu iso` when the installer test needs a fresh disk
 - Do not add shared helpers unless there is a concrete cross-edition need that cannot live in `core`.
 - Edition scripts live under their edition, for example `editions/workstation/build.py`.
 - Containerfiles may call edition scripts through a `/ctx` bind mount.
+- The hardware feature build and container lab retain their existing Bash entry points. Keep their fixture metadata in `editions/workstation/features/`.
+- Hardware-feature manifests and build helpers live under
+  `editions/workstation/features/` and `editions/workstation/sysext/`.
+  Run the isolated container lab with `bash tests/sysext-lab.sh`.
 
 ## Installer Notes
 
